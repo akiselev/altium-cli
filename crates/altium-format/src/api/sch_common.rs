@@ -6,19 +6,15 @@
 
 use crate::api::schlib_types::*;
 use crate::sch_records::{
-    SchRecord,
-    SchPin as InternalPin,
-    SchParameter as InternalParameter,
-    SchPrimitiveBase,
-    SchLine, SchRectangle, SchRoundRectangle, SchArc, SchEllipticalArc,
-    SchEllipse, SchPie, SchPolyline, SchPolygon, SchBezier,
-    SchImage, SchLabel, SchTextFrame,
-    PinTextPositioning as InternalPinTextPositioning,
+    PinTextPositioning as InternalPinTextPositioning, SchArc, SchBezier, SchEllipse,
+    SchEllipticalArc, SchImage, SchLabel, SchLine, SchParameter as InternalParameter, SchPie,
+    SchPin as InternalPin, SchPolygon, SchPolyline, SchPrimitiveBase, SchRecord, SchRectangle,
+    SchRoundRectangle, SchTextFrame,
 };
 use crate::{AltiumFormatError, Result};
 
-use altium_format_types::sch::{TextHorzAnchor, TextVertAnchor};
 use altium_format_types::constants::record_structure::RECORD;
+use altium_format_types::sch::{TextHorzAnchor, TextVertAnchor};
 
 // ── Read converters ──────────────────────────────────────────────────────────
 
@@ -421,34 +417,46 @@ pub(crate) fn build_footprint_maps(records: &[SchRecord]) -> Result<Vec<Footprin
             // MapDefiner's owner_index points to the ImplementationMap
             let impl_1based = rec_idx + 1;
 
-            let pin_pad_maps: Vec<PinPadMap> = records.iter().enumerate().filter_map(|(map_idx, map_rec)| {
-                if let SchRecord::ImplementationMap(im) = map_rec {
-                    if im.base.owner_index as usize == impl_1based {
-                        // Found the ImplementationMap for this Implementation.
-                        // Now find MapDefiners owned by this ImplementationMap.
-                        let map_1based = map_idx + 1;
-                        let definers: Vec<PinPadMap> = records.iter().filter_map(|def_rec| {
-                            if let SchRecord::MapDefiner(md) = def_rec {
-                                if md.base.owner_index as usize == map_1based {
-                                    Some(PinPadMap {
-                                        pin: md.des_intf.clone(),
-                                        pad: md.des_imps.first().cloned().unwrap_or_default(),
-                                    })
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        }).collect();
-                        Some(definers)
+            let pin_pad_maps: Vec<PinPadMap> = records
+                .iter()
+                .enumerate()
+                .filter_map(|(map_idx, map_rec)| {
+                    if let SchRecord::ImplementationMap(im) = map_rec {
+                        if im.base.owner_index as usize == impl_1based {
+                            // Found the ImplementationMap for this Implementation.
+                            // Now find MapDefiners owned by this ImplementationMap.
+                            let map_1based = map_idx + 1;
+                            let definers: Vec<PinPadMap> = records
+                                .iter()
+                                .filter_map(|def_rec| {
+                                    if let SchRecord::MapDefiner(md) = def_rec {
+                                        if md.base.owner_index as usize == map_1based {
+                                            Some(PinPadMap {
+                                                pin: md.des_intf.clone(),
+                                                pad: md
+                                                    .des_imps
+                                                    .first()
+                                                    .cloned()
+                                                    .unwrap_or_default(),
+                                            })
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            Some(definers)
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
-                } else {
-                    None
-                }
-            }).flatten().collect();
+                })
+                .flatten()
+                .collect();
 
             footprints.push(FootprintMap {
                 model_name: imp.model_name.clone(),
@@ -553,10 +561,13 @@ pub(crate) fn pin_to_internal(pin: &Pin) -> InternalPin {
         symbol_outer_edge: pin.symbol_outer_edge,
         symbol_inside: pin.symbol_inside,
         symbol_outside: pin.symbol_outside,
-        symbol_inner_edge_present: pin.symbol_inner_edge != altium_format_types::sch::IeeeSymbol::NoSymbol,
-        symbol_outer_edge_present: pin.symbol_outer_edge != altium_format_types::sch::IeeeSymbol::NoSymbol,
+        symbol_inner_edge_present: pin.symbol_inner_edge
+            != altium_format_types::sch::IeeeSymbol::NoSymbol,
+        symbol_outer_edge_present: pin.symbol_outer_edge
+            != altium_format_types::sch::IeeeSymbol::NoSymbol,
         symbol_inside_present: pin.symbol_inside != altium_format_types::sch::IeeeSymbol::NoSymbol,
-        symbol_outside_present: pin.symbol_outside != altium_format_types::sch::IeeeSymbol::NoSymbol,
+        symbol_outside_present: pin.symbol_outside
+            != altium_format_types::sch::IeeeSymbol::NoSymbol,
         symbol: None,
         description: pin.description.clone(),
         formal_type: pin.formal_type,

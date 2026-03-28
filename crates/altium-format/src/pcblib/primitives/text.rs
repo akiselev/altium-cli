@@ -1,5 +1,5 @@
-use altium_format_types::{BarcodeRenderMode, TextAutoposition, TextKind};
 use altium_format_types::constants::parsing::TEXT_SUBRECORD_COUNT;
+use altium_format_types::{BarcodeRenderMode, TextAutoposition, TextKind};
 
 use crate::binary_io::BinaryReader;
 use crate::pcblib::PcbText;

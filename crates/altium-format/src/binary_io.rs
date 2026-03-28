@@ -241,9 +241,7 @@ impl<'a> BinaryReader<'a> {
         if bytes.iter().any(|&b| b != 0) {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: format!("reserved bytes at offset {offset}"),
-                detail: format!(
-                    "expected {count} zero bytes, got {bytes:02X?}",
-                ),
+                detail: format!("expected {count} zero bytes, got {bytes:02X?}",),
             });
         }
         Ok(())
@@ -437,10 +435,7 @@ impl BinaryWriter {
         if encoded.len() > 255 {
             return Err(crate::AltiumFormatError::InvalidParamValue {
                 key: "pascal_string".to_owned(),
-                detail: format!(
-                    "string too long: {} bytes (max 255)",
-                    encoded.len()
-                ),
+                detail: format!("string too long: {} bytes (max 255)", encoded.len()),
             });
         }
         self.write_u8(encoded.len() as u8);

@@ -2,16 +2,19 @@ use altium_format_types::{Color, Coord, CoordPoint, PolySegmentKind, RegionKind}
 
 use crate::binary_io::BinaryReader;
 use crate::param_collection::ParameterCollection;
-use crate::pcblib::{Contour, PolySegment, PcbComponentBody};
 use crate::pcblib::primitives::common::parse_common_header;
+use crate::pcblib::{Contour, PcbComponentBody, PolySegment};
 use crate::{AltiumFormatError, Result};
 
 /// Parses a PolySegmentKind from its u8 string representation.
 fn parse_poly_segment_kind(s: &str) -> Result<PolySegmentKind> {
-    let raw: u8 = s.trim().parse().map_err(|_| AltiumFormatError::InvalidParamValue {
-        key: "KIND".to_owned(),
-        detail: format!("cannot parse '{}' as u8 PolySegmentKind", s),
-    })?;
+    let raw: u8 = s
+        .trim()
+        .parse()
+        .map_err(|_| AltiumFormatError::InvalidParamValue {
+            key: "KIND".to_owned(),
+            detail: format!("cannot parse '{}' as u8 PolySegmentKind", s),
+        })?;
     PolySegmentKind::try_from(raw).map_err(|e| AltiumFormatError::InvalidParamValue {
         key: "KIND".to_owned(),
         detail: e.to_string(),
@@ -40,10 +43,12 @@ fn parse_float_str(s: &str, key: &str) -> Result<f64> {
     if trimmed.is_empty() {
         return Ok(0.0);
     }
-    trimmed.parse::<f64>().map_err(|e| AltiumFormatError::InvalidParamValue {
-        key: key.to_owned(),
-        detail: format!("cannot parse '{}' as f64: {}", s, e),
-    })
+    trimmed
+        .parse::<f64>()
+        .map_err(|e| AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("cannot parse '{}' as f64: {}", s, e),
+        })
 }
 
 /// Decodes an IDENTIFIER value from comma-separated UTF-16 code units.
@@ -225,7 +230,10 @@ fn read_polysegment_contour(reader: &mut BinaryReader, label: &str) -> Result<Ve
 /// The parameter string carries body properties (STANDOFFHEIGHT, OVERALLHEIGHT,
 /// BODYCOLOR3D, etc.) and the 3D model reference (MODELID, MODEL.NAME,
 /// MODEL.3D.ROTX/Y/Z, etc.).
-pub(crate) fn parse_component_body(data: &[u8], is_shape_based_section: bool) -> Result<PcbComponentBody> {
+pub(crate) fn parse_component_body(
+    data: &[u8],
+    is_shape_based_section: bool,
+) -> Result<PcbComponentBody> {
     let mut reader = BinaryReader::new(data);
     let common = parse_common_header(&mut reader)?;
 

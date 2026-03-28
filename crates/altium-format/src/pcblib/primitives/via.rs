@@ -226,11 +226,11 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
                     detail: format!("expected reserved byte = 0, got {reserved_209}"),
                 });
             }
-            is_testpoint_top = reader.read_u8()? != 0;           // offset 210
-            is_testpoint_bottom = reader.read_u8()? != 0;        // offset 211
-            is_assy_testpoint_top = reader.read_u8()? != 0;      // offset 212
-            is_assy_testpoint_bottom = reader.read_u8()? != 0;   // offset 213
-            solder_mask_override = reader.read_u8()? != 0;       // offset 214
+            is_testpoint_top = reader.read_u8()? != 0; // offset 210
+            is_testpoint_bottom = reader.read_u8()? != 0; // offset 211
+            is_assy_testpoint_top = reader.read_u8()? != 0; // offset 212
+            is_assy_testpoint_bottom = reader.read_u8()? != 0; // offset 213
+            solder_mask_override = reader.read_u8()? != 0; // offset 214
             use_separate_solder_mask_expansion = reader.read_u8()? != 0; // offset 215
             let reserved_216 = reader.read_u8()?;
             if reserved_216 != 0 {
@@ -240,13 +240,15 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
                 });
             }
             solder_mask_expansion_from_hole_edge = reader.read_u8()? != 0; // offset 217
-            let reserved_218_239 = reader.read_bytes(22)?;       // offsets 218-239
+            let reserved_218_239 = reader.read_bytes(22)?; // offsets 218-239
             if reserved_218_239.iter().any(|&b| b != 0) {
                 return Err(crate::AltiumFormatError::InvalidParamValue {
                     key: "Via extension bytes 218-239".to_owned(),
                     detail: format!(
                         "expected 22 reserved zero bytes, got non-zero at offset(s): {}",
-                        reserved_218_239.iter().enumerate()
+                        reserved_218_239
+                            .iter()
+                            .enumerate()
                             .filter(|(_, b)| **b != 0)
                             .map(|(i, b)| format!("{}=0x{:02x}", 218 + i, b))
                             .collect::<Vec<_>>()
@@ -254,7 +256,7 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
                     ),
                 });
             }
-            paste_mask_override = reader.read_u8()? != 0;        // offset 240
+            paste_mask_override = reader.read_u8()? != 0; // offset 240
             let linked_byte = reader.read_u8()?;
             solder_mask_expansion_linked = (linked_byte & 0x01) != 0;
             solder_mask_expansion_back = reader.read_coord()?;
@@ -289,7 +291,10 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
             if ext_size < 41 || reader.remaining() < ext_size {
                 return Err(crate::AltiumFormatError::InvalidParamValue {
                     key: "Via template link block".to_owned(),
-                    detail: format!("declared size {ext_size} but only {} bytes remain", reader.remaining()),
+                    detail: format!(
+                        "declared size {ext_size} but only {} bytes remain",
+                        reader.remaining()
+                    ),
                 });
             }
             let mut ext = crate::binary_io::BinaryReader::new(reader.read_bytes(ext_size)?);
@@ -333,9 +338,7 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
             pad_layer_stride = reader.read_u32_le()?;
 
             // Validate stride: known values are 23, 24, 29, 30 (or 0 when count=0).
-            if section4_count > 0
-                && !matches!(pad_layer_stride, 23 | 24 | 29 | 30)
-            {
+            if section4_count > 0 && !matches!(pad_layer_stride, 23 | 24 | 29 | 30) {
                 return Err(crate::AltiumFormatError::InvalidParamValue {
                     key: "via.section4.stride".to_owned(),
                     detail: format!(
@@ -345,9 +348,7 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
             }
 
             for _ in 0..section4_count {
-                pad_layer_entries.push(
-                    parse_pad_layer_entry(&mut reader, pad_layer_stride)?
-                );
+                pad_layer_entries.push(parse_pad_layer_entry(&mut reader, pad_layer_stride)?);
             }
         }
 
@@ -368,8 +369,7 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
             match section5_size {
                 9 => {
                     counter_hole_angle = Some(reader.read_f64_le()?);
-                    via_structure_type =
-                        Some(ViaStructureType::try_from(reader.read_u8()?)?);
+                    via_structure_type = Some(ViaStructureType::try_from(reader.read_u8()?)?);
                 }
                 4 => {
                     // Older format: 4 bytes, observed as all zeros.
@@ -377,9 +377,7 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
                     if placeholder != 0 {
                         return Err(crate::AltiumFormatError::InvalidParamValue {
                             key: "Via Section 5 (4-byte)".to_owned(),
-                            detail: format!(
-                                "expected 4 zero bytes, got 0x{placeholder:08x}"
-                            ),
+                            detail: format!("expected 4 zero bytes, got 0x{placeholder:08x}"),
                         });
                     }
                 }
@@ -722,33 +720,37 @@ mod tests {
         w.write_coord_point(CoordPoint::new(Coord::ZERO, Coord::ZERO));
         w.write_coord(Coord::from_internal(20_000));
         w.write_coord(Coord::from_internal(10_000));
-        w.write_u8(1);  // from_layer
+        w.write_u8(1); // from_layer
         w.write_u8(32); // to_layer
         // Extended fields up to offset 203
-        w.write_u8(0);  // via_properties_version
+        w.write_u8(0); // via_properties_version
         w.write_coord(Coord::ZERO); // thermal_relief_air_gap
-        w.write_u8(0);  // thermal_relief_conductor_count
-        w.write_u8(0);  // thermal_relief_rotation_code
+        w.write_u8(0); // thermal_relief_conductor_count
+        w.write_u8(0); // thermal_relief_rotation_code
         w.write_coord(Coord::ZERO); // thermal_relief_conductor_width
         w.write_coord(Coord::ZERO); // power_plane_relief_expansion
         w.write_coord(Coord::ZERO); // power_plane_clearance
         w.write_coord(Coord::ZERO); // paste_mask_expansion
         w.write_coord(Coord::ZERO); // solder_mask_expansion_front
         w.write_u16_le(0); // planes
-        for _ in 0..6 { w.write_u8(0); } // cache validity fields
-        w.write_u8(0);  // solder_mask_expansion_valid
-        w.write_u8(0);  // power_plane_clearance_valid
-        w.write_u8(0);  // planes_valid
-        w.write_u8(0);  // plane_connection_style
-        w.write_u8(0);  // solder_mask_cache_flags
-        w.write_u8(0);  // solder_mask_expansion_state
-        w.write_u8(0);  // paste_mask_cache_flags
-        w.write_u8(0);  // paste_mask_expansion_state
-        w.write_u8(0);  // via_mode
-        for _ in 0..32 { w.write_coord(Coord::ZERO); } // diameters_per_layer
+        for _ in 0..6 {
+            w.write_u8(0);
+        } // cache validity fields
+        w.write_u8(0); // solder_mask_expansion_valid
+        w.write_u8(0); // power_plane_clearance_valid
+        w.write_u8(0); // planes_valid
+        w.write_u8(0); // plane_connection_style
+        w.write_u8(0); // solder_mask_cache_flags
+        w.write_u8(0); // solder_mask_expansion_state
+        w.write_u8(0); // paste_mask_cache_flags
+        w.write_u8(0); // paste_mask_expansion_state
+        w.write_u8(0); // via_mode
+        for _ in 0..32 {
+            w.write_coord(Coord::ZERO);
+        } // diameters_per_layer
         w.write_i32_le(0); // layer_enum_index
-        w.write_u8(1);    // stack_start_layer
-        w.write_u8(32);   // stack_end_layer
+        w.write_u8(1); // stack_start_layer
+        w.write_u8(32); // stack_end_layer
         w
     }
 
@@ -757,7 +759,9 @@ mod tests {
         let mut w = write_extended_via_up_to_extension_region();
         // Write 32 extension bytes: byte 0 (offset 209) = nonzero
         w.write_u8(0xFF); // reserved_209 = nonzero (should fail)
-        for _ in 0..31 { w.write_u8(0); }
+        for _ in 0..31 {
+            w.write_u8(0);
+        }
         w.write_u8(0); // solder_mask_expansion_linked
         w.write_coord(Coord::ZERO); // solder_mask_expansion_back
 
@@ -780,7 +784,9 @@ mod tests {
         w.write_u8(0); // use_separate_solder_mask_expansion
         // Byte 7 (offset 216) = nonzero
         w.write_u8(0xFF); // reserved_216 = nonzero (should fail)
-        for _ in 0..24 { w.write_u8(0); } // remaining bytes
+        for _ in 0..24 {
+            w.write_u8(0);
+        } // remaining bytes
         w.write_u8(0); // solder_mask_expansion_linked
         w.write_coord(Coord::ZERO); // solder_mask_expansion_back
 
@@ -804,10 +810,12 @@ mod tests {
         w.write_u8(0); // reserved_216
         w.write_u8(0); // solder_mask_expansion_from_hole_edge
         // Bytes 9-30 (offsets 218-239): put nonzero at offset 220
-        w.write_u8(0);    // 218
-        w.write_u8(0);    // 219
+        w.write_u8(0); // 218
+        w.write_u8(0); // 219
         w.write_u8(0xAB); // 220 = nonzero (should fail)
-        for _ in 0..19 { w.write_u8(0); } // 221-239
+        for _ in 0..19 {
+            w.write_u8(0);
+        } // 221-239
         w.write_u8(0); // paste_mask_override (offset 240)
         w.write_u8(0); // solder_mask_expansion_linked
         w.write_coord(Coord::ZERO); // solder_mask_expansion_back
@@ -815,8 +823,14 @@ mod tests {
         let data = w.finish();
         let err = parse_via(&data).unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("218-239"), "error should mention bytes 218-239: {msg}");
-        assert!(msg.contains("220"), "error should mention offset 220: {msg}");
+        assert!(
+            msg.contains("218-239"),
+            "error should mention bytes 218-239: {msg}"
+        );
+        assert!(
+            msg.contains("220"),
+            "error should mention offset 220: {msg}"
+        );
     }
 
     #[test]

@@ -75,26 +75,11 @@ pub(crate) fn parse_custom_shapes(data: &[u8]) -> Result<Vec<CustomShapeEntry>> 
             let corners = match shape_kind {
                 PadShapeSubKind::RoundedRectangle | PadShapeSubKind::ChamferedRectangle => {
                     let cps_prefix = format!("{prefix}CPS.");
-                    let bottom_left = parse_bool_param(
-                        &mut params,
-                        &format!("{cps_prefix}BLCE"),
-                    )?;
-                    let bottom_right = parse_bool_param(
-                        &mut params,
-                        &format!("{cps_prefix}BRCE"),
-                    )?;
-                    let top_right = parse_bool_param(
-                        &mut params,
-                        &format!("{cps_prefix}TRCE"),
-                    )?;
-                    let top_left = parse_bool_param(
-                        &mut params,
-                        &format!("{cps_prefix}TLCE"),
-                    )?;
-                    let corner_size = parse_coord_param(
-                        &mut params,
-                        &format!("{cps_prefix}CS"),
-                    )?;
+                    let bottom_left = parse_bool_param(&mut params, &format!("{cps_prefix}BLCE"))?;
+                    let bottom_right = parse_bool_param(&mut params, &format!("{cps_prefix}BRCE"))?;
+                    let top_right = parse_bool_param(&mut params, &format!("{cps_prefix}TRCE"))?;
+                    let top_left = parse_bool_param(&mut params, &format!("{cps_prefix}TLCE"))?;
+                    let corner_size = parse_coord_param(&mut params, &format!("{cps_prefix}CS"))?;
                     Some(CustomShapeCorners {
                         bottom_left,
                         bottom_right,
@@ -218,10 +203,7 @@ pub(crate) fn parse_corner_radius_chamfer(data: &[u8]) -> Result<Vec<CornerRadiu
             }
             let prefix = format!("SCR{n}.");
             let layer: String = params.remove_required(&format!("{prefix}LAYER"))?;
-            let corner_radius_size = parse_coord_param(
-                &mut params,
-                &format!("{prefix}CRSIZE"),
-            )?;
+            let corner_radius_size = parse_coord_param(&mut params, &format!("{prefix}CRSIZE"))?;
 
             layer_defs.push(CornerRadiusLayerDef {
                 layer,
@@ -246,10 +228,7 @@ pub(crate) fn parse_corner_radius_chamfer(data: &[u8]) -> Result<Vec<CornerRadiu
 /// Parses the u32-count + (u32-len + NUL-terminated-params)* parameter-block format.
 ///
 /// Returns a Vec of ParameterCollections, one per entry.
-fn parse_param_block_entries(
-    data: &[u8],
-    stream_name: &str,
-) -> Result<Vec<ParameterCollection>> {
+fn parse_param_block_entries(data: &[u8], stream_name: &str) -> Result<Vec<ParameterCollection>> {
     let mut reader = BinaryReader::new(data);
     let count = reader.read_u32_le()? as usize;
 
@@ -263,14 +242,16 @@ fn parse_param_block_entries(
         entries.push(params);
     }
 
-    reader.assert_exhausted().map_err(|_| AltiumFormatError::InvalidParamValue {
-        key: stream_name.to_owned(),
-        detail: format!(
-            "{} trailing bytes after {} entries",
-            reader.remaining(),
-            count,
-        ),
-    })?;
+    reader
+        .assert_exhausted()
+        .map_err(|_| AltiumFormatError::InvalidParamValue {
+            key: stream_name.to_owned(),
+            detail: format!(
+                "{} trailing bytes after {} entries",
+                reader.remaining(),
+                count,
+            ),
+        })?;
 
     Ok(entries)
 }
@@ -325,63 +306,60 @@ pub(crate) fn validate_custom_shape_entries(
 
     for entry in custom_shapes {
         let idx = entry.primitive_index;
-        let primitive = primitives.get(idx).ok_or_else(|| {
-            AltiumFormatError::InvalidParamValue {
-                key: "PRIMITIVEINDEX".to_owned(),
-                detail: format!(
-                    "CustomShapes primitive index {idx} out of range \
+        let primitive =
+            primitives
+                .get(idx)
+                .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                    key: "PRIMITIVEINDEX".to_owned(),
+                    detail: format!(
+                        "CustomShapes primitive index {idx} out of range \
                      (footprint has {primitive_count} primitives)"
-                ),
-            }
-        })?;
+                    ),
+                })?;
         if !matches!(primitive, crate::pcblib::PcbPrimitive::Pad(_)) {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "PRIMITIVEINDEX".to_owned(),
-                detail: format!(
-                    "CustomShapes primitive index {idx} is not a Pad"
-                ),
+                detail: format!("CustomShapes primitive index {idx} is not a Pad"),
             });
         }
     }
 
     for entry in custom_mask_shapes {
         let idx = entry.primitive_index;
-        let primitive = primitives.get(idx).ok_or_else(|| {
-            AltiumFormatError::InvalidParamValue {
-                key: "PRIMITIVEINDEX".to_owned(),
-                detail: format!(
-                    "CustomMaskShapes primitive index {idx} out of range \
+        let primitive =
+            primitives
+                .get(idx)
+                .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                    key: "PRIMITIVEINDEX".to_owned(),
+                    detail: format!(
+                        "CustomMaskShapes primitive index {idx} out of range \
                      (footprint has {primitive_count} primitives)"
-                ),
-            }
-        })?;
+                    ),
+                })?;
         if !matches!(primitive, crate::pcblib::PcbPrimitive::Pad(_)) {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "PRIMITIVEINDEX".to_owned(),
-                detail: format!(
-                    "CustomMaskShapes primitive index {idx} is not a Pad"
-                ),
+                detail: format!("CustomMaskShapes primitive index {idx} is not a Pad"),
             });
         }
     }
 
     for entry in corner_radius_chamfer {
         let idx = entry.primitive_index;
-        let primitive = primitives.get(idx).ok_or_else(|| {
-            AltiumFormatError::InvalidParamValue {
-                key: "PRIMITIVEINDEX".to_owned(),
-                detail: format!(
-                    "CornerRadiusChamfer primitive index {idx} out of range \
+        let primitive =
+            primitives
+                .get(idx)
+                .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                    key: "PRIMITIVEINDEX".to_owned(),
+                    detail: format!(
+                        "CornerRadiusChamfer primitive index {idx} out of range \
                      (footprint has {primitive_count} primitives)"
-                ),
-            }
-        })?;
+                    ),
+                })?;
         if !matches!(primitive, crate::pcblib::PcbPrimitive::Pad(_)) {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "PRIMITIVEINDEX".to_owned(),
-                detail: format!(
-                    "CornerRadiusChamfer primitive index {idx} is not a Pad"
-                ),
+                detail: format!("CornerRadiusChamfer primitive index {idx} is not a Pad"),
             });
         }
     }
@@ -435,9 +413,18 @@ pub(crate) fn serialize_custom_shapes(entries: &[CustomShapeEntry]) -> Vec<u8> {
                 );
                 if let Some(corners) = &def.corners {
                     let cps = format!("{prefix}CPS.");
-                    params.insert(&format!("{cps}BLCE"), bool_str(corners.bottom_left).to_owned());
-                    params.insert(&format!("{cps}BRCE"), bool_str(corners.bottom_right).to_owned());
-                    params.insert(&format!("{cps}TRCE"), bool_str(corners.top_right).to_owned());
+                    params.insert(
+                        &format!("{cps}BLCE"),
+                        bool_str(corners.bottom_left).to_owned(),
+                    );
+                    params.insert(
+                        &format!("{cps}BRCE"),
+                        bool_str(corners.bottom_right).to_owned(),
+                    );
+                    params.insert(
+                        &format!("{cps}TRCE"),
+                        bool_str(corners.top_right).to_owned(),
+                    );
                     params.insert(&format!("{cps}TLCE"), bool_str(corners.top_left).to_owned());
                     params.insert(
                         &format!("{cps}CS"),
@@ -598,9 +585,8 @@ mod tests {
 
     #[test]
     fn parse_corner_radius_chamfer_single() {
-        let data = make_param_block_stream(&[
-            "|SCR0.LAYER=TOP|SCR0.CRSIZE=275590|PRIMITIVEINDEX=0",
-        ]);
+        let data =
+            make_param_block_stream(&["|SCR0.LAYER=TOP|SCR0.CRSIZE=275590|PRIMITIVEINDEX=0"]);
         let entries = parse_corner_radius_chamfer(&data).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].primitive_index, 0);
@@ -629,8 +615,7 @@ mod tests {
         // Too short to even read count
         let err = parse_custom_shapes(&[0x01]).unwrap_err();
         assert!(
-            format!("{err}").contains("read past end")
-                || format!("{err}").contains("needed"),
+            format!("{err}").contains("read past end") || format!("{err}").contains("needed"),
             "unexpected error: {err}"
         );
     }
@@ -646,9 +631,8 @@ mod tests {
 
     #[test]
     fn parse_custom_shapes_missing_primitive_index_errors() {
-        let data = make_param_block_stream(&[
-            "|S0.LAYER=TOP|S0.XSIZE=100|S0.YSIZE=200|S0.SHAPEKIND=0",
-        ]);
+        let data =
+            make_param_block_stream(&["|S0.LAYER=TOP|S0.XSIZE=100|S0.YSIZE=200|S0.SHAPEKIND=0"]);
         let err = parse_custom_shapes(&data).unwrap_err();
         assert!(matches!(err, AltiumFormatError::MissingParam(_)));
     }
@@ -675,7 +659,10 @@ mod tests {
         assert_eq!(reparsed[0].primitive_index, 3);
         assert_eq!(reparsed[1].primitive_index, 4);
         assert_eq!(reparsed[0].layer_defs[0].layer, "TOP");
-        assert_eq!(reparsed[0].layer_defs[0].x_size, Coord::from_internal(275592));
+        assert_eq!(
+            reparsed[0].layer_defs[0].x_size,
+            Coord::from_internal(275592)
+        );
         let corners = reparsed[0].layer_defs[0].corners.as_ref().unwrap();
         assert!(!corners.bottom_left);
         assert!(corners.bottom_right);
@@ -706,8 +693,14 @@ mod tests {
         let reparsed = parse_corner_radius_chamfer(&serialized).unwrap();
         assert_eq!(reparsed.len(), 2);
         assert_eq!(reparsed[0].primitive_index, 0);
-        assert_eq!(reparsed[0].layer_defs[0].corner_radius_size, Coord::from_internal(275590));
+        assert_eq!(
+            reparsed[0].layer_defs[0].corner_radius_size,
+            Coord::from_internal(275590)
+        );
         assert_eq!(reparsed[1].primitive_index, 1);
-        assert_eq!(reparsed[1].layer_defs[0].corner_radius_size, Coord::from_internal(39370));
+        assert_eq!(
+            reparsed[1].layer_defs[0].corner_radius_size,
+            Coord::from_internal(39370)
+        );
     }
 }

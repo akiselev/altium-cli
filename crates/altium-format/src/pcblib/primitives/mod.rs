@@ -30,9 +30,8 @@ pub(crate) fn dispatch_primitive(
         PcbObjectId::Text => text::parse_text(subrecords).map(PcbPrimitive::Text),
         PcbObjectId::Region => region::parse_region(subrecords[0], false).map(PcbPrimitive::Region),
         PcbObjectId::Pad => pad::parse_pad(subrecords).map(PcbPrimitive::Pad),
-        PcbObjectId::ComponentBody => {
-            component_body::parse_component_body(subrecords[0], false).map(PcbPrimitive::ComponentBody)
-        }
+        PcbObjectId::ComponentBody => component_body::parse_component_body(subrecords[0], false)
+            .map(PcbPrimitive::ComponentBody),
         other => Err(AltiumFormatError::UnknownObjectId(other as u8)),
     }
 }

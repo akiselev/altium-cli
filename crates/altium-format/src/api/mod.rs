@@ -17,83 +17,87 @@
 //! }
 //! ```
 
-pub(crate) mod sch_common;
-mod schlib_types;
-pub(crate) mod schlib_read;
-pub(crate) mod schlib_write;
-mod schdoc_types;
-pub(crate) mod schdoc_read;
-pub(crate) mod schdoc_write;
 pub(crate) mod pcb_common;
-mod pcblib_types;
-pub(crate) mod pcblib_read;
-pub(crate) mod pcblib_write;
-mod pcbdoc_types;
 pub(crate) mod pcbdoc_read;
+mod pcbdoc_types;
 pub(crate) mod pcbdoc_write;
-mod project_types;
+pub(crate) mod pcblib_read;
+mod pcblib_types;
+pub(crate) mod pcblib_write;
 pub(crate) mod project_read;
+mod project_types;
 pub(crate) mod project_write;
+pub(crate) mod sch_common;
+pub(crate) mod schdoc_read;
+mod schdoc_types;
+pub(crate) mod schdoc_write;
+pub(crate) mod schlib_read;
+mod schlib_types;
+pub(crate) mod schlib_write;
 
 // ── SchLib types ─────────────────────────────────────────────────────────────
 
 pub use schlib_types::{
+    ArcGraphic,
+    BezierGraphic,
     // Component and children
-    Component, Pin, PinTextPositioning, Parameter, FootprintMap, PinPadMap,
+    Component,
+    EllipseGraphic,
+    EllipticalArcGraphic,
+    FootprintMap,
     // Graphic enum and variants
-    Graphic, LineGraphic, RectangleGraphic, RoundRectangleGraphic,
-    ArcGraphic, EllipticalArcGraphic, EllipseGraphic, PieGraphic,
-    PolylineGraphic, PolygonGraphic, BezierGraphic,
-    ImageGraphic, LabelGraphic, TextFrameGraphic,
+    Graphic,
+    ImageGraphic,
+    LabelGraphic,
+    LineGraphic,
+    Parameter,
+    PieGraphic,
+    Pin,
+    PinPadMap,
+    PinTextPositioning,
+    PolygonGraphic,
+    PolylineGraphic,
+    RectangleGraphic,
+    RoundRectangleGraphic,
+    TextFrameGraphic,
 };
 
 // ── SchDoc types ────────────────────────────────────────────────────────────
 
 pub use schdoc_types::{
-    SchDocSheet, Font, Template, SheetObject,
-    SchDocComponent, ComponentChild,
-    Wire, Bus, NetLabel, PowerObject, Port, Junction, NoConnect, BusEntry,
-    SheetSymbol, SheetSymbolChild, SheetEntry,
-    ParameterSet, Note, Probe, CompileMask, Blanket,
-    HarnessConnector, HarnessChild, SignalHarness,
+    Blanket, Bus, BusEntry, CompileMask, ComponentChild, Font, HarnessChild, HarnessConnector,
+    Junction, NetLabel, NoConnect, Note, ParameterSet, Port, PowerObject, Probe, SchDocComponent,
+    SchDocSheet, SheetEntry, SheetObject, SheetSymbol, SheetSymbolChild, SignalHarness, Template,
+    Wire,
 };
 
 // ── Shared PCB types ────────────────────────────────────────────────────────
 
-pub use pcb_common::{
-    PcbContour, ContourSegment,
-    PadStack, PadLayerShape, PadInnerLayerOverride,
-};
+pub use pcb_common::{ContourSegment, PadInnerLayerOverride, PadLayerShape, PadStack, PcbContour};
 
 // ── PcbLib types ─────────────────────────────────────────────────────────────
 
 pub use pcblib_types::{
-    Footprint, Pad, PcbGraphic,
-    TrackGraphic, PcbArcGraphic, FillGraphic, RegionGraphic,
-    TextGraphic, ViaGraphic, ComponentBodyGraphic,
+    ComponentBodyGraphic, FillGraphic, Footprint, Pad, PcbArcGraphic, PcbGraphic, RegionGraphic,
+    TextGraphic, TrackGraphic, ViaGraphic,
 };
 
 // ── PcbDoc types ────────────────────────────────────────────────────────────
 
 pub use pcbdoc_types::{
-    PcbDocBoard, BoardSettings, LayerStack, StackLayer,
-    BoardGeometry, BoardContour, KeepoutZone,
-    BoardConnectivity, NetPinList, NetPin, LayerPrimitives, DrillPairGroup,
-    Net, PcbDocComponent, Polygon, NetClass, DesignRule, RuleParams, DifferentialPair,
-    Track, Arc, Via, Pad as PcbDocPad,
-    Fill, Text as PcbDocText, Region, ComponentBody,
-    Dimension, Model3D,
+    Arc, BoardConnectivity, BoardContour, BoardGeometry, BoardSettings, ComponentBody, DesignRule,
+    DifferentialPair, Dimension, DrillPairGroup, Fill, KeepoutZone, LayerPrimitives, LayerStack,
+    Model3D, Net, NetClass, NetPin, NetPinList, Pad as PcbDocPad, PcbDocBoard, PcbDocComponent,
+    Polygon, Region, RuleParams, StackLayer, Text as PcbDocText, Track, Via,
 };
 
 // ── PrjPcb types ────────────────────────────────────────────────────────────
 
 pub use project_types::{
-    Project, DocumentRef, BuildConfiguration, OutputGroup, OutputJob,
-    AnnotationSettings, AnnotationMatchParameter, ClassGenSettings,
-    LibraryUpdateSettings, DatabaseUpdateSettings, ComparisonOption,
-    ErcConnectionMatrix, ErcLevel, ModificationLevel, DifferenceLevel,
-    ProjectVariant, ComponentVariation, ParameterVariation,
-    ProjectParameter, DiffPairSuffix, NetInfo,
+    AnnotationMatchParameter, AnnotationSettings, BuildConfiguration, ClassGenSettings,
+    ComparisonOption, ComponentVariation, DatabaseUpdateSettings, DiffPairSuffix, DifferenceLevel,
+    DocumentRef, ErcConnectionMatrix, ErcLevel, LibraryUpdateSettings, ModificationLevel, NetInfo,
+    OutputGroup, OutputJob, ParameterVariation, Project, ProjectParameter, ProjectVariant,
 };
 
 // Re-export SchAngle so consumers can construct angle values

@@ -54,11 +54,12 @@ pub(crate) fn parse_shared_union_stream(data: &[u8]) -> Result<Vec<SharedUnionEn
         let mut prefixed = Vec::with_capacity(1 + header_bytes.len());
         prefixed.push(b'|');
         prefixed.extend_from_slice(header_bytes);
-        let mut params = ParameterCollection::from_bytes(&prefixed)
-            .map_err(|e| AltiumFormatError::WithContext {
+        let mut params = ParameterCollection::from_bytes(&prefixed).map_err(|e| {
+            AltiumFormatError::WithContext {
                 context: format!("SharedUnion entry #{entry_idx} header"),
                 source: Box::new(e),
-            })?;
+            }
+        })?;
 
         let primitive_index: i32 = params.remove_required("PRIMITIVEINDEX")?;
         let object_id_str: String = params.remove_required("OBJECTID")?;
@@ -78,10 +79,12 @@ pub(crate) fn parse_shared_union_stream(data: &[u8]) -> Result<Vec<SharedUnionEn
             // Extract REF*INDEX and REF*OBJID from header before assert_exhausted
             // (they may also appear in the header for hidden-mode unions).
             drain_ref_keys(&mut params);
-            params.assert_exhausted().map_err(|e| AltiumFormatError::WithContext {
-                context: format!("SharedUnion entry #{entry_idx} header (hidden mode)"),
-                source: Box::new(e),
-            })?;
+            params
+                .assert_exhausted()
+                .map_err(|e| AltiumFormatError::WithContext {
+                    context: format!("SharedUnion entry #{entry_idx} header (hidden mode)"),
+                    source: Box::new(e),
+                })?;
 
             for child_idx in 0..hidden_count {
                 let child_len = reader.read_u32_le()? as usize;
@@ -90,12 +93,14 @@ pub(crate) fn parse_shared_union_stream(data: &[u8]) -> Result<Vec<SharedUnionEn
                 let mut child_prefixed = Vec::with_capacity(1 + child_bytes.len());
                 child_prefixed.push(b'|');
                 child_prefixed.extend_from_slice(child_bytes);
-                let child_params = ParameterCollection::from_bytes(&child_prefixed)
-                    .map_err(|e| AltiumFormatError::WithContext {
-                        context: format!(
-                            "SharedUnion entry #{entry_idx} hidden primitive #{child_idx}"
-                        ),
-                        source: Box::new(e),
+                let child_params =
+                    ParameterCollection::from_bytes(&child_prefixed).map_err(|e| {
+                        AltiumFormatError::WithContext {
+                            context: format!(
+                                "SharedUnion entry #{entry_idx} hidden primitive #{child_idx}"
+                            ),
+                            source: Box::new(e),
+                        }
                     })?;
                 // We do NOT call assert_exhausted on hidden primitives — they are full
                 // primitive descriptions with many keys that we store as-is.
@@ -121,17 +126,21 @@ pub(crate) fn parse_shared_union_stream(data: &[u8]) -> Result<Vec<SharedUnionEn
                     object_id: ref_objid,
                 });
             }
-            params.assert_exhausted().map_err(|e| AltiumFormatError::WithContext {
-                context: format!("SharedUnion entry #{entry_idx} header (referenced mode)"),
-                source: Box::new(e),
-            })?;
+            params
+                .assert_exhausted()
+                .map_err(|e| AltiumFormatError::WithContext {
+                    context: format!("SharedUnion entry #{entry_idx} header (referenced mode)"),
+                    source: Box::new(e),
+                })?;
             SharedUnionChildren::Referenced(refs)
         } else {
             drain_ref_keys(&mut params);
-            params.assert_exhausted().map_err(|e| AltiumFormatError::WithContext {
-                context: format!("SharedUnion entry #{entry_idx} header (no children)"),
-                source: Box::new(e),
-            })?;
+            params
+                .assert_exhausted()
+                .map_err(|e| AltiumFormatError::WithContext {
+                    context: format!("SharedUnion entry #{entry_idx} header (no children)"),
+                    source: Box::new(e),
+                })?;
             SharedUnionChildren::None
         };
 
@@ -164,10 +173,7 @@ pub(crate) fn serialize_shared_union_stream(entries: &[SharedUnionEntry]) -> Vec
 
         match &entry.children {
             SharedUnionChildren::Hidden(hidden) => {
-                params.insert(
-                    "HIDDENPRIMITIVESCOUNT",
-                    (hidden.len() as i32).to_string(),
-                );
+                params.insert("HIDDENPRIMITIVESCOUNT", (hidden.len() as i32).to_string());
                 // Write header
                 let header_bytes = params.to_bytes();
                 // Strip the leading `|` since the format omits it.

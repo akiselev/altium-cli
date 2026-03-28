@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use altium_format_types::{MaskExpansionMode, PcbObjectId, ViewableObjectId};
 
-use crate::block_stream::{iter_blocks, write_text_block};
 use crate::binary_io::{BinaryReader, BinaryWriter};
+use crate::block_stream::{iter_blocks, write_text_block};
 use crate::param_collection::ParameterCollection;
 use crate::pcb_binary_stream::parse_pcb_section_header;
 use crate::pcblib::PcbPrimitive;
@@ -220,7 +220,10 @@ pub(crate) fn parse_primitive_guids_pcbdoc(
             key: "PrimitiveGuids/Data".to_owned(),
             detail: format!(
                 "expected {} bytes ({} × {}), got {}",
-                expected_bytes, count, PRIMITIVE_GUID_RECORD_SIZE, data.len()
+                expected_bytes,
+                count,
+                PRIMITIVE_GUID_RECORD_SIZE,
+                data.len()
             ),
         });
     }
@@ -267,12 +270,11 @@ pub(crate) fn parse_primitive_guids(
     let mut entries = Vec::with_capacity(count);
     for _ in 0..count {
         let object_id_value = reader.read_i32_le()?;
-        let object_id_u8 = u8::try_from(object_id_value).map_err(|_| {
-            AltiumFormatError::InvalidParamValue {
+        let object_id_u8 =
+            u8::try_from(object_id_value).map_err(|_| AltiumFormatError::InvalidParamValue {
                 key: "PrimitiveGuids.ObjectId".to_owned(),
                 detail: format!("object id out of byte range: {object_id_value}"),
-            }
-        })?;
+            })?;
         let object_id = ViewableObjectId::try_from(object_id_u8).map_err(|_| {
             AltiumFormatError::InvalidParamValue {
                 key: "PrimitiveGuids.ObjectId".to_owned(),
@@ -476,10 +478,7 @@ pub(crate) fn serialize_extended_primitive_information(
     for entry in entries {
         let mut params = ParameterCollection::new();
         params.insert("PRIMITIVEINDEX", entry.primitive_index.to_string());
-        params.insert(
-            "PRIMITIVEOBJECTID",
-            entry.primitive_object_id.to_string(),
-        );
+        params.insert("PRIMITIVEOBJECTID", entry.primitive_object_id.to_string());
         if !entry.info_type.is_empty() {
             params.insert("TYPE", entry.info_type.clone());
         }
@@ -515,9 +514,7 @@ pub(crate) fn serialize_extended_primitive_information(
 ///
 /// Each entry is a 24-byte binary record: i32 object_id + i32 index_for_save + 16-byte GUID.
 /// Returns (header_bytes, data_bytes).
-pub(crate) fn serialize_primitive_guids(
-    entries: &[PrimitiveGuidEntry],
-) -> (Vec<u8>, Vec<u8>) {
+pub(crate) fn serialize_primitive_guids(entries: &[PrimitiveGuidEntry]) -> (Vec<u8>, Vec<u8>) {
     let mut w = BinaryWriter::new();
     for entry in entries {
         w.write_i32_le(entry.object_id as u8 as i32);

@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
+use altium_format_types::constants::record_structure::RECORD;
 use altium_format_types::coord::Coord;
 use altium_format_types::{ComponentPlacementType, DielectricType, LayerStackStyle};
-use altium_format_types::constants::record_structure::RECORD;
 use indexmap::IndexMap;
 
 use crate::param_collection::ParameterCollection;
@@ -280,53 +280,53 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
         .unwrap_or_default();
 
     // 1. V9 master stack (probe STYLE as existence check)
-    let v9_master_stack = if let Some(style_str) =
-        params.remove_optional::<String>("V9_MASTERSTACK_STYLE")?
-    {
-        let style_raw: i32 = style_str
-            .parse()
-            .map_err(|_| AltiumFormatError::InvalidParamValue {
-                key: "V9_MASTERSTACK_STYLE".to_owned(),
-                detail: format!("cannot parse '{style_str}' as i32"),
+    let v9_master_stack =
+        if let Some(style_str) = params.remove_optional::<String>("V9_MASTERSTACK_STYLE")? {
+            let style_raw: i32 =
+                style_str
+                    .parse()
+                    .map_err(|_| AltiumFormatError::InvalidParamValue {
+                        key: "V9_MASTERSTACK_STYLE".to_owned(),
+                        detail: format!("cannot parse '{style_str}' as i32"),
+                    })?;
+            let style = LayerStackStyle::try_from(style_raw as u8).map_err(|e| {
+                AltiumFormatError::InvalidParamValue {
+                    key: "V9_MASTERSTACK_STYLE".to_owned(),
+                    detail: e.to_string(),
+                }
             })?;
-        let style = LayerStackStyle::try_from(style_raw as u8).map_err(|e| {
-            AltiumFormatError::InvalidParamValue {
-                key: "V9_MASTERSTACK_STYLE".to_owned(),
-                detail: e.to_string(),
-            }
-        })?;
-        let id = params
-            .remove_optional::<String>("V9_MASTERSTACK_ID")?
-            .unwrap_or_default();
-        let name = params
-            .remove_optional::<String>("V9_MASTERSTACK_NAME")?
-            .unwrap_or_default();
-        let show_top_dielectric = params
-            .remove_optional::<bool>("V9_MASTERSTACK_SHOWTOPDIELECTRIC")?
-            .unwrap_or_default();
-        let show_bottom_dielectric = params
-            .remove_optional::<bool>("V9_MASTERSTACK_SHOWBOTTOMDIELECTRIC")?
-            .unwrap_or_default();
-        let is_flex = params
-            .remove_optional::<bool>("V9_MASTERSTACK_ISFLEX")?
-            .unwrap_or_default();
-        Some(PcbMasterStack {
-            style,
-            id,
-            name,
-            show_top_dielectric,
-            show_bottom_dielectric,
-            is_flex,
-        })
-    } else {
-        // style not present; consume the other optional master stack fields anyway
-        let _ = params.remove_optional::<String>("V9_MASTERSTACK_ID")?;
-        let _ = params.remove_optional::<String>("V9_MASTERSTACK_NAME")?;
-        let _ = params.remove_optional::<bool>("V9_MASTERSTACK_SHOWTOPDIELECTRIC")?;
-        let _ = params.remove_optional::<bool>("V9_MASTERSTACK_SHOWBOTTOMDIELECTRIC")?;
-        let _ = params.remove_optional::<bool>("V9_MASTERSTACK_ISFLEX")?;
-        None
-    };
+            let id = params
+                .remove_optional::<String>("V9_MASTERSTACK_ID")?
+                .unwrap_or_default();
+            let name = params
+                .remove_optional::<String>("V9_MASTERSTACK_NAME")?
+                .unwrap_or_default();
+            let show_top_dielectric = params
+                .remove_optional::<bool>("V9_MASTERSTACK_SHOWTOPDIELECTRIC")?
+                .unwrap_or_default();
+            let show_bottom_dielectric = params
+                .remove_optional::<bool>("V9_MASTERSTACK_SHOWBOTTOMDIELECTRIC")?
+                .unwrap_or_default();
+            let is_flex = params
+                .remove_optional::<bool>("V9_MASTERSTACK_ISFLEX")?
+                .unwrap_or_default();
+            Some(PcbMasterStack {
+                style,
+                id,
+                name,
+                show_top_dielectric,
+                show_bottom_dielectric,
+                is_flex,
+            })
+        } else {
+            // style not present; consume the other optional master stack fields anyway
+            let _ = params.remove_optional::<String>("V9_MASTERSTACK_ID")?;
+            let _ = params.remove_optional::<String>("V9_MASTERSTACK_NAME")?;
+            let _ = params.remove_optional::<bool>("V9_MASTERSTACK_SHOWTOPDIELECTRIC")?;
+            let _ = params.remove_optional::<bool>("V9_MASTERSTACK_SHOWBOTTOMDIELECTRIC")?;
+            let _ = params.remove_optional::<bool>("V9_MASTERSTACK_ISFLEX")?;
+            None
+        };
 
     // 2. V9 substacks (probe loop, 0-based)
     let mut v9_substacks = Vec::new();
@@ -404,52 +404,52 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
     }
 
     // 5. V8 master stack (probe LAYERMASTERSTACK_V8STYLE)
-    let v8_master_stack = if let Some(style_str) =
-        params.remove_optional::<String>("LAYERMASTERSTACK_V8STYLE")?
-    {
-        let style_raw: i32 = style_str
-            .parse()
-            .map_err(|_| AltiumFormatError::InvalidParamValue {
-                key: "LAYERMASTERSTACK_V8STYLE".to_owned(),
-                detail: format!("cannot parse '{style_str}' as i32"),
+    let v8_master_stack =
+        if let Some(style_str) = params.remove_optional::<String>("LAYERMASTERSTACK_V8STYLE")? {
+            let style_raw: i32 =
+                style_str
+                    .parse()
+                    .map_err(|_| AltiumFormatError::InvalidParamValue {
+                        key: "LAYERMASTERSTACK_V8STYLE".to_owned(),
+                        detail: format!("cannot parse '{style_str}' as i32"),
+                    })?;
+            let style = LayerStackStyle::try_from(style_raw as u8).map_err(|e| {
+                AltiumFormatError::InvalidParamValue {
+                    key: "LAYERMASTERSTACK_V8STYLE".to_owned(),
+                    detail: e.to_string(),
+                }
             })?;
-        let style = LayerStackStyle::try_from(style_raw as u8).map_err(|e| {
-            AltiumFormatError::InvalidParamValue {
-                key: "LAYERMASTERSTACK_V8STYLE".to_owned(),
-                detail: e.to_string(),
-            }
-        })?;
-        let id = params
-            .remove_optional::<String>("LAYERMASTERSTACK_V8ID")?
-            .unwrap_or_default();
-        let name = params
-            .remove_optional::<String>("LAYERMASTERSTACK_V8NAME")?
-            .unwrap_or_default();
-        let show_top_dielectric = params
-            .remove_optional::<bool>("LAYERMASTERSTACK_V8SHOWTOPDIELECTRIC")?
-            .unwrap_or_default();
-        let show_bottom_dielectric = params
-            .remove_optional::<bool>("LAYERMASTERSTACK_V8SHOWBOTTOMDIELECTRIC")?
-            .unwrap_or_default();
-        let is_flex = params
-            .remove_optional::<bool>("LAYERMASTERSTACK_V8ISFLEX")?
-            .unwrap_or_default();
-        Some(PcbMasterStack {
-            style,
-            id,
-            name,
-            show_top_dielectric,
-            show_bottom_dielectric,
-            is_flex,
-        })
-    } else {
-        let _ = params.remove_optional::<String>("LAYERMASTERSTACK_V8ID")?;
-        let _ = params.remove_optional::<String>("LAYERMASTERSTACK_V8NAME")?;
-        let _ = params.remove_optional::<bool>("LAYERMASTERSTACK_V8SHOWTOPDIELECTRIC")?;
-        let _ = params.remove_optional::<bool>("LAYERMASTERSTACK_V8SHOWBOTTOMDIELECTRIC")?;
-        let _ = params.remove_optional::<bool>("LAYERMASTERSTACK_V8ISFLEX")?;
-        None
-    };
+            let id = params
+                .remove_optional::<String>("LAYERMASTERSTACK_V8ID")?
+                .unwrap_or_default();
+            let name = params
+                .remove_optional::<String>("LAYERMASTERSTACK_V8NAME")?
+                .unwrap_or_default();
+            let show_top_dielectric = params
+                .remove_optional::<bool>("LAYERMASTERSTACK_V8SHOWTOPDIELECTRIC")?
+                .unwrap_or_default();
+            let show_bottom_dielectric = params
+                .remove_optional::<bool>("LAYERMASTERSTACK_V8SHOWBOTTOMDIELECTRIC")?
+                .unwrap_or_default();
+            let is_flex = params
+                .remove_optional::<bool>("LAYERMASTERSTACK_V8ISFLEX")?
+                .unwrap_or_default();
+            Some(PcbMasterStack {
+                style,
+                id,
+                name,
+                show_top_dielectric,
+                show_bottom_dielectric,
+                is_flex,
+            })
+        } else {
+            let _ = params.remove_optional::<String>("LAYERMASTERSTACK_V8ID")?;
+            let _ = params.remove_optional::<String>("LAYERMASTERSTACK_V8NAME")?;
+            let _ = params.remove_optional::<bool>("LAYERMASTERSTACK_V8SHOWTOPDIELECTRIC")?;
+            let _ = params.remove_optional::<bool>("LAYERMASTERSTACK_V8SHOWBOTTOMDIELECTRIC")?;
+            let _ = params.remove_optional::<bool>("LAYERMASTERSTACK_V8ISFLEX")?;
+            None
+        };
 
     // 6. V8 layers (0-based, no separator between index and field name)
     let mut v8_layers = Vec::new();
@@ -483,17 +483,19 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
                     .remove_optional::<bool>(&format!("LAYERSUBSTACK_V8_{idx}SHOWTOPDIELECTRIC"))?
                     .unwrap_or_default();
                 let show_bottom_dielectric = params
-                    .remove_optional::<bool>(&format!("LAYERSUBSTACK_V8_{idx}SHOWBOTTOMDIELECTRIC"))?
+                    .remove_optional::<bool>(&format!(
+                        "LAYERSUBSTACK_V8_{idx}SHOWBOTTOMDIELECTRIC"
+                    ))?
                     .unwrap_or_default();
                 let is_flex = params
                     .remove_optional::<bool>(&format!("LAYERSUBSTACK_V8_{idx}ISFLEX"))?
                     .unwrap_or_default();
-                let service = params
-                    .remove_optional::<bool>(&format!("LAYERSUBSTACK_V8_{idx}SERVICE"))?;
+                let service =
+                    params.remove_optional::<bool>(&format!("LAYERSUBSTACK_V8_{idx}SERVICE"))?;
                 let used_by_prims = params
                     .remove_optional::<bool>(&format!("LAYERSUBSTACK_V8_{idx}USEDBYPRIMS"))?;
-                let substack_type = params
-                    .remove_optional::<i32>(&format!("LAYERSUBSTACK_V8_{idx}TYPE"))?;
+                let substack_type =
+                    params.remove_optional::<i32>(&format!("LAYERSUBSTACK_V8_{idx}TYPE"))?;
                 v8_substacks.push(PcbSubStack {
                     id,
                     name,
@@ -612,8 +614,8 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
                 let diel_material = params
                     .remove_optional::<String>(&format!("LAYER{n}DIELMATERIAL"))?
                     .unwrap_or_default();
-                let sheet_linked = params
-                    .remove_optional::<String>(&format!("LAYER{n}SHEETLINKED"))?;
+                let sheet_linked =
+                    params.remove_optional::<String>(&format!("LAYER{n}SHEETLINKED"))?;
                 legacy_layers.push(PcbLegacyLayerEntry {
                     name,
                     prev,
@@ -992,8 +994,7 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
     // CFG2D indexed families
     // Older files use a flat semicolon-delimited form: CFG2D.LAYEROPACITY=1.0;1.0;...
     // Newer files use per-layer keys: CFG2D.LAYEROPACITY.TOPLAYER=1.0 etc.
-    let layer_opacity_flat = params
-        .remove_optional::<String>("CFG2D.LAYEROPACITY")?;
+    let layer_opacity_flat = params.remove_optional::<String>("CFG2D.LAYEROPACITY")?;
     let opacity_raw = params.remove_prefixed("CFG2D.LAYEROPACITY.");
     let prefix_len = "CFG2D.LAYEROPACITY.".len();
     let layer_opacity: IndexMap<String, String> = opacity_raw
@@ -1195,13 +1196,14 @@ pub(crate) fn parse_board_config(params: &mut ParameterCollection) -> Result<Pcb
 ///
 /// The parameters are inserted in the same order as they are parsed by
 /// `parse_board_config`, which preserves insertion order via IndexMap.
-pub(crate) fn serialize_board_config(
-    config: &PcbBoardConfig,
-    params: &mut ParameterCollection,
-) {
+pub(crate) fn serialize_board_config(config: &PcbBoardConfig, params: &mut ParameterCollection) {
     use crate::param_value::ToParamValue;
     fn bool_str(b: bool) -> String {
-        if b { "TRUE".to_owned() } else { "FALSE".to_owned() }
+        if b {
+            "TRUE".to_owned()
+        } else {
+            "FALSE".to_owned()
+        }
     }
 
     // 1. RECORD
@@ -1214,8 +1216,14 @@ pub(crate) fn serialize_board_config(
         params.insert("V9_MASTERSTACK_STYLE", (ms.style as u8).to_string());
         params.insert("V9_MASTERSTACK_ID", ms.id.clone());
         params.insert("V9_MASTERSTACK_NAME", ms.name.clone());
-        params.insert("V9_MASTERSTACK_SHOWTOPDIELECTRIC", bool_str(ms.show_top_dielectric));
-        params.insert("V9_MASTERSTACK_SHOWBOTTOMDIELECTRIC", bool_str(ms.show_bottom_dielectric));
+        params.insert(
+            "V9_MASTERSTACK_SHOWTOPDIELECTRIC",
+            bool_str(ms.show_top_dielectric),
+        );
+        params.insert(
+            "V9_MASTERSTACK_SHOWBOTTOMDIELECTRIC",
+            bool_str(ms.show_bottom_dielectric),
+        );
         params.insert("V9_MASTERSTACK_ISFLEX", bool_str(ms.is_flex));
     }
 
@@ -1223,8 +1231,14 @@ pub(crate) fn serialize_board_config(
     for (i, ss) in config.v9_substacks.iter().enumerate() {
         params.insert(&format!("V9_SUBSTACK{i}_ID"), ss.id.clone());
         params.insert(&format!("V9_SUBSTACK{i}_NAME"), ss.name.clone());
-        params.insert(&format!("V9_SUBSTACK{i}_SHOWTOPDIELECTRIC"), bool_str(ss.show_top_dielectric));
-        params.insert(&format!("V9_SUBSTACK{i}_SHOWBOTTOMDIELECTRIC"), bool_str(ss.show_bottom_dielectric));
+        params.insert(
+            &format!("V9_SUBSTACK{i}_SHOWTOPDIELECTRIC"),
+            bool_str(ss.show_top_dielectric),
+        );
+        params.insert(
+            &format!("V9_SUBSTACK{i}_SHOWBOTTOMDIELECTRIC"),
+            bool_str(ss.show_bottom_dielectric),
+        );
         params.insert(&format!("V9_SUBSTACK{i}_ISFLEX"), bool_str(ss.is_flex));
     }
 
@@ -1241,7 +1255,10 @@ pub(crate) fn serialize_board_config(
         params.insert(&format!("{prefix}ID"), cache.layer.id.clone());
         serialize_stack_layer_fields(params, &prefix, &cache.layer);
         if let Some(pb) = cache.pullback_distance {
-            params.insert(&format!("{prefix}PULLBACKDISTANCE"), MilCoord(pb).to_param_value());
+            params.insert(
+                &format!("{prefix}PULLBACKDISTANCE"),
+                MilCoord(pb).to_param_value(),
+            );
         }
     }
 
@@ -1250,8 +1267,14 @@ pub(crate) fn serialize_board_config(
         params.insert("LAYERMASTERSTACK_V8STYLE", (ms.style as u8).to_string());
         params.insert("LAYERMASTERSTACK_V8ID", ms.id.clone());
         params.insert("LAYERMASTERSTACK_V8NAME", ms.name.clone());
-        params.insert("LAYERMASTERSTACK_V8SHOWTOPDIELECTRIC", bool_str(ms.show_top_dielectric));
-        params.insert("LAYERMASTERSTACK_V8SHOWBOTTOMDIELECTRIC", bool_str(ms.show_bottom_dielectric));
+        params.insert(
+            "LAYERMASTERSTACK_V8SHOWTOPDIELECTRIC",
+            bool_str(ms.show_top_dielectric),
+        );
+        params.insert(
+            "LAYERMASTERSTACK_V8SHOWBOTTOMDIELECTRIC",
+            bool_str(ms.show_bottom_dielectric),
+        );
         params.insert("LAYERMASTERSTACK_V8ISFLEX", bool_str(ms.is_flex));
     }
 
@@ -1266,17 +1289,29 @@ pub(crate) fn serialize_board_config(
     for (i, ss) in config.v8_substacks.iter().enumerate() {
         params.insert(&format!("LAYERSUBSTACK_V8_{i}ID"), ss.id.clone());
         params.insert(&format!("LAYERSUBSTACK_V8_{i}NAME"), ss.name.clone());
-        params.insert(&format!("LAYERSUBSTACK_V8_{i}SHOWTOPDIELECTRIC"), bool_str(ss.show_top_dielectric));
-        params.insert(&format!("LAYERSUBSTACK_V8_{i}SHOWBOTTOMDIELECTRIC"), bool_str(ss.show_bottom_dielectric));
+        params.insert(
+            &format!("LAYERSUBSTACK_V8_{i}SHOWTOPDIELECTRIC"),
+            bool_str(ss.show_top_dielectric),
+        );
+        params.insert(
+            &format!("LAYERSUBSTACK_V8_{i}SHOWBOTTOMDIELECTRIC"),
+            bool_str(ss.show_bottom_dielectric),
+        );
         params.insert(&format!("LAYERSUBSTACK_V8_{i}ISFLEX"), bool_str(ss.is_flex));
         if let Some(service) = ss.service {
             params.insert(&format!("LAYERSUBSTACK_V8_{i}SERVICE"), bool_str(service));
         }
         if let Some(used_by_prims) = ss.used_by_prims {
-            params.insert(&format!("LAYERSUBSTACK_V8_{i}USEDBYPRIMS"), bool_str(used_by_prims));
+            params.insert(
+                &format!("LAYERSUBSTACK_V8_{i}USEDBYPRIMS"),
+                bool_str(used_by_prims),
+            );
         }
         if let Some(substack_type) = ss.substack_type {
-            params.insert(&format!("LAYERSUBSTACK_V8_{i}TYPE"), substack_type.to_string());
+            params.insert(
+                &format!("LAYERSUBSTACK_V8_{i}TYPE"),
+                substack_type.to_string(),
+            );
         }
     }
 
@@ -1286,15 +1321,33 @@ pub(crate) fn serialize_board_config(
         params.insert(&format!("LAYERV7_{i}NAME"), v7.name.clone());
         params.insert(&format!("LAYERV7_{i}PREV"), v7.prev.to_string());
         params.insert(&format!("LAYERV7_{i}NEXT"), v7.next.to_string());
-        params.insert(&format!("LAYERV7_{i}MECHENABLED"), bool_str(v7.mech_enabled));
+        params.insert(
+            &format!("LAYERV7_{i}MECHENABLED"),
+            bool_str(v7.mech_enabled),
+        );
         if let Some(mk) = &v7.mech_kind {
             params.insert(&format!("LAYERV7_{i}MECHKIND"), mk.clone());
         }
-        params.insert(&format!("LAYERV7_{i}COPTHICK"), MilCoord(v7.cop_thick).to_param_value());
-        params.insert(&format!("LAYERV7_{i}DIELTYPE"), (v7.diel_type as u8).to_string());
-        params.insert(&format!("LAYERV7_{i}DIELCONST"), v7.diel_const.to_param_value());
-        params.insert(&format!("LAYERV7_{i}DIELHEIGHT"), MilCoord(v7.diel_height).to_param_value());
-        params.insert(&format!("LAYERV7_{i}DIELMATERIAL"), v7.diel_material.clone());
+        params.insert(
+            &format!("LAYERV7_{i}COPTHICK"),
+            MilCoord(v7.cop_thick).to_param_value(),
+        );
+        params.insert(
+            &format!("LAYERV7_{i}DIELTYPE"),
+            (v7.diel_type as u8).to_string(),
+        );
+        params.insert(
+            &format!("LAYERV7_{i}DIELCONST"),
+            v7.diel_const.to_param_value(),
+        );
+        params.insert(
+            &format!("LAYERV7_{i}DIELHEIGHT"),
+            MilCoord(v7.diel_height).to_param_value(),
+        );
+        params.insert(
+            &format!("LAYERV7_{i}DIELMATERIAL"),
+            v7.diel_material.clone(),
+        );
     }
 
     // 9. Legacy layers (1-based, sequential from index 1)
@@ -1307,10 +1360,22 @@ pub(crate) fn serialize_board_config(
         if let Some(mk) = &leg.mech_kind {
             params.insert(&format!("LAYER{n}MECHKIND"), mk.clone());
         }
-        params.insert(&format!("LAYER{n}COPTHICK"), MilCoord(leg.cop_thick).to_param_value());
-        params.insert(&format!("LAYER{n}DIELTYPE"), (leg.diel_type as u8).to_string());
-        params.insert(&format!("LAYER{n}DIELCONST"), leg.diel_const.to_param_value());
-        params.insert(&format!("LAYER{n}DIELHEIGHT"), MilCoord(leg.diel_height).to_param_value());
+        params.insert(
+            &format!("LAYER{n}COPTHICK"),
+            MilCoord(leg.cop_thick).to_param_value(),
+        );
+        params.insert(
+            &format!("LAYER{n}DIELTYPE"),
+            (leg.diel_type as u8).to_string(),
+        );
+        params.insert(
+            &format!("LAYER{n}DIELCONST"),
+            leg.diel_const.to_param_value(),
+        );
+        params.insert(
+            &format!("LAYER{n}DIELHEIGHT"),
+            MilCoord(leg.diel_height).to_param_value(),
+        );
         params.insert(&format!("LAYER{n}DIELMATERIAL"), leg.diel_material.clone());
         if let Some(sl) = &leg.sheet_linked {
             params.insert(&format!("LAYER{n}SHEETLINKED"), sl.clone());
@@ -1344,7 +1409,10 @@ pub(crate) fn serialize_board_config(
             let n = idx + 1;
             params.insert(&format!("LAYERSET{n}NAME"), ls.name.clone());
             params.insert(&format!("LAYERSET{n}LAYERS"), ls.layers.clone());
-            params.insert(&format!("LAYERSET{n}ACTIVELAYER.7"), ls.active_layer.clone());
+            params.insert(
+                &format!("LAYERSET{n}ACTIVELAYER.7"),
+                ls.active_layer.clone(),
+            );
             params.insert(&format!("LAYERSET{n}ISCURRENT"), bool_str(ls.is_current));
             params.insert(&format!("LAYERSET{n}ISLOCKED"), bool_str(ls.is_locked));
             params.insert(&format!("LAYERSET{n}FLIPBOARD"), bool_str(ls.flip_board));
@@ -1359,9 +1427,15 @@ pub(crate) fn serialize_board_config(
     params.insert("SNAPGRIDSIZEX", gs.snap_grid_size_x.clone());
     params.insert("SNAPGRIDSIZEY", gs.snap_grid_size_y.clone());
     params.insert("VISIBLEGRIDMULTFACTOR", gs.visible_grid_mult_factor.clone());
-    params.insert("BIGVISIBLEGRIDMULTFACTOR", gs.big_visible_grid_mult_factor.clone());
+    params.insert(
+        "BIGVISIBLEGRIDMULTFACTOR",
+        gs.big_visible_grid_mult_factor.clone(),
+    );
     params.insert("ELECTRICALGRIDRANGE", gs.electrical_grid_range.clone());
-    params.insert("ELECTRICALGRIDENABLED", bool_str(gs.electrical_grid_enabled));
+    params.insert(
+        "ELECTRICALGRIDENABLED",
+        bool_str(gs.electrical_grid_enabled),
+    );
     params.insert("DOTGRID", bool_str(gs.dot_grid));
     params.insert("DOTGRIDLARGE", bool_str(gs.dot_grid_large));
 
@@ -1389,14 +1463,20 @@ pub(crate) fn serialize_board_config(
     params.insert("3DCONFIGTYPE", vc.config_3d_type.clone());
     params.insert("3DCONFIGURATION", vc.configuration_3d.clone());
     params.insert("3DCONFIGFULLFILENAME", vc.config_3d_full_filename.clone());
-    params.insert("BOARDINSIGHTVIEWCONFIGURATIONNAME", vc.board_insight_view_configuration_name.clone());
+    params.insert(
+        "BOARDINSIGHTVIEWCONFIGURATIONNAME",
+        vc.board_insight_view_configuration_name.clone(),
+    );
 
     // 16. Snapping
     let sn = &config.snapping;
     params.insert("EGRANGE", sn.eg_range.clone());
     params.insert("EGMULT", sn.eg_mult.clone());
     params.insert("EGENABLED", bool_str(sn.eg_enabled));
-    params.insert("EGSNAPTOBOARDOUTLINE", bool_str(sn.eg_snap_to_board_outline));
+    params.insert(
+        "EGSNAPTOBOARDOUTLINE",
+        bool_str(sn.eg_snap_to_board_outline),
+    );
     params.insert("EGSNAPTOARCCENTERS", bool_str(sn.eg_snap_to_arc_centers));
     params.insert("EGUSEALLLAYERS", bool_str(sn.eg_use_all_layers));
     params.insert("OGSNAPENABLED", bool_str(sn.og_snap_enabled));
@@ -1419,7 +1499,10 @@ pub(crate) fn serialize_board_config(
     let c2 = &config.cfg2d;
     params.insert("CFG2D.PRIMDRAWMODE", c2.prim_draw_mode.clone());
     params.insert("CFG2D.CURRENTLAYER", c2.current_layer.clone());
-    params.insert("CFG2D.DISPLAYSPECIALSTRINGS", bool_str(c2.display_special_strings));
+    params.insert(
+        "CFG2D.DISPLAYSPECIALSTRINGS",
+        bool_str(c2.display_special_strings),
+    );
     params.insert("CFG2D.SHOWTESTPOINTS", bool_str(c2.show_test_points));
     params.insert("CFG2D.SHOWORIGINMARKER", bool_str(c2.show_origin_marker));
     params.insert("CFG2D.EYEDIST", c2.eye_dist.clone());
@@ -1428,31 +1511,88 @@ pub(crate) fn serialize_board_config(
     params.insert("CFG2D.SHOWPADNUMBERS", bool_str(c2.show_pad_numbers));
     params.insert("CFG2D.SHOWVIANETS", bool_str(c2.show_via_nets));
     params.insert("CFG2D.SHOWVIASPAN", bool_str(c2.show_via_span));
-    params.insert("CFG2D.USETRANSPARENTLAYERS", bool_str(c2.use_transparent_layers));
+    params.insert(
+        "CFG2D.USETRANSPARENTLAYERS",
+        bool_str(c2.use_transparent_layers),
+    );
     params.insert("CFG2D.PLANEDRAWMODE", c2.plane_draw_mode.clone());
-    params.insert("CFG2D.DISPLAYNETNAMESONTRACKS", c2.display_net_names_on_tracks.clone());
+    params.insert(
+        "CFG2D.DISPLAYNETNAMESONTRACKS",
+        c2.display_net_names_on_tracks.clone(),
+    );
     params.insert("CFG2D.FROMTOSDISPLAYMODE", c2.from_tos_display_mode.clone());
-    params.insert("CFG2D.PADTYPESDISPLAYMODE", c2.pad_types_display_mode.clone());
-    params.insert("CFG2D.SINGLELAYERMODESTATE", c2.single_layer_mode_state.clone());
+    params.insert(
+        "CFG2D.PADTYPESDISPLAYMODE",
+        c2.pad_types_display_mode.clone(),
+    );
+    params.insert(
+        "CFG2D.SINGLELAYERMODESTATE",
+        c2.single_layer_mode_state.clone(),
+    );
     params.insert("CFG2D.ORIGINMARKERCOLOR", c2.origin_marker_color.clone());
-    params.insert("CFG2D.SHOWCOMPONENTREFPOINT", bool_str(c2.show_component_ref_point));
-    params.insert("CFG2D.COMPONENTREFPOINTCOLOR", c2.component_ref_point_color.clone());
-    params.insert("CFG2D.POSITIVETOPSOLDERMASK", bool_str(c2.positive_top_solder_mask));
-    params.insert("CFG2D.POSITIVEBOTTOMSOLDERMASK", bool_str(c2.positive_bottom_solder_mask));
-    params.insert("CFG2D.TOPPOSITIVESOLDERMASKALPHA", c2.top_positive_solder_mask_alpha.clone());
-    params.insert("CFG2D.BOTTOMPOSITIVESOLDERMASKALPHA", c2.bottom_positive_solder_mask_alpha.clone());
-    params.insert("CFG2D.ALLCONNECTIONSINSINGLELAYERMODE", bool_str(c2.all_connections_in_single_layer_mode));
-    params.insert("CFG2D.MULTICOLOREDCONNECTIONS", bool_str(c2.multi_colored_connections));
-    params.insert("CFG2D.SHOWSPECIALSTRINGSHANDLES", bool_str(c2.show_special_strings_handles));
+    params.insert(
+        "CFG2D.SHOWCOMPONENTREFPOINT",
+        bool_str(c2.show_component_ref_point),
+    );
+    params.insert(
+        "CFG2D.COMPONENTREFPOINTCOLOR",
+        c2.component_ref_point_color.clone(),
+    );
+    params.insert(
+        "CFG2D.POSITIVETOPSOLDERMASK",
+        bool_str(c2.positive_top_solder_mask),
+    );
+    params.insert(
+        "CFG2D.POSITIVEBOTTOMSOLDERMASK",
+        bool_str(c2.positive_bottom_solder_mask),
+    );
+    params.insert(
+        "CFG2D.TOPPOSITIVESOLDERMASKALPHA",
+        c2.top_positive_solder_mask_alpha.clone(),
+    );
+    params.insert(
+        "CFG2D.BOTTOMPOSITIVESOLDERMASKALPHA",
+        c2.bottom_positive_solder_mask_alpha.clone(),
+    );
+    params.insert(
+        "CFG2D.ALLCONNECTIONSINSINGLELAYERMODE",
+        bool_str(c2.all_connections_in_single_layer_mode),
+    );
+    params.insert(
+        "CFG2D.MULTICOLOREDCONNECTIONS",
+        bool_str(c2.multi_colored_connections),
+    );
+    params.insert(
+        "CFG2D.SHOWSPECIALSTRINGSHANDLES",
+        bool_str(c2.show_special_strings_handles),
+    );
     params.insert("CFG2D.TOGGLELAYERS", c2.toggle_layers.clone());
     params.insert("CFG2D.TOGGLELAYERS.SET", c2.toggle_layers_set.clone());
-    params.insert("CFG2D.MECHLAYERINSINGLELAYERMODE", c2.mech_layer_in_single_layer_mode.clone());
-    params.insert("CFG2D.MECHLAYERINSINGLELAYERMODE.SET", c2.mech_layer_in_single_layer_mode_set.clone());
-    params.insert("CFG2D.LAYERSINSINGLELAYERMODE.SET", c2.layers_in_single_layer_mode_set.clone());
-    params.insert("CFG2D.MECHLAYERLINKEDTOSHEET", c2.mech_layer_linked_to_sheet.clone());
-    params.insert("CFG2D.MECHLAYERLINKEDTOSHEET.SET", c2.mech_layer_linked_to_sheet_set.clone());
+    params.insert(
+        "CFG2D.MECHLAYERINSINGLELAYERMODE",
+        c2.mech_layer_in_single_layer_mode.clone(),
+    );
+    params.insert(
+        "CFG2D.MECHLAYERINSINGLELAYERMODE.SET",
+        c2.mech_layer_in_single_layer_mode_set.clone(),
+    );
+    params.insert(
+        "CFG2D.LAYERSINSINGLELAYERMODE.SET",
+        c2.layers_in_single_layer_mode_set.clone(),
+    );
+    params.insert(
+        "CFG2D.MECHLAYERLINKEDTOSHEET",
+        c2.mech_layer_linked_to_sheet.clone(),
+    );
+    params.insert(
+        "CFG2D.MECHLAYERLINKEDTOSHEET.SET",
+        c2.mech_layer_linked_to_sheet_set.clone(),
+    );
     if c2.mech_coverlay_updated {
-        params.insert("CFG2D.MECHCOVERLAYERUPDATED", bool_str(c2.mech_coverlay_updated));
+        params.insert(
+            "CFG2D.MECHCOVERLAYERUPDATED",
+            bool_str(c2.mech_coverlay_updated),
+        );
     }
 
     // CFG2D indexed families
@@ -1475,22 +1615,46 @@ pub(crate) fn serialize_board_config(
     let ca = &config.cfgall;
     params.insert("CFGALL.CONFIGURATIONKIND", ca.configuration_kind.clone());
     params.insert("CFGALL.CONFIGURATIONDESC", ca.configuration_desc.clone());
-    params.insert("CFGALL.COMPONENTBODYREFPOINTCOLOR", ca.component_body_ref_point_color.clone());
-    params.insert("CFGALL.COMPONENTBODYSNAPPOINTCOLOR", ca.component_body_snap_point_color.clone());
-    params.insert("CFGALL.SHOWCOMPONENTSNAPMARKERS", bool_str(ca.show_component_snap_markers));
-    params.insert("CFGALL.SHOWCOMPONENTSNAPREFERENCE", bool_str(ca.show_component_snap_reference));
-    params.insert("CFGALL.SHOWCOMPONENTSNAPCUSTOM", bool_str(ca.show_component_snap_custom));
+    params.insert(
+        "CFGALL.COMPONENTBODYREFPOINTCOLOR",
+        ca.component_body_ref_point_color.clone(),
+    );
+    params.insert(
+        "CFGALL.COMPONENTBODYSNAPPOINTCOLOR",
+        ca.component_body_snap_point_color.clone(),
+    );
+    params.insert(
+        "CFGALL.SHOWCOMPONENTSNAPMARKERS",
+        bool_str(ca.show_component_snap_markers),
+    );
+    params.insert(
+        "CFGALL.SHOWCOMPONENTSNAPREFERENCE",
+        bool_str(ca.show_component_snap_reference),
+    );
+    params.insert(
+        "CFGALL.SHOWCOMPONENTSNAPCUSTOM",
+        bool_str(ca.show_component_snap_custom),
+    );
 
     // 21. Scalars
     params.insert("DISPLAYUNIT", config.display_unit.to_string());
-    params.insert("CURRENT2D3DVIEWSTATE", config.current_2d_3d_view_state.clone());
+    params.insert(
+        "CURRENT2D3DVIEWSTATE",
+        config.current_2d_3d_view_state.clone(),
+    );
     params.insert("TOGGLELAYERS", config.toggle_layers.clone());
     params.insert("SHOWDEFAULTSETS", bool_str(config.show_default_sets));
     params.insert("BOARDVERSION", config.board_version.clone());
     params.insert("VAULTGUID", config.vault_guid.clone());
     params.insert("FOLDERGUID", config.folder_guid.clone());
-    params.insert("LIFECYCLEDEFINITIONGUID", config.lifecycle_definition_guid.clone());
-    params.insert("REVISIONNAMINGSCHEMEGUID", config.revision_naming_scheme_guid.clone());
+    params.insert(
+        "LIFECYCLEDEFINITIONGUID",
+        config.lifecycle_definition_guid.clone(),
+    );
+    params.insert(
+        "REVISIONNAMINGSCHEMEGUID",
+        config.revision_naming_scheme_guid.clone(),
+    );
     params.insert("LIBGRIDSNGUIDE", config.lib_grid_sn_guide.clone());
     if !config.unicode.is_empty() {
         params.insert("UNICODE", config.unicode.clone());
@@ -1514,7 +1678,10 @@ pub(crate) fn serialize_board_config(
 
     // 23. Selection filter (0-based)
     if !config.selection_filter.is_empty() {
-        params.insert("SELECTIONFILTER_COUNT", config.selection_filter.len().to_string());
+        params.insert(
+            "SELECTIONFILTER_COUNT",
+            config.selection_filter.len().to_string(),
+        );
         for (i, val) in config.selection_filter.iter().enumerate() {
             params.insert(&format!("SELECTIONFILTER_{i}"), val.to_string());
         }
@@ -1529,12 +1696,19 @@ fn serialize_stack_layer_fields(
     layer: &PcbStackLayerEntry,
 ) {
     fn bool_str(b: bool) -> String {
-        if b { "TRUE".to_owned() } else { "FALSE".to_owned() }
+        if b {
+            "TRUE".to_owned()
+        } else {
+            "FALSE".to_owned()
+        }
     }
     use crate::param_value::ToParamValue;
     params.insert(&format!("{prefix}NAME"), layer.name.clone());
     params.insert(&format!("{prefix}LAYERID"), layer.layer_id.to_string());
-    params.insert(&format!("{prefix}USEDBYPRIMS"), bool_str(layer.used_by_prims));
+    params.insert(
+        &format!("{prefix}USEDBYPRIMS"),
+        bool_str(layer.used_by_prims),
+    );
     if let Some(me) = layer.mech_enabled {
         params.insert(&format!("{prefix}MECHENABLED"), bool_str(me));
     }
@@ -1542,7 +1716,10 @@ fn serialize_stack_layer_fields(
         params.insert(&format!("{prefix}COPTHICK"), MilCoord(ct).to_param_value());
     }
     if let Some(cp) = layer.component_placement {
-        params.insert(&format!("{prefix}COMPONENTPLACEMENT"), (cp as u8).to_string());
+        params.insert(
+            &format!("{prefix}COMPONENTPLACEMENT"),
+            (cp as u8).to_string(),
+        );
     }
     if let Some(dt) = layer.diel_type {
         params.insert(&format!("{prefix}DIELTYPE"), (dt as u8).to_string());
@@ -1551,19 +1728,28 @@ fn serialize_stack_layer_fields(
         params.insert(&format!("{prefix}DIELCONST"), dc.to_param_value());
     }
     if let Some(dh) = layer.diel_height {
-        params.insert(&format!("{prefix}DIELHEIGHT"), MilCoord(dh).to_param_value());
+        params.insert(
+            &format!("{prefix}DIELHEIGHT"),
+            MilCoord(dh).to_param_value(),
+        );
     }
     if let Some(dm) = &layer.diel_material {
         params.insert(&format!("{prefix}DIELMATERIAL"), dm.clone());
     }
     if let Some(ce) = layer.coverlay_expansion {
-        params.insert(&format!("{prefix}COVERLAY_EXPANSION"), MilCoord(ce).to_param_value());
+        params.insert(
+            &format!("{prefix}COVERLAY_EXPANSION"),
+            MilCoord(ce).to_param_value(),
+        );
     }
     if let Some(mk) = &layer.mech_kind {
         params.insert(&format!("{prefix}MECHKIND"), mk.clone());
     }
     if let Some(pd) = layer.pullback_distance {
-        params.insert(&format!("{prefix}PULLBACKDISTANCE"), MilCoord(pd).to_param_value());
+        params.insert(
+            &format!("{prefix}PULLBACKDISTANCE"),
+            MilCoord(pd).to_param_value(),
+        );
     }
 }
 
@@ -1575,12 +1761,19 @@ fn serialize_v8_layer_fields(
     layer: &PcbStackLayerEntry,
 ) {
     fn bool_str(b: bool) -> String {
-        if b { "TRUE".to_owned() } else { "FALSE".to_owned() }
+        if b {
+            "TRUE".to_owned()
+        } else {
+            "FALSE".to_owned()
+        }
     }
     use crate::param_value::ToParamValue;
     params.insert(&format!("{prefix}NAME"), layer.name.clone());
     params.insert(&format!("{prefix}LAYERID"), layer.layer_id.to_string());
-    params.insert(&format!("{prefix}USEDBYPRIMS"), bool_str(layer.used_by_prims));
+    params.insert(
+        &format!("{prefix}USEDBYPRIMS"),
+        bool_str(layer.used_by_prims),
+    );
     if let Some(me) = layer.mech_enabled {
         params.insert(&format!("{prefix}MECHENABLED"), bool_str(me));
     }
@@ -1588,7 +1781,10 @@ fn serialize_v8_layer_fields(
         params.insert(&format!("{prefix}COPTHICK"), MilCoord(ct).to_param_value());
     }
     if let Some(cp) = layer.component_placement {
-        params.insert(&format!("{prefix}COMPONENTPLACEMENT"), (cp as u8).to_string());
+        params.insert(
+            &format!("{prefix}COMPONENTPLACEMENT"),
+            (cp as u8).to_string(),
+        );
     }
     if let Some(dt) = layer.diel_type {
         params.insert(&format!("{prefix}DIELTYPE"), (dt as u8).to_string());
@@ -1597,19 +1793,28 @@ fn serialize_v8_layer_fields(
         params.insert(&format!("{prefix}DIELCONST"), dc.to_param_value());
     }
     if let Some(dh) = layer.diel_height {
-        params.insert(&format!("{prefix}DIELHEIGHT"), MilCoord(dh).to_param_value());
+        params.insert(
+            &format!("{prefix}DIELHEIGHT"),
+            MilCoord(dh).to_param_value(),
+        );
     }
     if let Some(dm) = &layer.diel_material {
         params.insert(&format!("{prefix}DIELMATERIAL"), dm.clone());
     }
     if let Some(ce) = layer.coverlay_expansion {
-        params.insert(&format!("{prefix}COVERLAY_EXPANSION"), MilCoord(ce).to_param_value());
+        params.insert(
+            &format!("{prefix}COVERLAY_EXPANSION"),
+            MilCoord(ce).to_param_value(),
+        );
     }
     if let Some(mk) = &layer.mech_kind {
         params.insert(&format!("{prefix}MECHKIND"), mk.clone());
     }
     if let Some(pd) = layer.pullback_distance {
-        params.insert(&format!("{prefix}PULLBACKDISTANCE"), MilCoord(pd).to_param_value());
+        params.insert(
+            &format!("{prefix}PULLBACKDISTANCE"),
+            MilCoord(pd).to_param_value(),
+        );
     }
 }
 
@@ -1646,16 +1851,13 @@ fn parse_stack_layer_fields_after_id(
     let diel_type = params
         .remove_optional::<i32>(&format!("{prefix}DIELTYPE"))?
         .map(|v| {
-            DielectricType::try_from(v as u8).map_err(|e| {
-                AltiumFormatError::InvalidParamValue {
-                    key: format!("{prefix}DIELTYPE"),
-                    detail: e.to_string(),
-                }
+            DielectricType::try_from(v as u8).map_err(|e| AltiumFormatError::InvalidParamValue {
+                key: format!("{prefix}DIELTYPE"),
+                detail: e.to_string(),
             })
         })
         .transpose()?;
-    let diel_const = params
-        .remove_optional::<f64>(&format!("{prefix}DIELCONST"))?;
+    let diel_const = params.remove_optional::<f64>(&format!("{prefix}DIELCONST"))?;
     let diel_height = params
         .remove_optional::<MilCoord>(&format!("{prefix}DIELHEIGHT"))?
         .map(|m| m.0);
@@ -1719,16 +1921,13 @@ fn parse_v8_layer_fields_after_id(
     let diel_type = params
         .remove_optional::<i32>(&format!("{prefix}DIELTYPE"))?
         .map(|v| {
-            DielectricType::try_from(v as u8).map_err(|e| {
-                AltiumFormatError::InvalidParamValue {
-                    key: format!("{prefix}DIELTYPE"),
-                    detail: e.to_string(),
-                }
+            DielectricType::try_from(v as u8).map_err(|e| AltiumFormatError::InvalidParamValue {
+                key: format!("{prefix}DIELTYPE"),
+                detail: e.to_string(),
             })
         })
         .transpose()?;
-    let diel_const = params
-        .remove_optional::<f64>(&format!("{prefix}DIELCONST"))?;
+    let diel_const = params.remove_optional::<f64>(&format!("{prefix}DIELCONST"))?;
     let diel_height = params
         .remove_optional::<MilCoord>(&format!("{prefix}DIELHEIGHT"))?
         .map(|m| m.0);

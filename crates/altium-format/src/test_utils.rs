@@ -4,11 +4,11 @@ use std::fmt::Write as _;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
+use altium_format_types::PcbObjectId;
 use altium_format_types::constants::parsing::{
     BLOCK_SIZE_MASK, C_SCH_BROKEN_BAR, C_SCH_UTF8_PREFIX, DEFAULT_SUBRECORD_COUNT,
     PAD_SUBRECORD_COUNT, TEXT_SUBRECORD_COUNT,
 };
-use altium_format_types::PcbObjectId;
 
 use crate::binary_io::BinaryReader;
 use crate::block_stream::{Block, BlockFormat, parse_blocks};
@@ -1552,14 +1552,8 @@ mod tests {
         // When both sides parse as text blocks but fail param parsing identically,
         // and the bytes are equal, no issues should be reported.
         let version_data = b"1\x00.\x000\x00\x00\x00"; // UTF-16LE "1.0\0"
-        let a = make_cfb_layout(
-            &[("/LKM/Data", write_text_block(version_data))],
-            &["/LKM"],
-        );
-        let b = make_cfb_layout(
-            &[("/LKM/Data", write_text_block(version_data))],
-            &["/LKM"],
-        );
+        let a = make_cfb_layout(&[("/LKM/Data", write_text_block(version_data))], &["/LKM"]);
+        let b = make_cfb_layout(&[("/LKM/Data", write_text_block(version_data))], &["/LKM"]);
 
         let report = diff_cfb_files_semantic(a.path(), b.path()).expect("semantic diff");
         assert!(report.is_identical(), "{}", report.render());

@@ -829,10 +829,7 @@ impl LayerRef {
 
     /// Create from a V7 layer ID. If V6-compatible, the name is auto-resolved.
     pub fn from_v7(layer: V7Layer) -> Self {
-        let name = layer
-            .to_v6()
-            .ok()
-            .map(|v6| v6.to_string_name().to_owned());
+        let name = layer.to_v6().ok().map(|v6| v6.to_string_name().to_owned());
         Self { v7: layer, name }
     }
 
@@ -2577,7 +2574,10 @@ impl TryFrom<u8> for NetScope {
             2 => Ok(Self::AnyNet),
             3 => Ok(Self::DifferentDiffPairsOnly),
             4 => Ok(Self::SameDiffPairOnly),
-            _ => Err(InvalidEnumValue { type_name: "NetScope", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "NetScope",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -2598,7 +2598,10 @@ impl TryFrom<u8> for RuleLayerKind {
         match v {
             0 => Ok(Self::SameLayer),
             1 => Ok(Self::AdjacentLayers),
-            _ => Err(InvalidEnumValue { type_name: "RuleLayerKind", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "RuleLayerKind",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -2630,7 +2633,10 @@ impl TryFrom<u8> for NetTopology {
             4 => Ok(Self::DaisyChainMidDriven),
             5 => Ok(Self::DaisyChainBalanced),
             6 => Ok(Self::Starburst),
-            _ => Err(InvalidEnumValue { type_name: "NetTopology", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "NetTopology",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -2655,7 +2661,10 @@ impl TryFrom<u8> for RouteVia {
             1 => Ok(Self::BlindBuriedPair),
             2 => Ok(Self::BlindBuriedAny),
             3 => Ok(Self::None),
-            _ => Err(InvalidEnumValue { type_name: "RouteVia", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "RouteVia",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -2676,7 +2685,10 @@ impl TryFrom<u8> for ConfinementStyle {
         match v {
             0 => Ok(Self::ConfineIn),
             1 => Ok(Self::ConfineOut),
-            _ => Err(InvalidEnumValue { type_name: "ConfinementStyle", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "ConfinementStyle",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -2697,7 +2709,10 @@ impl TryFrom<u8> for ClearanceConstraintMode {
         match v {
             0 => Ok(Self::SingleClearance),
             1 => Ok(Self::ObjectsClearance),
-            _ => Err(InvalidEnumValue { type_name: "ClearanceConstraintMode", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "ClearanceConstraintMode",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -2743,7 +2758,10 @@ impl TryFrom<u8> for ObjectClearanceId {
             12 => Ok(Self::CutoutEdge),
             13 => Ok(Self::SplitBarrier),
             14 => Ok(Self::SplitContinuation),
-            _ => Err(InvalidEnumValue { type_name: "ObjectClearanceId", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "ObjectClearanceId",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -2817,7 +2835,10 @@ impl TryFrom<u8> for ComponentCollisionCheckMode {
             1 => Ok(Self::MultiLayerCheck),
             2 => Ok(Self::FullCheck),
             3 => Ok(Self::ComponentBodyCheck),
-            _ => Err(InvalidEnumValue { type_name: "ComponentCollisionCheckMode", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "ComponentCollisionCheckMode",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -2844,7 +2865,10 @@ impl TryFrom<u8> for FanoutStyle {
             2 => Ok(Self::Staggered),
             3 => Ok(Self::Bga),
             4 => Ok(Self::UnderPads),
-            _ => Err(InvalidEnumValue { type_name: "FanoutStyle", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "FanoutStyle",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -2873,7 +2897,10 @@ impl TryFrom<u8> for FanoutDirection {
             3 => Ok(Self::InThenOut),
             4 => Ok(Self::OutThenIn),
             5 => Ok(Self::Alternating),
-            _ => Err(InvalidEnumValue { type_name: "FanoutDirection", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "FanoutDirection",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -2894,7 +2921,10 @@ impl TryFrom<u8> for BgaFanoutDirection {
         match v {
             0 => Ok(Self::Out),
             1 => Ok(Self::In),
-            _ => Err(InvalidEnumValue { type_name: "BgaFanoutDirection", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "BgaFanoutDirection",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -2917,7 +2947,10 @@ impl TryFrom<u8> for BgaFanoutViaMode {
             0 => Ok(Self::Centered),
             1 => Ok(Self::Offset),
             2 => Ok(Self::Closest),
-            _ => Err(InvalidEnumValue { type_name: "BgaFanoutViaMode", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "BgaFanoutViaMode",
+                value: v as i64,
+            }),
         }
     }
 }
@@ -2942,7 +2975,10 @@ impl TryFrom<u8> for TestpointValid {
             1 => Ok(Self::OnePerNet),
             2 => Ok(Self::OnePerPin),
             3 => Ok(Self::AllowMultiple),
-            _ => Err(InvalidEnumValue { type_name: "TestpointValid", value: v as i64 }),
+            _ => Err(InvalidEnumValue {
+                type_name: "TestpointValid",
+                value: v as i64,
+            }),
         }
     }
 }

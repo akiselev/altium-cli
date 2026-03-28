@@ -1,8 +1,8 @@
-use altium_format_types::pcb::PolygonReliefAngle;
 use altium_format_types::constants::parsing::PAD_SUBRECORD_COUNT;
+use altium_format_types::pcb::PolygonReliefAngle;
 use altium_format_types::{
-    Coord, CoordPoint, DaisyChainStyle, PadShape, PadStackMode, PlaneConnectionStyle,
-    TCacheState, V7Layer,
+    Coord, CoordPoint, DaisyChainStyle, PadShape, PadStackMode, PlaneConnectionStyle, TCacheState,
+    V7Layer,
 };
 
 use crate::binary_io::BinaryReader;
@@ -102,15 +102,18 @@ pub(crate) fn parse_pad(subrecords: &[&[u8]]) -> Result<PcbPad> {
         };
 
     // Mask expansion linkage + bottom solder mask (offsets 120-125, 6 bytes)
-    let (use_separate_expansions, solder_mask_bottom_expansion, solder_mask_expansion_from_hole_edge) =
-        if reader.remaining() >= 6 {
-            let separate = reader.read_u8()? != 0;
-            let bottom = reader.read_i32_le()?;
-            let from_hole = reader.read_u8()? != 0;
-            (separate, bottom, from_hole)
-        } else {
-            (false, 0, false)
-        };
+    let (
+        use_separate_expansions,
+        solder_mask_bottom_expansion,
+        solder_mask_expansion_from_hole_edge,
+    ) = if reader.remaining() >= 6 {
+        let separate = reader.read_u8()? != 0;
+        let bottom = reader.read_i32_le()?;
+        let from_hole = reader.read_u8()? != 0;
+        (separate, bottom, from_hole)
+    } else {
+        (false, 0, false)
+    };
 
     // Template link IDs (offsets 126-157, 32 bytes)
     let (template_link_library_id, template_link_template_id) = if reader.remaining() >= 32 {
@@ -297,7 +300,9 @@ fn parse_sub4_extension(
 
     // Assert these are zero - all 37,669 pads with 26-byte headers have zeros here.
     // If non-zero values appear, investigate to confirm the XPadOffsetAllLayers hypothesis.
-    if x_pad_offset_all_layers != Coord::from_internal(0) || y_pad_offset_all_layers != Coord::from_internal(0) {
+    if x_pad_offset_all_layers != Coord::from_internal(0)
+        || y_pad_offset_all_layers != Coord::from_internal(0)
+    {
         return Err(AltiumFormatError::InvalidParamValue {
             key: "Pad subrecord 4 extension".to_owned(),
             detail: format!(
@@ -334,17 +339,13 @@ fn parse_sub4_extension(
         if entry_size < 23 {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "Pad subrecord 4 extension thermal entries".to_owned(),
-                detail: format!(
-                    "thermal entry size {entry_size} too small (minimum 23)"
-                ),
+                detail: format!("thermal entry size {entry_size} too small (minimum 23)"),
             });
         }
         if entry_size > 30 {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "Pad subrecord 4 extension thermal entries".to_owned(),
-                detail: format!(
-                    "thermal entry size {entry_size} too large (maximum 30)"
-                ),
+                detail: format!("thermal entry size {entry_size} too large (maximum 30)"),
             });
         }
 
@@ -374,7 +375,10 @@ fn parse_sub4_extension(
     if reader.remaining() != 0 {
         return Err(AltiumFormatError::InvalidParamValue {
             key: "Pad subrecord 4 extension".to_owned(),
-            detail: format!("unsupported trailing extension bytes: {}", reader.remaining()),
+            detail: format!(
+                "unsupported trailing extension bytes: {}",
+                reader.remaining()
+            ),
         });
     }
 
@@ -590,10 +594,7 @@ fn parse_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
         if entry_size != 15 {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "Pad stack subrecord extended CR".to_owned(),
-                detail: format!(
-                    "expected extended CR entry size 15, got {}",
-                    entry_size
-                ),
+                detail: format!("expected extended CR entry size 15, got {}", entry_size),
             });
         }
         if reader.remaining() < count * entry_size {

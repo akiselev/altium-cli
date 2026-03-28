@@ -1,10 +1,10 @@
 //! Read path: convert internal SchLib types → public API types.
 
+use crate::Result;
+use crate::api::sch_common::{build_footprint_maps, process_records};
 use crate::api::schlib_types::*;
-use crate::api::sch_common::{process_records, build_footprint_maps};
 use crate::sch_records::SchLibComponent;
 use crate::schlib::SchLibComponentIndex;
-use crate::Result;
 
 /// Convert an internal `SchLibComponent` + index entry into a public `Component`.
 pub(crate) fn component_from_internal(
@@ -17,9 +17,21 @@ pub(crate) fn component_from_internal(
     let mut graphics = Vec::new();
 
     // Process main records
-    process_records(&comp.records, &mut designator, &mut pins, &mut parameters, &mut graphics)?;
+    process_records(
+        &comp.records,
+        &mut designator,
+        &mut pins,
+        &mut parameters,
+        &mut graphics,
+    )?;
     // Process additional records (same logic)
-    process_records(&comp.additional_records, &mut designator, &mut pins, &mut parameters, &mut graphics)?;
+    process_records(
+        &comp.additional_records,
+        &mut designator,
+        &mut pins,
+        &mut parameters,
+        &mut graphics,
+    )?;
 
     // Build footprint maps from the implementation chain in main records
     let footprints = build_footprint_maps(&comp.records)?;
@@ -32,7 +44,9 @@ pub(crate) fn component_from_internal(
         } else {
             Some(index.description.clone())
         },
-        component_kind: if comp.component.component_kind == altium_format_types::common::ComponentKind::Standard {
+        component_kind: if comp.component.component_kind
+            == altium_format_types::common::ComponentKind::Standard
+        {
             None
         } else {
             Some(comp.component.component_kind)

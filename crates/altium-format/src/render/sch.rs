@@ -1,8 +1,8 @@
 //! Schematic record draw dispatch for AltiumCanvas.
 
 use crate::render::canvas::{
-    AltiumCanvas, Brush, FontSpec, Pen, RenderTransform, TextHAlign, TextVAlign,
-    bus_width_to_mils, c_to_f, junction_radius_mils, pen_width_to_mils, to_dp,
+    AltiumCanvas, Brush, FontSpec, Pen, RenderTransform, TextHAlign, TextVAlign, bus_width_to_mils,
+    c_to_f, junction_radius_mils, pen_width_to_mils, to_dp,
 };
 use crate::sch_records::SchRecord;
 use altium_format_types::Color;
@@ -121,7 +121,8 @@ pub(crate) fn draw_sch_record(
         }
         SchRecord::Line(l) => {
             let line_color = overrides.map(|o| o.line_color).unwrap_or(l.color);
-            let pen = Pen::new(line_color, pen_width_to_mils(l.line_width)).with_style(l.line_style);
+            let pen =
+                Pen::new(line_color, pen_width_to_mils(l.line_width)).with_style(l.line_style);
             canvas.draw_line(to_dp(l.location), to_dp(l.corner), &pen);
         }
         SchRecord::Rectangle(r) => {
@@ -236,7 +237,8 @@ pub(crate) fn draw_sch_record(
         SchRecord::Polyline(p) => {
             let line_color = overrides.map(|o| o.line_color).unwrap_or(p.color);
             let pts: Vec<_> = p.vertices.iter().copied().map(to_dp).collect();
-            let pen = Pen::new(line_color, pen_width_to_mils(p.line_width)).with_style(p.line_style);
+            let pen =
+                Pen::new(line_color, pen_width_to_mils(p.line_width)).with_style(p.line_style);
             canvas.draw_polyline(&pts, &pen);
         }
         SchRecord::Polygon(p) => {
@@ -479,8 +481,14 @@ mod tests {
             line_width: PenWidth::Small,
             line_style: altium_format_types::LineStyle::Solid,
             vertices: vec![
-                CoordPoint::new(Coord::from_mils(0).expect("0 mils fits Coord"), Coord::from_mils(0).expect("0 mils fits Coord")),
-                CoordPoint::new(Coord::from_mils(100).expect("100 mils fits Coord"), Coord::from_mils(0).expect("0 mils fits Coord")),
+                CoordPoint::new(
+                    Coord::from_mils(0).expect("0 mils fits Coord"),
+                    Coord::from_mils(0).expect("0 mils fits Coord"),
+                ),
+                CoordPoint::new(
+                    Coord::from_mils(100).expect("100 mils fits Coord"),
+                    Coord::from_mils(0).expect("0 mils fits Coord"),
+                ),
             ],
             unique_id: String::new(),
             underline_color: Color::BLACK,
@@ -498,7 +506,10 @@ mod tests {
         use crate::sch_records::SchJunction;
         let j = SchJunction {
             base: make_base(),
-            location: CoordPoint::new(Coord::from_mils(0).expect("0 mils fits Coord"), Coord::from_mils(0).expect("0 mils fits Coord")),
+            location: CoordPoint::new(
+                Coord::from_mils(0).expect("0 mils fits Coord"),
+                Coord::from_mils(0).expect("0 mils fits Coord"),
+            ),
             size: PenWidth::Zero,
             color: Color::BLACK,
             locked: true,
@@ -516,7 +527,10 @@ mod tests {
         use altium_format_types::RotationBy90;
         let n = SchNoConnect {
             base: make_base(),
-            location: CoordPoint::new(Coord::from_mils(0).expect("0 mils fits Coord"), Coord::from_mils(0).expect("0 mils fits Coord")),
+            location: CoordPoint::new(
+                Coord::from_mils(0).expect("0 mils fits Coord"),
+                Coord::from_mils(0).expect("0 mils fits Coord"),
+            ),
             color: Color::BLACK,
             orientation: RotationBy90::Rotate0,
             symbol: String::new(),

@@ -192,11 +192,13 @@ pub(crate) fn update_footprint_internal(fp: &Footprint, existing: &PcbFootprint)
     // converted API body (matched by unique_id).
     for existing_prim in &existing.primitives {
         if let PcbPrimitive::ComponentBody(cb) = existing_prim {
-            let already_converted = converted_body_uids.iter().any(|uid| {
-                uid.is_some() && cb.unique_id.is_some() && uid == &cb.unique_id
-            });
+            let already_converted = converted_body_uids
+                .iter()
+                .any(|uid| uid.is_some() && cb.unique_id.is_some() && uid == &cb.unique_id);
             if !already_converted {
-                updated.primitives.push(PcbPrimitive::ComponentBody(cb.clone()));
+                updated
+                    .primitives
+                    .push(PcbPrimitive::ComponentBody(cb.clone()));
             }
         }
     }

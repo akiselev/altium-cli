@@ -6,9 +6,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use altium_format_types::Coord;
-use altium_format_types::constants::file_headers::{
-    PCB_DOC_BINARY_HEADER_V6,
-};
+use altium_format_types::constants::file_headers::PCB_DOC_BINARY_HEADER_V6;
 use altium_format_types::constants::streams::FILE_HEADER;
 
 use crate::binary_io::{BinaryReader, BinaryWriter};
@@ -199,7 +197,6 @@ impl PcbDoc {
     }
 
     fn parse_from_cfb(mut doc: TrackedCfbDocument) -> Result<Self> {
-
         let legacy_data = doc.read_stream(&format!("/{FILE_HEADER}"))?;
         let legacy_header = parse_pcb_legacy_header(&legacy_data).context("parsing /FileHeader")?;
         if legacy_header.trim().is_empty() {
@@ -310,7 +307,10 @@ impl PcbDoc {
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
                 sections.push(PcbDocSection::LayerKindMapping(
-                    LayerKindMappingSectionData { header_value, mapping },
+                    LayerKindMappingSectionData {
+                        header_value,
+                        mapping,
+                    },
                 ));
                 continue;
             }
@@ -439,9 +439,7 @@ impl PcbDoc {
                     let mut parsed = Vec::new();
                     for (i, mut record) in records.into_iter().enumerate() {
                         let violation = drc::parse_violation(kind, &mut record.params)
-                            .with_context(|| {
-                                format!("parsing {storage_path}/Data record #{i}")
-                            })?;
+                            .with_context(|| format!("parsing {storage_path}/Data record #{i}"))?;
                         parsed.push(violation);
                     }
                     violations.entry(kind).or_default().extend(parsed);
@@ -449,9 +447,7 @@ impl PcbDoc {
                     for (i, mut record) in records.into_iter().enumerate() {
                         record.params.apply_unicode_sidecars()?;
                         let wv = drc::WaivedViolation::from_params(&mut record.params)
-                            .with_context(|| {
-                                format!("parsing {storage_path}/Data record #{i}")
-                            })?;
+                            .with_context(|| format!("parsing {storage_path}/Data record #{i}"))?;
                         record.params.assert_exhausted()?;
                         waived_violations.push(wv);
                     }
@@ -465,14 +461,12 @@ impl PcbDoc {
                     }
                     let mut record = records.into_iter().next().expect("len == 1 checked above");
                     drc_options = Some(
-                        drc::DrcOptions::from_params(&mut record.params).with_context(|| {
-                            format!("parsing {storage_path}/Data")
-                        })?,
+                        drc::DrcOptions::from_params(&mut record.params)
+                            .with_context(|| format!("parsing {storage_path}/Data"))?,
                     );
                     record.params.assert_exhausted()?;
                 } else {
-                    sections
-                        .push(PcbDocSection::Parameter(ParamSectionData { kind, records }));
+                    sections.push(PcbDocSection::Parameter(ParamSectionData { kind, records }));
                 }
                 continue;
             }
@@ -492,15 +486,14 @@ impl PcbDoc {
                 {
                     for (i, mut record) in records.into_iter().enumerate() {
                         let rule = drc::parse_rule(record.prefix, &mut record.params)
-                            .with_context(|| {
-                                format!("parsing {storage_path}/Data record #{i}")
-                            })?;
+                            .with_context(|| format!("parsing {storage_path}/Data record #{i}"))?;
                         rules.push(rule);
                     }
                 } else {
-                    sections.push(PcbDocSection::PrefixedParameter(
-                        PrefixedParamSectionData { kind, records },
-                    ));
+                    sections.push(PcbDocSection::PrefixedParameter(PrefixedParamSectionData {
+                        kind,
+                        records,
+                    }));
                 }
                 continue;
             }
@@ -521,12 +514,13 @@ impl PcbDoc {
             if storage_name == "PrimitiveGuids" {
                 let header_data = doc.read_stream(&format!("{storage_path}/Header"))?;
                 let data_bytes = doc.read_stream(&format!("{storage_path}/Data"))?;
-                let entries = crate::pcblib::sidecar::parse_primitive_guids_pcbdoc(&header_data, &data_bytes)
-                    .with_context(|| format!("parsing {storage_path}"))?;
+                let entries =
+                    crate::pcblib::sidecar::parse_primitive_guids_pcbdoc(&header_data, &data_bytes)
+                        .with_context(|| format!("parsing {storage_path}"))?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
-                sections.push(PcbDocSection::PrimitiveGuids(
-                    PrimitiveGuidsSectionData { entries },
-                ));
+                sections.push(PcbDocSection::PrimitiveGuids(PrimitiveGuidsSectionData {
+                    entries,
+                }));
                 continue;
             }
 
@@ -537,9 +531,9 @@ impl PcbDoc {
                 let records = parse_drill_manager_data(&data_bytes)
                     .with_context(|| format!("parsing {storage_path}/Data"))?;
                 assert_known_section_layout(&mut doc, &storage_name, &storage_path)?;
-                sections.push(PcbDocSection::DrillManager(
-                    DrillManagerSectionData { records },
-                ));
+                sections.push(PcbDocSection::DrillManager(DrillManagerSectionData {
+                    records,
+                }));
                 continue;
             }
 
@@ -551,26 +545,27 @@ impl PcbDoc {
                 let data = doc.read_stream(&format!("{storage_path}/Data"))?;
                 let mut hr = BinaryReader::new(&header_data);
                 let header_count = hr.read_u32_le()?;
-                hr.assert_exhausted().with_context(|| {
-                    format!("parsing {storage_path}/Header")
-                })?;
+                hr.assert_exhausted()
+                    .with_context(|| format!("parsing {storage_path}/Header"))?;
                 // Validate the storage layout: expect exactly Header, PrimIndexes, Data
                 let (_storages, streams) = doc.list_entries(&storage_path)?;
-                let expected: HashSet<&str> = ["Header", "PrimIndexes", "Data"].into_iter().collect();
+                let expected: HashSet<&str> =
+                    ["Header", "PrimIndexes", "Data"].into_iter().collect();
                 let actual: HashSet<&str> = streams.iter().map(|s| s.as_str()).collect();
                 if actual != expected {
                     return Err(AltiumFormatError::InvalidParamValue {
                         key: storage_name.to_owned(),
-                        detail: format!("unexpected streams: expected {{Header, PrimIndexes, Data}}, got {:?}", streams),
+                        detail: format!(
+                            "unexpected streams: expected {{Header, PrimIndexes, Data}}, got {:?}",
+                            streams
+                        ),
                     });
                 }
-                sections.push(PcbDocSection::LettersGeometry(
-                    LettersGeometrySectionData {
-                        header_count,
-                        prim_indexes,
-                        data,
-                    },
-                ));
+                sections.push(PcbDocSection::LettersGeometry(LettersGeometrySectionData {
+                    header_count,
+                    prim_indexes,
+                    data,
+                }));
                 continue;
             }
 
@@ -623,8 +618,8 @@ impl PcbDoc {
         if !self.rules.is_empty() {
             let mut rule_records = Vec::with_capacity(self.rules.len());
             for (i, rule) in self.rules.iter().enumerate() {
-                let record = drc::serialize_rule(rule)
-                    .with_context(|| format!("serializing rule #{i}"))?;
+                let record =
+                    drc::serialize_rule(rule).with_context(|| format!("serializing rule #{i}"))?;
                 rule_records.push(record);
             }
             write_prefixed_param_section(
@@ -640,11 +635,7 @@ impl PcbDoc {
                 .iter()
                 .map(|v| drc::serialize_violation(v))
                 .collect();
-            write_standard_param_section(
-                &mut cfb,
-                kind.to_storage_name(),
-                &violation_records,
-            )?;
+            write_standard_param_section(&mut cfb, kind.to_storage_name(), &violation_records)?;
         }
 
         // 6. Write waived violations (always, even when empty)
@@ -675,7 +666,10 @@ impl PcbDoc {
         cfb.save_to_file(path.as_ref())
     }
 
-    fn primitive_section(&self, kind: records::PrimitiveSectionKind) -> Option<&[primitives::ParsedPrimitiveRecord]> {
+    fn primitive_section(
+        &self,
+        kind: records::PrimitiveSectionKind,
+    ) -> Option<&[primitives::ParsedPrimitiveRecord]> {
         self.sections.iter().find_map(|section| {
             if let PcbDocSection::Primitive(p) = section
                 && p.kind == kind
@@ -742,34 +736,97 @@ fn validate_pcbdoc_primitive_coords(doc: &PcbDoc) -> Result<()> {
                     primitives::PcbPrimitive::Via(v) => {
                         check_dimension(v.diameter, "Via", idx, "diameter", &section_name)?;
                         check_dimension(v.hole_size, "Via", idx, "hole_size", &section_name)?;
-                        check_expansion(v.thermal_relief_air_gap, "Via", idx, "thermal_relief_air_gap", &section_name)?;
-                        check_expansion(v.thermal_relief_conductor_width, "Via", idx, "thermal_relief_conductor_width", &section_name)?;
-                        check_expansion(v.power_plane_relief_expansion, "Via", idx, "power_plane_relief_expansion", &section_name)?;
-                        check_expansion(v.power_plane_clearance, "Via", idx, "power_plane_clearance", &section_name)?;
+                        check_expansion(
+                            v.thermal_relief_air_gap,
+                            "Via",
+                            idx,
+                            "thermal_relief_air_gap",
+                            &section_name,
+                        )?;
+                        check_expansion(
+                            v.thermal_relief_conductor_width,
+                            "Via",
+                            idx,
+                            "thermal_relief_conductor_width",
+                            &section_name,
+                        )?;
+                        check_expansion(
+                            v.power_plane_relief_expansion,
+                            "Via",
+                            idx,
+                            "power_plane_relief_expansion",
+                            &section_name,
+                        )?;
+                        check_expansion(
+                            v.power_plane_clearance,
+                            "Via",
+                            idx,
+                            "power_plane_clearance",
+                            &section_name,
+                        )?;
                         // Only validate mask expansions when override is active.
                         // When "from rule", the stored value is a stale default and
                         // may contain arbitrary data.
                         if v.paste_mask_override {
-                            check_expansion(v.paste_mask_expansion, "Via", idx, "paste_mask_expansion", &section_name)?;
+                            check_expansion(
+                                v.paste_mask_expansion,
+                                "Via",
+                                idx,
+                                "paste_mask_expansion",
+                                &section_name,
+                            )?;
                         }
                         if v.solder_mask_override {
-                            check_expansion(v.solder_mask_expansion_front, "Via", idx, "solder_mask_expansion_front", &section_name)?;
-                            check_expansion(v.solder_mask_expansion_back, "Via", idx, "solder_mask_expansion_back", &section_name)?;
+                            check_expansion(
+                                v.solder_mask_expansion_front,
+                                "Via",
+                                idx,
+                                "solder_mask_expansion_front",
+                                &section_name,
+                            )?;
+                            check_expansion(
+                                v.solder_mask_expansion_back,
+                                "Via",
+                                idx,
+                                "solder_mask_expansion_back",
+                                &section_name,
+                            )?;
                         }
                         for (i, d) in v.diameters_per_layer.iter().enumerate() {
-                            check_dimension(*d, "Via", idx, &format!("diameters_per_layer[{i}]"), &section_name)?;
+                            check_dimension(
+                                *d,
+                                "Via",
+                                idx,
+                                &format!("diameters_per_layer[{i}]"),
+                                &section_name,
+                            )?;
                         }
                         // Extension boolean flags (is_testpoint_top/bottom, is_assy_testpoint_top/bottom,
                         // solder_mask_override, use_separate_solder_mask_expansion,
                         // solder_mask_expansion_from_hole_edge, paste_mask_override): no range check needed
                         if let Some(tol) = v.hole_positive_tolerance {
-                            check_expansion(tol, "Via", idx, "hole_positive_tolerance", &section_name)?;
+                            check_expansion(
+                                tol,
+                                "Via",
+                                idx,
+                                "hole_positive_tolerance",
+                                &section_name,
+                            )?;
                         }
                         if let Some(tol) = v.hole_negative_tolerance {
-                            check_expansion(tol, "Via", idx, "hole_negative_tolerance", &section_name)?;
+                            check_expansion(
+                                tol,
+                                "Via",
+                                idx,
+                                "hole_negative_tolerance",
+                                &section_name,
+                            )?;
                         }
                         // Semantic: diameter >= hole_size when both > 0
-                        if v.diameter > Coord::ZERO && v.hole_size > Coord::ZERO && v.diameter < v.hole_size {
+                        if v.diameter > Coord::ZERO
+                            && v.hole_size > Coord::ZERO
+                            && v.diameter < v.hole_size
+                        {
                             return Err(AltiumFormatError::InvalidParamValue {
                                 key: format!("Via[{idx}].diameter"),
                                 detail: format!(
@@ -787,20 +844,65 @@ fn validate_pcbdoc_primitive_coords(doc: &PcbDoc) -> Result<()> {
                         check_dimension(p.size_bot.x, "Pad", idx, "size_bot.x", &section_name)?;
                         check_dimension(p.size_bot.y, "Pad", idx, "size_bot.y", &section_name)?;
                         check_dimension(p.hole_size, "Pad", idx, "hole_size", &section_name)?;
-                        check_expansion(p.cache.relief_conductor_width, "Pad", idx, "cache.relief_conductor_width", &section_name)?;
-                        check_expansion(p.cache.relief_air_gap, "Pad", idx, "cache.relief_air_gap", &section_name)?;
-                        check_expansion(p.cache.power_plane_relief_expansion, "Pad", idx, "cache.power_plane_relief_expansion", &section_name)?;
-                        check_expansion(p.cache.power_plane_clearance, "Pad", idx, "cache.power_plane_clearance", &section_name)?;
-                        check_expansion(p.cache.paste_mask_expansion, "Pad", idx, "cache.paste_mask_expansion", &section_name)?;
-                        check_expansion(p.cache.solder_mask_expansion, "Pad", idx, "cache.solder_mask_expansion", &section_name)?;
-                        check_dimension(p.pin_package_length, "Pad", idx, "pin_package_length", &section_name)?;
+                        check_expansion(
+                            p.cache.relief_conductor_width,
+                            "Pad",
+                            idx,
+                            "cache.relief_conductor_width",
+                            &section_name,
+                        )?;
+                        check_expansion(
+                            p.cache.relief_air_gap,
+                            "Pad",
+                            idx,
+                            "cache.relief_air_gap",
+                            &section_name,
+                        )?;
+                        check_expansion(
+                            p.cache.power_plane_relief_expansion,
+                            "Pad",
+                            idx,
+                            "cache.power_plane_relief_expansion",
+                            &section_name,
+                        )?;
+                        check_expansion(
+                            p.cache.power_plane_clearance,
+                            "Pad",
+                            idx,
+                            "cache.power_plane_clearance",
+                            &section_name,
+                        )?;
+                        check_expansion(
+                            p.cache.paste_mask_expansion,
+                            "Pad",
+                            idx,
+                            "cache.paste_mask_expansion",
+                            &section_name,
+                        )?;
+                        check_expansion(
+                            p.cache.solder_mask_expansion,
+                            "Pad",
+                            idx,
+                            "cache.solder_mask_expansion",
+                            &section_name,
+                        )?;
+                        check_dimension(
+                            p.pin_package_length,
+                            "Pad",
+                            idx,
+                            "pin_package_length",
+                            &section_name,
+                        )?;
                     }
                     primitives::PcbPrimitive::Arc(a) => {
                         // Arc radius is signed in Altium (IPCB_Arc.GetState_Radius
                         // returns int). Degenerate zero-sweep arcs used in unions
                         // can have negative or very large radii — no range check.
                         check_dimension(a.width, "Arc", idx, "width", &section_name)?;
-                        if !a.start_angle.is_finite() || a.start_angle < 0.0 || a.start_angle > 360.0 {
+                        if !a.start_angle.is_finite()
+                            || a.start_angle < 0.0
+                            || a.start_angle > 360.0
+                        {
                             return Err(AltiumFormatError::InvalidParamValue {
                                 key: format!("Arc[{idx}].start_angle"),
                                 detail: format!(
@@ -824,17 +926,59 @@ fn validate_pcbdoc_primitive_coords(doc: &PcbDoc) -> Result<()> {
                     }
                     primitives::PcbPrimitive::Text(t) => {
                         check_dimension(t.height, "Text", idx, "height", &section_name)?;
-                        check_dimension(t.stroke_width, "Text", idx, "stroke_width", &section_name)?;
+                        check_dimension(
+                            t.stroke_width,
+                            "Text",
+                            idx,
+                            "stroke_width",
+                            &section_name,
+                        )?;
                     }
                     primitives::PcbPrimitive::Region(r) => {
-                        check_dimension(r.arc_resolution, "Region", idx, "arc_resolution", &section_name)?;
-                        check_expansion(r.cavity_height, "Region", idx, "cavity_height", &section_name)?;
+                        check_dimension(
+                            r.arc_resolution,
+                            "Region",
+                            idx,
+                            "arc_resolution",
+                            &section_name,
+                        )?;
+                        check_expansion(
+                            r.cavity_height,
+                            "Region",
+                            idx,
+                            "cavity_height",
+                            &section_name,
+                        )?;
                     }
                     primitives::PcbPrimitive::ComponentBody(b) => {
-                        check_expansion(b.standoff_height, "ComponentBody", idx, "standoff_height", &section_name)?;
-                        check_expansion(b.overall_height, "ComponentBody", idx, "overall_height", &section_name)?;
-                        check_dimension(b.arc_resolution, "ComponentBody", idx, "arc_resolution", &section_name)?;
-                        check_expansion(b.cavity_height, "ComponentBody", idx, "cavity_height", &section_name)?;
+                        check_expansion(
+                            b.standoff_height,
+                            "ComponentBody",
+                            idx,
+                            "standoff_height",
+                            &section_name,
+                        )?;
+                        check_expansion(
+                            b.overall_height,
+                            "ComponentBody",
+                            idx,
+                            "overall_height",
+                            &section_name,
+                        )?;
+                        check_dimension(
+                            b.arc_resolution,
+                            "ComponentBody",
+                            idx,
+                            "arc_resolution",
+                            &section_name,
+                        )?;
+                        check_expansion(
+                            b.cavity_height,
+                            "ComponentBody",
+                            idx,
+                            "cavity_height",
+                            &section_name,
+                        )?;
                     }
                     primitives::PcbPrimitive::Fill(_) => {}
                 }
@@ -1119,9 +1263,7 @@ fn serialize_pcbdoc_text(p: &primitives::PcbText) -> Result<Vec<Vec<u8>>> {
     Ok(vec![w.finish(), text_bytes])
 }
 
-fn serialize_primitive_payload(
-    record: &primitives::ParsedPrimitiveRecord,
-) -> Result<Vec<Vec<u8>>> {
+fn serialize_primitive_payload(record: &primitives::ParsedPrimitiveRecord) -> Result<Vec<Vec<u8>>> {
     match &record.primitive {
         primitives::PcbPrimitive::Arc(v) => Ok(vec![serialize_pcbdoc_arc(v)]),
         primitives::PcbPrimitive::Track(v) => Ok(vec![serialize_pcbdoc_track(v)]),
@@ -1134,9 +1276,9 @@ fn serialize_primitive_payload(
         primitives::PcbPrimitive::Region(v) => {
             Ok(vec![crate::pcb_primitives_serialize::serialize_region(v)])
         }
-        primitives::PcbPrimitive::ComponentBody(v) => {
-            Ok(vec![crate::pcb_primitives_serialize::serialize_component_body(v)])
-        }
+        primitives::PcbPrimitive::ComponentBody(v) => Ok(vec![
+            crate::pcb_primitives_serialize::serialize_component_body(v),
+        ]),
     }
 }
 
@@ -1245,7 +1387,11 @@ fn write_wide_strings6_section(
         if record.text.is_empty() {
             data.write_u32_le(WIDE_STRING6_EMPTY_SENTINEL);
         } else {
-            let utf16: Vec<u16> = record.text.encode_utf16().chain(std::iter::once(0)).collect();
+            let utf16: Vec<u16> = record
+                .text
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
             let byte_len = utf16.len() * 2;
             data.write_u32_le(byte_len as u32);
             for c in &utf16 {
@@ -1268,7 +1414,11 @@ fn write_union_names_section(
     data.write_u32_le(section.records.len() as u32);
     for record in &section.records {
         data.write_u32_le(record.union_index);
-        let utf16: Vec<u16> = record.name.encode_utf16().chain(std::iter::once(0)).collect();
+        let utf16: Vec<u16> = record
+            .name
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let byte_len = utf16.len() * 2;
         data.write_u32_le(byte_len as u32);
         for c in &utf16 {
@@ -1386,8 +1536,8 @@ fn write_constraint_manager_section(
     section: &ConstraintManagerSectionData,
 ) -> Result<()> {
     use base64::Engine;
-    use flate2::write::ZlibEncoder;
     use flate2::Compression;
+    use flate2::write::ZlibEncoder;
     use std::io::Write;
 
     let header = section.header_value.to_le_bytes();
@@ -1396,9 +1546,9 @@ fn write_constraint_manager_section(
     // Note: even empty XML goes through this path to produce the correct
     // base64(zlib("")) representation (e.g. "eNoDAAAAAAAAE=") matching Altium.
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(section.xml.as_bytes()).map_err(|e| {
-        AltiumFormatError::DecompressionError(format!("zlib compress failed: {e}"))
-    })?;
+    encoder
+        .write_all(section.xml.as_bytes())
+        .map_err(|e| AltiumFormatError::DecompressionError(format!("zlib compress failed: {e}")))?;
     let compressed = encoder.finish().map_err(|e| {
         AltiumFormatError::DecompressionError(format!("zlib compress finish failed: {e}"))
     })?;
@@ -1565,9 +1715,7 @@ fn write_section(cfb: &mut CfbDocument, section: &PcbDocSection) -> Result<()> {
         PcbDocSection::Parameter(s) => {
             write_standard_param_section(cfb, s.kind.to_storage_name(), &s.records)
         }
-        PcbDocSection::Binary(s) => {
-            write_binary_section(cfb, s.kind.to_storage_name(), &s.records)
-        }
+        PcbDocSection::Binary(s) => write_binary_section(cfb, s.kind.to_storage_name(), &s.records),
         PcbDocSection::UnionNames(s) => write_union_names_section(cfb, "UnionNames", s),
         PcbDocSection::SharedUnions(s) => {
             write_shared_unions_section(cfb, "SharedUnions", &s.entries)
@@ -1583,9 +1731,7 @@ fn write_section(cfb: &mut CfbDocument, section: &PcbDocSection) -> Result<()> {
         }
         PcbDocSection::Models(s) => write_models_section(cfb, "Models", s),
         PcbDocSection::EmbeddedFonts(s) => write_embedded_fonts_section(cfb, "EmbeddedFonts6", s),
-        PcbDocSection::PadViaLibrary(s) => {
-            write_pad_via_library_section(cfb, &s.section_name, s)
-        }
+        PcbDocSection::PadViaLibrary(s) => write_pad_via_library_section(cfb, &s.section_name, s),
         PcbDocSection::LayerKindMapping(s) => {
             write_layer_kind_mapping_section(cfb, "LayerKindMapping", s)
         }
@@ -1727,12 +1873,9 @@ fn parse_embedded_fonts6_data(
     let mut reader = BinaryReader::new(data);
     let mut entries = Vec::with_capacity(expected_count);
     for idx in 0..expected_count {
-        let full_name =
-            read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.full_name")?;
-        let face_name =
-            read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.face_name")?;
-        let style_name =
-            read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.style_name")?;
+        let full_name = read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.full_name")?;
+        let face_name = read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.face_name")?;
+        let style_name = read_utf16le_len_prefixed(&mut reader, "EmbeddedFonts6.style_name")?;
         // Bold and italic bytes are only present when style_name is non-empty.
         // When style_name is empty (byte_len == 2, just NUL), they are omitted.
         let (bold, italic) = if !style_name.is_empty() {
@@ -1861,10 +2004,12 @@ fn decode_constraint_manager_data(data: &[u8]) -> Result<String> {
 
     let mut decoder = ZlibDecoder::new(&compressed[..]);
     let mut xml_bytes = Vec::new();
-    decoder.read_to_end(&mut xml_bytes).map_err(|e| AltiumFormatError::InvalidParamValue {
-        key: "ConstraintManager/Data".to_owned(),
-        detail: format!("zlib decompress failed: {e}"),
-    })?;
+    decoder
+        .read_to_end(&mut xml_bytes)
+        .map_err(|e| AltiumFormatError::InvalidParamValue {
+            key: "ConstraintManager/Data".to_owned(),
+            detail: format!("zlib decompress failed: {e}"),
+        })?;
 
     String::from_utf8(xml_bytes).map_err(|e| AltiumFormatError::InvalidParamValue {
         key: "ConstraintManager/Data".to_owned(),

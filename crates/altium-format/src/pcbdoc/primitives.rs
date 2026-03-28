@@ -4,12 +4,12 @@ use altium_format_types::{
 };
 
 use crate::binary_io::BinaryReader;
+pub(crate) use crate::pcblib::PcbPrimitiveCommon;
 use crate::pcblib::primitives::component_body::parse_component_body;
 use crate::pcblib::primitives::pad::parse_pad;
 use crate::pcblib::primitives::region::parse_region;
 use crate::pcblib::primitives::via::parse_via;
 use crate::pcblib::{PcbComponentBody, PcbPad, PcbRegion, PcbVia};
-pub(crate) use crate::pcblib::PcbPrimitiveCommon;
 use crate::{AltiumFormatError, Result};
 
 use super::records::PrimitiveSectionKind;
@@ -189,7 +189,11 @@ pub(crate) fn parse_primitive_records(
     Ok(out)
 }
 
-fn parse_primitive_payload(object_id: PcbObjectId, payload: &[u8], is_shape_based: bool) -> Result<PcbPrimitive> {
+fn parse_primitive_payload(
+    object_id: PcbObjectId,
+    payload: &[u8],
+    is_shape_based: bool,
+) -> Result<PcbPrimitive> {
     match object_id {
         PcbObjectId::Arc => parse_arc(payload).map(PcbPrimitive::Arc),
         PcbObjectId::Track => parse_track(payload).map(PcbPrimitive::Track),
@@ -599,4 +603,3 @@ fn parse_pad_records(data: &[u8]) -> Result<Vec<ParsedPrimitiveRecord>> {
     reader.assert_exhausted()?;
     Ok(out)
 }
-

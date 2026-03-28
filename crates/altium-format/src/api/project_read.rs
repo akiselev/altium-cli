@@ -8,10 +8,9 @@ use altium_format_types::project::{
 
 use crate::api::{
     AnnotationMatchParameter, AnnotationSettings, BuildConfiguration, ClassGenSettings,
-    ComparisonOption, DatabaseUpdateSettings, DifferenceLevel, DocumentRef, ErcConnectionMatrix,
-    ErcLevel, LibraryUpdateSettings, ModificationLevel, OutputGroup, OutputJob, Project,
-    ProjectParameter, ProjectVariant, ComponentVariation, ParameterVariation,
-    DiffPairSuffix,
+    ComparisonOption, ComponentVariation, DatabaseUpdateSettings, DiffPairSuffix, DifferenceLevel,
+    DocumentRef, ErcConnectionMatrix, ErcLevel, LibraryUpdateSettings, ModificationLevel,
+    OutputGroup, OutputJob, ParameterVariation, Project, ProjectParameter, ProjectVariant,
 };
 use crate::project::AltiumProject;
 use crate::{AltiumFormatError, ResultExt};
@@ -95,45 +94,52 @@ pub(crate) fn project_from_internal(proj: &AltiumProject) -> crate::Result<Proje
 }
 
 fn parse_documents(proj: &AltiumProject) -> crate::Result<Vec<DocumentRef>> {
-    proj.documents().iter().enumerate().map(|(i, map)| {
-        let scope_str = get_str(map, "AnnotateScope");
-        let scope = if scope_str.is_empty() {
-            DocAnnotationScope::All
-        } else {
-            scope_str.parse::<DocAnnotationScope>()
-                .map_err(AltiumFormatError::InvalidEnumValue)
-                .with_context(|| format!("Document{}: parsing AnnotateScope", i + 1))?
-        };
-        let net_class_str = get_str(map, "ClassGenNCAutoScope");
-        let net_class_scope = if net_class_str.is_empty() {
-            DocAutoNetClassScope::None
-        } else {
-            net_class_str.parse::<DocAutoNetClassScope>()
-                .map_err(AltiumFormatError::InvalidEnumValue)
-                .with_context(|| format!("Document{}: parsing ClassGenNCAutoScope", i + 1))?
-        };
-        Ok(DocumentRef {
-            path: get_str(map, "DocumentPath").to_owned(),
-            unique_id: get_str(map, "DocumentUniqueId").to_owned(),
-            annotation_enabled: get_bool(map, "AnnotationEnabled"),
-            annotate_start_value: get_int(map, "AnnotateStartValue"),
-            annotation_index_control_enabled: get_bool(map, "AnnotationIndexControlEnabled"),
-            annotate_suffix: get_str(map, "AnnotateSuffix").to_owned(),
-            annotate_scope: scope,
-            annotate_order: get_int(map, "AnnotateOrder"),
-            do_library_update: get_bool(map, "DoLibraryUpdate"),
-            do_database_update: get_bool(map, "DoDatabaseUpdate"),
-            class_gen_cc_auto_enabled: get_bool(map, "ClassGenCCAutoEnabled"),
-            class_gen_cc_auto_room_enabled: get_bool(map, "ClassGenCCAutoRoomEnabled"),
-            class_gen_nc_auto_scope: net_class_scope,
-            generate_class_cluster: get_bool(map, "GenerateClassCluster"),
+    proj.documents()
+        .iter()
+        .enumerate()
+        .map(|(i, map)| {
+            let scope_str = get_str(map, "AnnotateScope");
+            let scope = if scope_str.is_empty() {
+                DocAnnotationScope::All
+            } else {
+                scope_str
+                    .parse::<DocAnnotationScope>()
+                    .map_err(AltiumFormatError::InvalidEnumValue)
+                    .with_context(|| format!("Document{}: parsing AnnotateScope", i + 1))?
+            };
+            let net_class_str = get_str(map, "ClassGenNCAutoScope");
+            let net_class_scope = if net_class_str.is_empty() {
+                DocAutoNetClassScope::None
+            } else {
+                net_class_str
+                    .parse::<DocAutoNetClassScope>()
+                    .map_err(AltiumFormatError::InvalidEnumValue)
+                    .with_context(|| format!("Document{}: parsing ClassGenNCAutoScope", i + 1))?
+            };
+            Ok(DocumentRef {
+                path: get_str(map, "DocumentPath").to_owned(),
+                unique_id: get_str(map, "DocumentUniqueId").to_owned(),
+                annotation_enabled: get_bool(map, "AnnotationEnabled"),
+                annotate_start_value: get_int(map, "AnnotateStartValue"),
+                annotation_index_control_enabled: get_bool(map, "AnnotationIndexControlEnabled"),
+                annotate_suffix: get_str(map, "AnnotateSuffix").to_owned(),
+                annotate_scope: scope,
+                annotate_order: get_int(map, "AnnotateOrder"),
+                do_library_update: get_bool(map, "DoLibraryUpdate"),
+                do_database_update: get_bool(map, "DoDatabaseUpdate"),
+                class_gen_cc_auto_enabled: get_bool(map, "ClassGenCCAutoEnabled"),
+                class_gen_cc_auto_room_enabled: get_bool(map, "ClassGenCCAutoRoomEnabled"),
+                class_gen_nc_auto_scope: net_class_scope,
+                generate_class_cluster: get_bool(map, "GenerateClassCluster"),
+            })
         })
-    }).collect()
+        .collect()
 }
 
 fn parse_configurations(proj: &AltiumProject) -> Vec<BuildConfiguration> {
-    proj.configurations().iter().map(|map| {
-        BuildConfiguration {
+    proj.configurations()
+        .iter()
+        .map(|map| BuildConfiguration {
             name: get_str(map, "Name").to_owned(),
             variant: get_str(map, "Variant").to_owned(),
             content_type_guid: get_str(map, "ContentTypeGUID").to_owned(),
@@ -142,31 +148,36 @@ fn parse_configurations(proj: &AltiumProject) -> Vec<BuildConfiguration> {
             constraint_file_count: get_int(map, "ConstraintFileCount"),
             output_jobs_count: get_int(map, "OutputJobsCount"),
             release_item_id: get_str(map, "ReleaseItemId").to_owned(),
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 fn parse_output_groups(proj: &AltiumProject) -> Vec<OutputGroup> {
-    proj.output_groups().iter().map(|raw| {
-        let keys = raw.keys();
-        let outputs = raw.outputs().iter().map(|out| {
-            OutputJob {
-                name: get_str(out, "OutputName").to_owned(),
-                output_type: get_str(out, "OutputType").to_owned(),
-                document_path: get_str(out, "OutputDocumentPath").to_owned(),
-                variant_name: get_str(out, "OutputVariantName").to_owned(),
-                is_default: get_bool(out, "OutputDefault"),
-                page_options: out.get("PageOptions").cloned(),
+    proj.output_groups()
+        .iter()
+        .map(|raw| {
+            let keys = raw.keys();
+            let outputs = raw
+                .outputs()
+                .iter()
+                .map(|out| OutputJob {
+                    name: get_str(out, "OutputName").to_owned(),
+                    output_type: get_str(out, "OutputType").to_owned(),
+                    document_path: get_str(out, "OutputDocumentPath").to_owned(),
+                    variant_name: get_str(out, "OutputVariantName").to_owned(),
+                    is_default: get_bool(out, "OutputDefault"),
+                    page_options: out.get("PageOptions").cloned(),
+                })
+                .collect();
+            OutputGroup {
+                name: get_str(keys, "Name").to_owned(),
+                description: get_str(keys, "Description").to_owned(),
+                target_printer: get_str(keys, "TargetPrinter").to_owned(),
+                printer_options: get_str(keys, "PrinterOptions").to_owned(),
+                outputs,
             }
-        }).collect();
-        OutputGroup {
-            name: get_str(keys, "Name").to_owned(),
-            description: get_str(keys, "Description").to_owned(),
-            target_printer: get_str(keys, "TargetPrinter").to_owned(),
-            printer_options: get_str(keys, "PrinterOptions").to_owned(),
-            outputs,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 fn parse_erc_matrix(proj: &AltiumProject) -> crate::Result<ErcConnectionMatrix> {
@@ -180,7 +191,8 @@ fn parse_erc_matrix(proj: &AltiumProject) -> crate::Result<ErcConnectionMatrix> 
                 return Err(AltiumFormatError::InvalidParamValue {
                     key: key.clone(),
                     detail: format!("expected 17 characters, got {}", chars.len()),
-                }).context("parsing ERC connection matrix");
+                })
+                .context("parsing ERC connection matrix");
             }
             for col in 0..17 {
                 matrix.cells[row][col] = ErrorLevel::from_matrix_char(chars[col])
@@ -196,40 +208,50 @@ fn parse_erc_matrix(proj: &AltiumProject) -> crate::Result<ErcConnectionMatrix> 
 }
 
 fn parse_erc_levels(proj: &AltiumProject) -> Vec<ErcLevel> {
-    proj.erc_levels().iter().map(|(key, value)| {
-        let level_int = value.parse::<i32>().unwrap_or(0);
-        let level = ErrorLevel::try_from(level_int).unwrap_or(ErrorLevel::NoReport);
-        ErcLevel {
-            key: key.clone(),
-            level,
-        }
-    }).collect()
+    proj.erc_levels()
+        .iter()
+        .map(|(key, value)| {
+            let level_int = value.parse::<i32>().unwrap_or(0);
+            let level = ErrorLevel::try_from(level_int).unwrap_or(ErrorLevel::NoReport);
+            ErcLevel {
+                key: key.clone(),
+                level,
+            }
+        })
+        .collect()
 }
 
 fn parse_modification_levels(proj: &AltiumProject) -> Vec<ModificationLevel> {
-    proj.modification_levels().iter().filter_map(|(key, value)| {
-        let index = key.strip_prefix("Type")?.parse::<u16>().ok()?;
-        Some(ModificationLevel {
-            difference_kind_index: index,
-            enabled: value == "1",
+    proj.modification_levels()
+        .iter()
+        .filter_map(|(key, value)| {
+            let index = key.strip_prefix("Type")?.parse::<u16>().ok()?;
+            Some(ModificationLevel {
+                difference_kind_index: index,
+                enabled: value == "1",
+            })
         })
-    }).collect()
+        .collect()
 }
 
 fn parse_difference_levels(proj: &AltiumProject) -> crate::Result<Vec<DifferenceLevel>> {
-    proj.difference_levels().iter().filter_map(|(key, value)| {
-        let index = key.strip_prefix("Type")?.parse::<u16>().ok()?;
-        let level_int = value.parse::<i32>().ok()?;
-        Some((key.clone(), index, level_int))
-    }).map(|(key, index, level_int)| {
-        let level = DifferenceCheckLevel::try_from(level_int)
-            .map_err(AltiumFormatError::InvalidEnumValue)
-            .with_context(|| format!("parsing difference level '{key}'"))?;
-        Ok(DifferenceLevel {
-            difference_kind_index: index,
-            level,
+    proj.difference_levels()
+        .iter()
+        .filter_map(|(key, value)| {
+            let index = key.strip_prefix("Type")?.parse::<u16>().ok()?;
+            let level_int = value.parse::<i32>().ok()?;
+            Some((key.clone(), index, level_int))
         })
-    }).collect()
+        .map(|(key, index, level_int)| {
+            let level = DifferenceCheckLevel::try_from(level_int)
+                .map_err(AltiumFormatError::InvalidEnumValue)
+                .with_context(|| format!("parsing difference level '{key}'"))?;
+            Ok(DifferenceLevel {
+                difference_kind_index: index,
+                level,
+            })
+        })
+        .collect()
 }
 
 fn parse_annotation(proj: &AltiumProject) -> crate::Result<AnnotationSettings> {
@@ -305,17 +327,20 @@ fn parse_database_update(proj: &AltiumProject) -> DatabaseUpdateSettings {
 }
 
 fn parse_comparison_options(proj: &AltiumProject) -> Vec<ComparisonOption> {
-    proj.comparison_options().iter().map(|(_key, value)| {
-        let pairs = parse_pipe_pairs(value);
-        ComparisonOption {
-            kind: pipe_get_str(&pairs, "Kind").to_owned(),
-            min_percent: pipe_get_int(&pairs, "MinPercent"),
-            min_match: pipe_get_int(&pairs, "MinMatch"),
-            show_match: pipe_get_str(&pairs, "ShowMatch") == "1",
-            use_name: pipe_get_int(&pairs, "UseName"),
-            include_all_rules: pipe_get_str(&pairs, "InclAllRules") == "1",
-        }
-    }).collect()
+    proj.comparison_options()
+        .iter()
+        .map(|(_key, value)| {
+            let pairs = parse_pipe_pairs(value);
+            ComparisonOption {
+                kind: pipe_get_str(&pairs, "Kind").to_owned(),
+                min_percent: pipe_get_int(&pairs, "MinPercent"),
+                min_match: pipe_get_int(&pairs, "MinMatch"),
+                show_match: pipe_get_str(&pairs, "ShowMatch") == "1",
+                use_name: pipe_get_int(&pairs, "UseName"),
+                include_all_rules: pipe_get_str(&pairs, "InclAllRules") == "1",
+            }
+        })
+        .collect()
 }
 
 /// Parse `Key=Val|Key=Val|...` into a list of (key, value) pairs.
@@ -330,7 +355,8 @@ fn parse_pipe_pairs(s: &str) -> Vec<(&str, &str)> {
 }
 
 fn pipe_get_str<'a>(pairs: &[(&str, &'a str)], key: &str) -> &'a str {
-    pairs.iter()
+    pairs
+        .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case(key))
         .map(|(_, v)| *v)
         .unwrap_or("")
@@ -341,67 +367,73 @@ fn pipe_get_int(pairs: &[(&str, &str)], key: &str) -> i32 {
 }
 
 fn parse_variants(proj: &AltiumProject) -> crate::Result<Vec<ProjectVariant>> {
-    proj.variants().iter().enumerate().map(|(i, map)| {
-        let mut variations = Vec::new();
-        let mut param_variations = Vec::new();
+    proj.variants()
+        .iter()
+        .enumerate()
+        .map(|(i, map)| {
+            let mut variations = Vec::new();
+            let mut param_variations = Vec::new();
 
-        for j in 1.. {
-            let var_key = format!("Variation{j}");
-            if let Some(val) = map.get(&var_key) {
-                let pairs = parse_pipe_pairs(val);
-                let kind_int = pipe_get_int(&pairs, "Kind");
-                let kind = VariationKind::try_from(kind_int)
-                    .map_err(AltiumFormatError::InvalidEnumValue)
-                    .with_context(|| format!("Variant{}: Variation{j}", i + 1))?;
-                variations.push(ComponentVariation {
-                    designator: pipe_get_str(&pairs, "Designator").to_owned(),
-                    unique_id: pipe_get_str(&pairs, "UniqueId").to_owned(),
-                    kind,
-                    alternate_part: pipe_get_str(&pairs, "AlternatePart").to_owned(),
-                });
-            } else {
-                break;
+            for j in 1.. {
+                let var_key = format!("Variation{j}");
+                if let Some(val) = map.get(&var_key) {
+                    let pairs = parse_pipe_pairs(val);
+                    let kind_int = pipe_get_int(&pairs, "Kind");
+                    let kind = VariationKind::try_from(kind_int)
+                        .map_err(AltiumFormatError::InvalidEnumValue)
+                        .with_context(|| format!("Variant{}: Variation{j}", i + 1))?;
+                    variations.push(ComponentVariation {
+                        designator: pipe_get_str(&pairs, "Designator").to_owned(),
+                        unique_id: pipe_get_str(&pairs, "UniqueId").to_owned(),
+                        kind,
+                        alternate_part: pipe_get_str(&pairs, "AlternatePart").to_owned(),
+                    });
+                } else {
+                    break;
+                }
             }
-        }
 
-        for j in 1.. {
-            let pvar_key = format!("ParamVariation{j}");
-            if let Some(val) = map.get(&pvar_key) {
-                let pairs = parse_pipe_pairs(val);
-                param_variations.push(ParameterVariation {
-                    designator: pipe_get_str(&pairs, "Designator").to_owned(),
-                    parameter_name: pipe_get_str(&pairs, "ParameterName").to_owned(),
-                    variant_value: pipe_get_str(&pairs, "VariantValue").to_owned(),
-                });
-            } else {
-                break;
+            for j in 1.. {
+                let pvar_key = format!("ParamVariation{j}");
+                if let Some(val) = map.get(&pvar_key) {
+                    let pairs = parse_pipe_pairs(val);
+                    param_variations.push(ParameterVariation {
+                        designator: pipe_get_str(&pairs, "Designator").to_owned(),
+                        parameter_name: pipe_get_str(&pairs, "ParameterName").to_owned(),
+                        variant_value: pipe_get_str(&pairs, "VariantValue").to_owned(),
+                    });
+                } else {
+                    break;
+                }
             }
-        }
 
-        Ok(ProjectVariant {
-            unique_id: get_str(map, "UniqueId").to_owned(),
-            description: get_str(map, "Description").to_owned(),
-            overwrite_pcb_footprint: get_bool(map, "OverwritePcbFootprint"),
-            variations,
-            param_variations,
+            Ok(ProjectVariant {
+                unique_id: get_str(map, "UniqueId").to_owned(),
+                description: get_str(map, "Description").to_owned(),
+                overwrite_pcb_footprint: get_bool(map, "OverwritePcbFootprint"),
+                variations,
+                param_variations,
+            })
         })
-    }).collect()
+        .collect()
 }
 
 fn parse_parameters(proj: &AltiumProject) -> Vec<ProjectParameter> {
-    proj.parameters_sections().iter().map(|map| {
-        ProjectParameter {
+    proj.parameters_sections()
+        .iter()
+        .map(|map| ProjectParameter {
             name: get_str(map, "Name").to_owned(),
             value: get_str(map, "Value").to_owned(),
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 fn parse_diff_pair_suffixes(proj: &AltiumProject) -> Vec<DiffPairSuffix> {
-    proj.diff_pair_suffixes().iter().map(|map| {
-        DiffPairSuffix {
+    proj.diff_pair_suffixes()
+        .iter()
+        .map(|map| DiffPairSuffix {
             positive: get_str(map, "Positive").to_owned(),
             negative: get_str(map, "Negative").to_owned(),
-        }
-    }).collect()
+        })
+        .collect()
 }

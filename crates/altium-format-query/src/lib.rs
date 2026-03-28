@@ -31,8 +31,8 @@ mod value;
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-pub use adapter::{Queryable, QueryMatch, QueryNode, QueryResultSet};
+pub use adapter::{QueryMatch, QueryNode, QueryResultSet, Queryable};
+pub use ast::Query;
 pub use error::{QueryError, QueryErrorCode};
 pub use eval::eval_query;
 pub use parser::parse_query;
-pub use ast::Query;

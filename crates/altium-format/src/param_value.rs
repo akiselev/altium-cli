@@ -3,13 +3,13 @@
 //! `ToParamValue`: serialize `T` back to the Altium string representation.
 //! `bool` uses Altium's T/F encoding, not Rust's true/false.
 use altium_format_types::{
-    BgaFanoutDirection, BgaFanoutViaMode, ClearanceConstraintMode, Color, ComponentKind,
-    ComponentCollisionCheckMode, ComponentOrientationFlags, ConfinementStyle, Coord, CornerStyle,
-    FanoutDirection, FanoutStyle, HorizontalAlign, IeeeSymbol, LeftRightSide, LengthenerStyle,
-    LineShape, LineStyle, NetScope, NetTopology, ObjectClearanceId, ParameterReadOnlyState,
-    ParameterType, PenWidth, PlaneConnectionStyle, PolygonReliefAngle, RotationBy90, RouteVia,
-    RuleKind, RuleLayerKind, SheetSymbolType, TestpointValid, TextHorzAnchor, TextJustification,
-    TextVertAnchor, UniqueId,
+    BgaFanoutDirection, BgaFanoutViaMode, ClearanceConstraintMode, Color,
+    ComponentCollisionCheckMode, ComponentKind, ComponentOrientationFlags, ConfinementStyle, Coord,
+    CornerStyle, FanoutDirection, FanoutStyle, HorizontalAlign, IeeeSymbol, LeftRightSide,
+    LengthenerStyle, LineShape, LineStyle, NetScope, NetTopology, ObjectClearanceId,
+    ParameterReadOnlyState, ParameterType, PenWidth, PlaneConnectionStyle, PolygonReliefAngle,
+    RotationBy90, RouteVia, RuleKind, RuleLayerKind, SheetSymbolType, TestpointValid,
+    TextHorzAnchor, TextJustification, TextVertAnchor, UniqueId,
     sch::{PortArrowStyle, PortIoType, PowerObjectStyle},
 };
 
@@ -420,8 +420,11 @@ impl ToParamValue for CornerStyle {
             Self::Degree90 => "90-Degree",
             Self::Degree45 => "45-Degree",
             Self::Round => "Rounded",
-            other => panic!("ToParamValue: unhandled CornerStyle variant {other:?} — add a match arm"),
-        }.to_owned()
+            other => {
+                panic!("ToParamValue: unhandled CornerStyle variant {other:?} — add a match arm")
+            }
+        }
+        .to_owned()
     }
 }
 
@@ -508,18 +511,20 @@ impl FromParamValue for ClearanceMatrix {
             if entry.is_empty() {
                 continue;
             }
-            let (pair_str, val_str) = entry.split_once(':').ok_or_else(|| {
-                AltiumFormatError::InvalidParamValue {
-                    key: key.to_owned(),
-                    detail: format!("expected 'Type1-Type2:value', got {entry:?}"),
-                }
-            })?;
-            let (type1_str, type2_str) = pair_str.split_once('-').ok_or_else(|| {
-                AltiumFormatError::InvalidParamValue {
-                    key: key.to_owned(),
-                    detail: format!("expected 'Type1-Type2', got {pair_str:?}"),
-                }
-            })?;
+            let (pair_str, val_str) =
+                entry
+                    .split_once(':')
+                    .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                        key: key.to_owned(),
+                        detail: format!("expected 'Type1-Type2:value', got {entry:?}"),
+                    })?;
+            let (type1_str, type2_str) =
+                pair_str
+                    .split_once('-')
+                    .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                        key: key.to_owned(),
+                        detail: format!("expected 'Type1-Type2', got {pair_str:?}"),
+                    })?;
             let type1 = ObjectClearanceId::from_clearance_string(type1_str).map_err(|_| {
                 AltiumFormatError::InvalidParamValue {
                     key: key.to_owned(),
@@ -532,10 +537,12 @@ impl FromParamValue for ClearanceMatrix {
                     detail: format!("unknown clearance object type: {type2_str:?}"),
                 }
             })?;
-            let raw: i32 = val_str.parse().map_err(|_| AltiumFormatError::InvalidParamValue {
-                key: key.to_owned(),
-                detail: format!("invalid clearance value: {val_str:?}"),
-            })?;
+            let raw: i32 = val_str
+                .parse()
+                .map_err(|_| AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!("invalid clearance value: {val_str:?}"),
+                })?;
             let norm = Self::normalize(type1, type2);
             matrix.entries.insert(norm, Coord::from_internal(raw));
         }

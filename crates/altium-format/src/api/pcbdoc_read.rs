@@ -9,25 +9,23 @@ use altium_format_types::color::Color;
 use altium_format_types::common::Unit;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, RegionKind, RuleKind,
-    V6Layer, V7Layer,
+    ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, RegionKind, RuleKind, V6Layer,
+    V7Layer,
 };
 use altium_format_types::{DielectricType, LayerStackStyle};
 
-use crate::api::pcb_common::{extract_pad_stack, contour_to_pcb_contour};
+use crate::api::pcb_common::{contour_to_pcb_contour, extract_pad_stack};
 use crate::api::pcbdoc_types::*;
 use crate::board_config::PcbBoardConfig;
+use crate::param_value::MilCoord;
+use crate::pcbdoc::drc::PcbRuleKindData;
 use crate::pcbdoc::primitives::PcbPrimitive;
-use crate::pcbdoc::records::{
-    ParamSectionKind, PrefixedParamSectionKind, PrimitiveSectionKind,
-};
+use crate::pcbdoc::records::{ParamSectionKind, PrefixedParamSectionKind, PrimitiveSectionKind};
 use crate::pcbdoc::{
     ModelsSectionData, ParamSectionData, PcbDoc, PcbDocSection, PrefixedParamSectionData,
     PrimitiveSectionData, WideStringsSectionData,
 };
-use crate::pcbdoc::drc::PcbRuleKindData;
 use crate::pcblib::{Contour, PcbComponentBody, PcbPad, PcbRegion, PcbVia};
-use crate::param_value::MilCoord;
 use crate::{Result, ResultExt};
 
 // ── Lookup context ──────────────────────────────────────────────────────────
@@ -97,8 +95,7 @@ pub(crate) fn board_from_internal(doc: &PcbDoc) -> Result<PcbDocBoard> {
 
     // Track which legacy section kinds have modern counterparts present.
     let has_shape_based_regions = has_section(doc, PrimitiveSectionKind::ShapeBasedRegions6);
-    let has_shape_based_bodies =
-        has_section(doc, PrimitiveSectionKind::ShapeBasedComponentBodies6);
+    let has_shape_based_bodies = has_section(doc, PrimitiveSectionKind::ShapeBasedComponentBodies6);
     let has_texts6 = has_section(doc, PrimitiveSectionKind::Texts6);
 
     for section in &doc.sections {
@@ -216,11 +213,7 @@ fn find_param_section<'a>(
     kind: ParamSectionKind,
 ) -> Option<&'a [crate::pcbdoc::records::StandardParamRecord]> {
     for section in &doc.sections {
-        if let PcbDocSection::Parameter(ParamSectionData {
-            kind: k,
-            records,
-        }) = section
-        {
+        if let PcbDocSection::Parameter(ParamSectionData { kind: k, records }) = section {
             if *k == kind {
                 return Some(records);
             }
@@ -234,10 +227,8 @@ fn find_prefixed_param_section<'a>(
     kind: PrefixedParamSectionKind,
 ) -> Option<&'a [crate::pcbdoc::records::PrefixedParamRecord]> {
     for section in &doc.sections {
-        if let PcbDocSection::PrefixedParameter(PrefixedParamSectionData {
-            kind: k,
-            records,
-        }) = section
+        if let PcbDocSection::PrefixedParameter(PrefixedParamSectionData { kind: k, records }) =
+            section
         {
             if *k == kind {
                 return Some(records);
@@ -316,8 +307,8 @@ fn convert_components(doc: &PcbDoc) -> Result<Vec<PcbDocComponent>> {
         let rotation: f64 = params
             .remove_with_default("ROTATION", 0.0)
             .context("Components6 rotation")?;
-        let layer = parse_layer_param(&mut params, V6Layer::TopLayer)
-            .context("Components6 layer")?;
+        let layer =
+            parse_layer_param(&mut params, V6Layer::TopLayer).context("Components6 layer")?;
 
         let source_unique_id: String = params
             .remove_with_default("SOURCEUNIQUEID", String::new())
@@ -365,8 +356,7 @@ fn convert_polygons(doc: &PcbDoc, ctx: &ConvertContext) -> Result<Vec<Polygon>> 
         } else {
             None
         };
-        let layer = parse_layer_param(&mut params, V6Layer::TopLayer)
-            .context("Polygons6 layer")?;
+        let layer = parse_layer_param(&mut params, V6Layer::TopLayer).context("Polygons6 layer")?;
         let connect_style_raw: u8 = params
             .remove_with_default("CONNECTSTYLE", 1u8)
             .context("Polygons6 connect style")?;
@@ -519,8 +509,8 @@ fn convert_dimensions(doc: &PcbDoc) -> Result<Vec<Dimension>> {
             .remove_with_default("DIMENSIONKIND", 0u8)
             .context("Dimensions6 kind")?;
         let kind = DimensionKind::try_from(kind_raw).unwrap_or(DimensionKind::NoDimension);
-        let layer = parse_layer_param(&mut params, V6Layer::NoLayer)
-            .context("Dimensions6 layer")?;
+        let layer =
+            parse_layer_param(&mut params, V6Layer::NoLayer).context("Dimensions6 layer")?;
         let text_x: i32 = params
             .remove_with_default("TEXTX", 0)
             .context("Dimensions6 text_x")?;
@@ -616,27 +606,21 @@ fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -
         PcbRuleKindData::DaisyChainStubLength(d) => RuleParams::DaisyChainStubLength {
             max_limit: d.max_limit.0,
         },
-        PcbRuleKindData::ShortCircuit(d) => RuleParams::ShortCircuit {
-            allowed: d.allowed,
-        },
+        PcbRuleKindData::ShortCircuit(d) => RuleParams::ShortCircuit { allowed: d.allowed },
         PcbRuleKindData::BrokenNets(d) => RuleParams::BrokenNets {
             check_bad_connections: d.check_bad_connections,
         },
-        PcbRuleKindData::ViasUnderSmd(d) => RuleParams::ViasUnderSmd {
-            allowed: d.allowed,
-        },
+        PcbRuleKindData::ViasUnderSmd(d) => RuleParams::ViasUnderSmd { allowed: d.allowed },
         PcbRuleKindData::MaximumViaCount(d) => RuleParams::MaximumViaCount {
             max_via_count: d.max_via_count,
         },
-        PcbRuleKindData::MinimumAnnularRing(d) => RuleParams::MinimumAnnularRing {
-            min: d.min_limit.0,
-        },
-        PcbRuleKindData::HoleToHoleClearance(d) => RuleParams::HoleToHoleClearance {
-            gap: d.gap.0,
-        },
-        PcbRuleKindData::BoardOutlineClearance(d) => RuleParams::BoardOutlineClearance {
-            gap: d.gap.0,
-        },
+        PcbRuleKindData::MinimumAnnularRing(d) => {
+            RuleParams::MinimumAnnularRing { min: d.min_limit.0 }
+        }
+        PcbRuleKindData::HoleToHoleClearance(d) => RuleParams::HoleToHoleClearance { gap: d.gap.0 },
+        PcbRuleKindData::BoardOutlineClearance(d) => {
+            RuleParams::BoardOutlineClearance { gap: d.gap.0 }
+        }
         PcbRuleKindData::MaxMinHoleSize(d) => RuleParams::MaxMinHoleSize {
             min: d.min_limit.0,
             max: d.max_limit.0,
@@ -732,9 +716,7 @@ fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -
         PcbRuleKindData::SmdToPlane(d) => RuleParams::SmdToPlane {
             distance: d.distance.0,
         },
-        PcbRuleKindData::SmdNeckDown(d) => RuleParams::SmdNeckDown {
-            percent: d.percent,
-        },
+        PcbRuleKindData::SmdNeckDown(d) => RuleParams::SmdNeckDown { percent: d.percent },
         PcbRuleKindData::SmdEntry(d) => RuleParams::SmdEntry {
             side: d.side,
             corner: d.corner,
@@ -746,15 +728,9 @@ fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -
         PcbRuleKindData::BackDrilling(d) => RuleParams::BackDrilling {
             depth: d.backdrill_depth.0,
         },
-        PcbRuleKindData::Creepage(d) => RuleParams::CreepageDistance {
-            gap: d.gap.0,
-        },
-        PcbRuleKindData::AcuteAngle(d) => RuleParams::AcuteAngle {
-            minimum: d.minimum,
-        },
-        PcbRuleKindData::LayerPair(d) => RuleParams::LayerPair {
-            enforce: d.enforce,
-        },
+        PcbRuleKindData::Creepage(d) => RuleParams::CreepageDistance { gap: d.gap.0 },
+        PcbRuleKindData::AcuteAngle(d) => RuleParams::AcuteAngle { minimum: d.minimum },
+        PcbRuleKindData::LayerPair(d) => RuleParams::LayerPair { enforce: d.enforce },
         // All other variants fall through to Other
         _ => RuleParams::Other { kind: rule_kind },
     }
@@ -847,10 +823,10 @@ fn extract_layer_stack(config: &PcbBoardConfig) -> LayerStack {
 }
 
 fn extract_layer_stack_v9(config: &PcbBoardConfig) -> LayerStack {
-    let (style, is_flex) = config.v9_master_stack.as_ref().map_or(
-        (LayerStackStyle::Pairs, false),
-        |ms| (ms.style, ms.is_flex),
-    );
+    let (style, is_flex) = config
+        .v9_master_stack
+        .as_ref()
+        .map_or((LayerStackStyle::Pairs, false), |ms| (ms.style, ms.is_flex));
 
     let mut layers: Vec<StackLayer> = config
         .v9_stack_layers
@@ -876,10 +852,10 @@ fn extract_layer_stack_v9(config: &PcbBoardConfig) -> LayerStack {
 }
 
 fn extract_layer_stack_v8(config: &PcbBoardConfig) -> LayerStack {
-    let (style, is_flex) = config.v8_master_stack.as_ref().map_or(
-        (LayerStackStyle::Pairs, false),
-        |ms| (ms.style, ms.is_flex),
-    );
+    let (style, is_flex) = config
+        .v8_master_stack
+        .as_ref()
+        .map_or((LayerStackStyle::Pairs, false), |ms| (ms.style, ms.is_flex));
 
     let mut layers: Vec<StackLayer> = config
         .v8_layers
@@ -1097,10 +1073,7 @@ fn convert_primitive_section(
 
 // ── Per-type converters ─────────────────────────────────────────────────────
 
-fn resolve_layer_v6_v7(
-    v6: altium_format_types::pcb::V6Layer,
-    v7: V7Layer,
-) -> LayerRef {
+fn resolve_layer_v6_v7(v6: altium_format_types::pcb::V6Layer, v7: V7Layer) -> LayerRef {
     if v7.raw() != 0 {
         LayerRef::from_v6_and_v7(v6, v7)
     } else {
@@ -1247,8 +1220,7 @@ fn contour_to_coord_points(contour: &Contour) -> Vec<CoordPoint> {
 
 fn region_from_internal(idx: usize, r: &PcbRegion, ctx: &ConvertContext) -> Region {
     let layer = if !r.v7_layer.is_empty() {
-        LayerRef::from_string_name(&r.v7_layer)
-            .unwrap_or_else(|| LayerRef::from_v6(r.common.layer))
+        LayerRef::from_string_name(&r.v7_layer).unwrap_or_else(|| LayerRef::from_v6(r.common.layer))
     } else {
         LayerRef::from_v6(r.common.layer)
     };
@@ -1265,14 +1237,9 @@ fn region_from_internal(idx: usize, r: &PcbRegion, ctx: &ConvertContext) -> Regi
     }
 }
 
-fn body_from_internal(
-    idx: usize,
-    b: &PcbComponentBody,
-    ctx: &ConvertContext,
-) -> ComponentBody {
+fn body_from_internal(idx: usize, b: &PcbComponentBody, ctx: &ConvertContext) -> ComponentBody {
     let layer = if !b.v7_layer.is_empty() {
-        LayerRef::from_string_name(&b.v7_layer)
-            .unwrap_or_else(|| LayerRef::from_v6(b.common.layer))
+        LayerRef::from_string_name(&b.v7_layer).unwrap_or_else(|| LayerRef::from_v6(b.common.layer))
     } else {
         LayerRef::from_v6(b.common.layer)
     };
@@ -1346,8 +1313,7 @@ fn parse_layer_param(
     params: &mut crate::param_collection::ParameterCollection,
     default: V6Layer,
 ) -> Result<LayerRef> {
-    let raw: String = params
-        .remove_with_default("LAYER", String::new())?;
+    let raw: String = params.remove_with_default("LAYER", String::new())?;
     if raw.is_empty() {
         return Ok(LayerRef::from_v6(default));
     }

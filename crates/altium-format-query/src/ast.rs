@@ -73,10 +73,7 @@ pub enum BaseSelector {
     /// Record ID: `#42`
     RecordId(i64),
     /// Component:pin pattern: `U1:VCC`
-    ComponentPin {
-        component: String,
-        pin: String,
-    },
+    ComponentPin { component: String, pin: String },
     /// Universal selector (matches anything): `*`
     Any,
 }
@@ -288,7 +285,10 @@ impl TypeSelector {
         ("pcbdoc_rule", TypeSelector::PcbDocRule),
         ("pcbdoc_class", TypeSelector::PcbDocClass),
         ("pcbdoc_dimension", TypeSelector::PcbDocDimension),
-        ("pcbdoc_differential_pair", TypeSelector::PcbDocDifferentialPair),
+        (
+            "pcbdoc_differential_pair",
+            TypeSelector::PcbDocDifferentialPair,
+        ),
     ];
 
     /// Try to parse a type selector from a keyword string (case-insensitive).

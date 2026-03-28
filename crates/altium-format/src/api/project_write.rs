@@ -42,8 +42,16 @@ pub(crate) fn write_ini(proj: &AltiumProject) -> String {
     write_section(&mut out, "ERC Connection Matrix", proj.erc_matrix());
     write_section(&mut out, "Annotate", proj.annotate());
     write_section(&mut out, "PrjClassGen", proj.class_gen());
-    write_section(&mut out, "LibraryUpdateOptions", proj.library_update_options());
-    write_section(&mut out, "DatabaseUpdateOptions", proj.database_update_options());
+    write_section(
+        &mut out,
+        "LibraryUpdateOptions",
+        proj.library_update_options(),
+    );
+    write_section(
+        &mut out,
+        "DatabaseUpdateOptions",
+        proj.database_update_options(),
+    );
     write_section(&mut out, "Comparison Options", proj.comparison_options());
     write_section(&mut out, "SmartPDF", proj.smart_pdf());
 
@@ -78,11 +86,7 @@ fn write_section(out: &mut String, name: &str, map: &IndexMap<String, String>) {
 }
 
 /// Write an output group section with group-level keys followed by indexed output keys.
-fn write_output_group(
-    out: &mut String,
-    name: &str,
-    group: &crate::project::OutputGroupRaw,
-) {
+fn write_output_group(out: &mut String, name: &str, group: &crate::project::OutputGroupRaw) {
     out.push_str(&format!("[{}]\n", name));
 
     // Group-level keys first

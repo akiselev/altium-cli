@@ -157,8 +157,7 @@ mod tests {
             "atmelfan_connectors",
         ] {
             let path = data_path(&format!("intlib/{name}.IntLib"));
-            let lib = IntLib::open(&path)
-                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let lib = IntLib::open(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert!(!lib.schlibs().is_empty(), "{name}: no schlibs");
             assert!(!lib.pcblibs().is_empty(), "{name}: no pcblibs");
         }
@@ -166,19 +165,16 @@ mod tests {
 
     #[test]
     fn schlib_components_accessible() {
-        let lib = IntLib::open(data_path("intlib/atmelfan_actives.IntLib"))
-            .expect("should open IntLib");
+        let lib =
+            IntLib::open(data_path("intlib/atmelfan_actives.IntLib")).expect("should open IntLib");
         let components = lib.schlibs()[0].components().expect("components");
-        assert!(
-            !components.is_empty(),
-            "should have at least one component"
-        );
+        assert!(!components.is_empty(), "should have at least one component");
     }
 
     #[test]
     fn pcblib_footprints_accessible() {
-        let lib = IntLib::open(data_path("intlib/atmelfan_actives.IntLib"))
-            .expect("should open IntLib");
+        let lib =
+            IntLib::open(data_path("intlib/atmelfan_actives.IntLib")).expect("should open IntLib");
         let names = lib.pcblibs()[0].footprint_names();
         assert!(!names.is_empty(), "should have at least one footprint");
     }

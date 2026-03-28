@@ -23,9 +23,8 @@ use altium_format_derive::{FromParams, ToParams};
 use altium_format_types::{
     Color, ComponentKind, Coord, CoordPoint, HorizontalAlign, IeeeSymbol, LeftRightSide, LineShape,
     LineStyle, ParameterReadOnlyState, ParameterType, PenWidth, PinElectricalType, RotationBy90,
-    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation,
-    SheetReferenceZoneStyle, SheetStyle, SheetSymbolType, StdLogicState, TextHorzAnchor,
-    TextJustification, TextVertAnchor,
+    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation, SheetReferenceZoneStyle,
+    SheetStyle, SheetSymbolType, StdLogicState, TextHorzAnchor, TextJustification, TextVertAnchor,
     constants::{
         component::{
             ALIAS_LIST, ALL_PIN_COUNT, COMPONENT_DESCRIPTION, COMPONENT_KIND,
@@ -39,7 +38,9 @@ use altium_format_types::{
             IO_TYPE, IS_CROSS_SHEET_CONNECTOR, PORT_NAME_IS_HIDDEN, SHOW_NET_NAME, SIDE,
             SUPPRESS_ALL, SYMBOL_TYPE,
         },
-        harness::{HARNESS_CONNECTOR_SIDE, HARNESS_TYPE, OBJECT_DEFINITION_ID, PRIMARY_CONNECTION_POSITION},
+        harness::{
+            HARNESS_CONNECTOR_SIDE, HARNESS_TYPE, OBJECT_DEFINITION_ID, PRIMARY_CONNECTION_POSITION,
+        },
         locking::{
             GRAPHICALLY_LOCKED, IS_ACTIVE, IS_CURRENT, IS_HIDDEN, IS_NOT_ACCESSIBLE, LOCKED,
             NOT_AUTO_POSITION, OVERRIDE_NOT_AUTO_POSITION, READ_ONLY_STATE, SELECTION,
@@ -67,8 +68,8 @@ use altium_format_types::{
         record_structure::{
             ASSIGNED_INTERFACE, ASSIGNED_INTERFACE_SIGNAL, COLLAPSED, DISTANCE_FROM_TOP,
             INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX, OWNER_PART_DISPLAY_MODE,
-            OWNER_PART_ID, PARAM_TYPE, RECORD, RECORD_EX, SELECTION_MEMORY, UNION_INDEX,
-            UNIQUE_ID, URL,
+            OWNER_PART_ID, PARAM_TYPE, RECORD, RECORD_EX, SELECTION_MEMORY, UNION_INDEX, UNIQUE_ID,
+            URL,
         },
         sheet::{
             AREA_COLOR, AUTHOR, BORDER_ON, CUSTOM_MARGIN_WIDTH, CUSTOM_X, CUSTOM_X_FRAC,
@@ -89,10 +90,10 @@ use altium_format_types::{
             DATABASE_TABLE_NAME, DESIGN_ITEM_ID, GENERIC_COMPONENT_TEMPLATE_GUID, ITEM_GUID,
             ITEM_REVISION_GUID, LIBRARY_PATH, NOT_ALLOW_DATABASE_SYNCHRONIZE,
             NOT_ALLOW_LIBRARY_SYNCHRONIZE, NOT_USE_DB_TABLE_NAME, PROPS_REVISION_GUID,
-            PROPS_VAULT_GUID, RELEASE_ITEM_GUID, RELEASE_VAULT_GUID, REVISION_GUID,
-            REVISION_NAME, SOURCE_LIBRARY_NAME, SYMBOL_ITEM_GUID, SYMBOL_REVISION_GUID,
-            SYMBOL_VAULT_GUID, TEMPLATE_ITEM_GUID, TEMPLATE_REVISION_GUID,
-            TEMPLATE_REVISION_HRID, TEMPLATE_VAULT_GUID, TEMPLATE_VAULT_HRID, VAULT_GUID,
+            PROPS_VAULT_GUID, RELEASE_ITEM_GUID, RELEASE_VAULT_GUID, REVISION_GUID, REVISION_NAME,
+            SOURCE_LIBRARY_NAME, SYMBOL_ITEM_GUID, SYMBOL_REVISION_GUID, SYMBOL_VAULT_GUID,
+            TEMPLATE_ITEM_GUID, TEMPLATE_REVISION_GUID, TEMPLATE_REVISION_HRID,
+            TEMPLATE_VAULT_GUID, TEMPLATE_VAULT_HRID, VAULT_GUID,
         },
         visual::{
             ARROW_KIND, BORDER_WIDTH, COLOR, CORNER_X, CORNER_X_FRAC, CORNER_X_RADIUS,
@@ -1339,20 +1340,30 @@ impl SchImplementation {
     pub fn from_params(params: &mut ParameterCollection) -> crate::Result<Self> {
         let base = SchPrimitiveBase::from_params(params)?;
         let description: String = params.remove_with_default(DESCRIPTION, String::new())?;
-        let use_component_library: bool = params.remove_with_default(USE_COMPONENT_LIBRARY, false)?;
+        let use_component_library: bool =
+            params.remove_with_default(USE_COMPONENT_LIBRARY, false)?;
         let model_name: String = params.remove_with_default(MODEL_NAME, String::new())?;
         let model_type: String = params.remove_with_default(MODEL_TYPE, String::new())?;
         let datafile_count: i32 = params.remove_with_default(DATAFILE_COUNT, 0i32)?;
-        let model_vault_guid: String = params.remove_with_default(MODEL_VAULT_GUID, String::new())?;
+        let model_vault_guid: String =
+            params.remove_with_default(MODEL_VAULT_GUID, String::new())?;
         let model_item_guid: String = params.remove_with_default(MODEL_ITEM_GUID, String::new())?;
-        let model_revision_guid: String = params.remove_with_default(MODEL_REVISION_GUID, String::new())?;
+        let model_revision_guid: String =
+            params.remove_with_default(MODEL_REVISION_GUID, String::new())?;
 
         let mut datafile_links = Vec::with_capacity(datafile_count.max(0) as usize);
         for i in 0..datafile_count.max(0) {
-            let location: String = params.remove_with_default(&format!("ModelDatafile{i}"), String::new())?;
-            let entity_name: String = params.remove_with_default(&format!("ModelDatafileEntity{i}"), String::new())?;
-            let file_kind: String = params.remove_with_default(&format!("ModelDatafileKind{i}"), String::new())?;
-            datafile_links.push(ModelDatafileLink { location, entity_name, file_kind });
+            let location: String =
+                params.remove_with_default(&format!("ModelDatafile{i}"), String::new())?;
+            let entity_name: String =
+                params.remove_with_default(&format!("ModelDatafileEntity{i}"), String::new())?;
+            let file_kind: String =
+                params.remove_with_default(&format!("ModelDatafileKind{i}"), String::new())?;
+            datafile_links.push(ModelDatafileLink {
+                location,
+                entity_name,
+                file_kind,
+            });
         }
         // Consume any extra entries beyond datafile_count (older files may have them).
         let mut extra_i = datafile_count.max(0) as usize;
@@ -1360,9 +1371,19 @@ impl SchImplementation {
             let key = format!("ModelDatafile{extra_i}");
             match params.remove_optional::<String>(&key)? {
                 Some(location) => {
-                    let entity_name: String = params.remove_with_default(&format!("ModelDatafileEntity{extra_i}"), String::new())?;
-                    let file_kind: String = params.remove_with_default(&format!("ModelDatafileKind{extra_i}"), String::new())?;
-                    datafile_links.push(ModelDatafileLink { location, entity_name, file_kind });
+                    let entity_name: String = params.remove_with_default(
+                        &format!("ModelDatafileEntity{extra_i}"),
+                        String::new(),
+                    )?;
+                    let file_kind: String = params.remove_with_default(
+                        &format!("ModelDatafileKind{extra_i}"),
+                        String::new(),
+                    )?;
+                    datafile_links.push(ModelDatafileLink {
+                        location,
+                        entity_name,
+                        file_kind,
+                    });
                 }
                 None => break,
             }
@@ -1371,7 +1392,8 @@ impl SchImplementation {
 
         let is_current: bool = params.remove_with_default(IS_CURRENT, false)?;
         let datalinks_locked: bool = params.remove_with_default(DATALINKS_LOCKED, false)?;
-        let database_datalinks_locked: bool = params.remove_with_default(DATABASE_DATALINKS_LOCKED, false)?;
+        let database_datalinks_locked: bool =
+            params.remove_with_default(DATABASE_DATALINKS_LOCKED, false)?;
         let integrated_model: bool = params.remove_with_default(INTEGRATED_MODEL, false)?;
         let database_model: bool = params.remove_with_default(DATABASE_MODEL, false)?;
         let unique_id: String = params.remove_with_default(UNIQUE_ID, String::new())?;
@@ -1554,9 +1576,11 @@ impl SchSheet {
 
         let template_vault_guid = params.remove_with_default(TEMPLATE_VAULT_GUID, String::new())?;
         let template_item_guid = params.remove_with_default(TEMPLATE_ITEM_GUID, String::new())?;
-        let template_revision_guid = params.remove_with_default(TEMPLATE_REVISION_GUID, String::new())?;
+        let template_revision_guid =
+            params.remove_with_default(TEMPLATE_REVISION_GUID, String::new())?;
         let template_vault_hrid = params.remove_with_default(TEMPLATE_VAULT_HRID, String::new())?;
-        let template_revision_hrid = params.remove_with_default(TEMPLATE_REVISION_HRID, String::new())?;
+        let template_revision_hrid =
+            params.remove_with_default(TEMPLATE_REVISION_HRID, String::new())?;
         let release_vault_guid = params.remove_with_default(RELEASE_VAULT_GUID, String::new())?;
         let release_item_guid = params.remove_with_default(RELEASE_ITEM_GUID, String::new())?;
         let item_revision_guid = params.remove_with_default(ITEM_REVISION_GUID, String::new())?;
@@ -1942,7 +1966,11 @@ impl SchSheetEntry {
     pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
         self.base.to_params(params);
         params.insert_coord_point(
-            LOCATION_X, LOCATION_X_FRAC, LOCATION_Y, LOCATION_Y_FRAC, self.location,
+            LOCATION_X,
+            LOCATION_X_FRAC,
+            LOCATION_Y,
+            LOCATION_Y_FRAC,
+            self.location,
         );
         if self.side != LeftRightSide::Left {
             params.insert(SIDE, self.side.to_param_value());
@@ -2494,7 +2522,11 @@ fn encode_pin_conglomerate(pin: &SchPin) -> u8 {
 /// in PinDesc and PinWideText sidecar streams.
 fn write_dynamic_string(w: &mut BinaryWriter, s: &str) {
     let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(s);
-    let truncated = if encoded.len() > C_MAX_SHORT_STRING_LENGTH as usize { &encoded[..C_MAX_SHORT_STRING_LENGTH as usize] } else { &encoded };
+    let truncated = if encoded.len() > C_MAX_SHORT_STRING_LENGTH as usize {
+        &encoded[..C_MAX_SHORT_STRING_LENGTH as usize]
+    } else {
+        &encoded
+    };
     w.write_u8(truncated.len() as u8);
     w.write_bytes(truncated);
 }
@@ -2773,7 +2805,10 @@ pub(crate) fn serialize_implementation(imp: &SchImplementation, params: &mut Par
         params.insert(DESCRIPTION, imp.description.to_param_value());
     }
     if imp.use_component_library {
-        params.insert(USE_COMPONENT_LIBRARY, imp.use_component_library.to_param_value());
+        params.insert(
+            USE_COMPONENT_LIBRARY,
+            imp.use_component_library.to_param_value(),
+        );
     }
     if !imp.model_name.is_empty() {
         params.insert(MODEL_NAME, imp.model_name.to_param_value());
@@ -2782,16 +2817,25 @@ pub(crate) fn serialize_implementation(imp: &SchImplementation, params: &mut Par
         params.insert(MODEL_TYPE, imp.model_type.to_param_value());
     }
     if !imp.datafile_links.is_empty() {
-        params.insert(DATAFILE_COUNT, (imp.datafile_links.len() as i32).to_param_value());
+        params.insert(
+            DATAFILE_COUNT,
+            (imp.datafile_links.len() as i32).to_param_value(),
+        );
         for (i, link) in imp.datafile_links.iter().enumerate() {
             if !link.location.is_empty() {
                 params.insert(&format!("ModelDatafile{i}"), link.location.to_param_value());
             }
             if !link.entity_name.is_empty() {
-                params.insert(&format!("ModelDatafileEntity{i}"), link.entity_name.to_param_value());
+                params.insert(
+                    &format!("ModelDatafileEntity{i}"),
+                    link.entity_name.to_param_value(),
+                );
             }
             if !link.file_kind.is_empty() {
-                params.insert(&format!("ModelDatafileKind{i}"), link.file_kind.to_param_value());
+                params.insert(
+                    &format!("ModelDatafileKind{i}"),
+                    link.file_kind.to_param_value(),
+                );
             }
         }
     }
@@ -2802,7 +2846,10 @@ pub(crate) fn serialize_implementation(imp: &SchImplementation, params: &mut Par
         params.insert(MODEL_ITEM_GUID, imp.model_item_guid.to_param_value());
     }
     if !imp.model_revision_guid.is_empty() {
-        params.insert(MODEL_REVISION_GUID, imp.model_revision_guid.to_param_value());
+        params.insert(
+            MODEL_REVISION_GUID,
+            imp.model_revision_guid.to_param_value(),
+        );
     }
     if imp.is_current {
         params.insert(IS_CURRENT, imp.is_current.to_param_value());
@@ -2811,7 +2858,10 @@ pub(crate) fn serialize_implementation(imp: &SchImplementation, params: &mut Par
         params.insert(DATALINKS_LOCKED, imp.datalinks_locked.to_param_value());
     }
     if imp.database_datalinks_locked {
-        params.insert(DATABASE_DATALINKS_LOCKED, imp.database_datalinks_locked.to_param_value());
+        params.insert(
+            DATABASE_DATALINKS_LOCKED,
+            imp.database_datalinks_locked.to_param_value(),
+        );
     }
     if imp.integrated_model {
         params.insert(INTEGRATED_MODEL, imp.integrated_model.to_param_value());
@@ -2914,7 +2964,9 @@ fn record_type_for(record: &SchRecord) -> SchRecordType {
 fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) -> Result<()> {
     match record {
         SchRecord::Sheet(_) => {
-            return Err(AltiumFormatError::NotImplemented("SchSheet serialization".into()))
+            return Err(AltiumFormatError::NotImplemented(
+                "SchSheet serialization".into(),
+            ));
         }
         SchRecord::Template(v) => v.to_params(params),
         SchRecord::Wire(v) => v.to_params(params),
@@ -2968,7 +3020,7 @@ fn fill_record_fields(record: &SchRecord, params: &mut ParameterCollection) -> R
         SchRecord::Pin(_) => {
             return Err(AltiumFormatError::NotImplemented(
                 "Pin serialization via fill_record_fields (use serialize_binary_pin)".into(),
-            ))
+            ));
         }
     }
     Ok(())

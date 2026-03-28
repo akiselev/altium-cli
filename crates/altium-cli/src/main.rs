@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::Instant;
 
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib, VersionInfo};
 use altium_format_query::{eval_query, parse_query};
@@ -8,32 +7,22 @@ use altium_format_render_png::{
     DEFAULT_SCALE, render_pcblib_footprint_png, render_schdoc_png, render_schlib_component_png,
 };
 use altium_format_render_svg::{render_pcblib_footprint, render_schdoc, render_schlib_component};
-use autopcb_spec::{
-    FormatConfig, PcbDocSpec, PlacementConstraintSpec, PlacementPlaceSpec, SpecDomain, SyncChange,
-    SyncDirection, SyncPolicy, apply_spec_pcbdoc, apply_spec_prjpcb,
-    apply_spec_schdoc, apply_spec_schlib, apply_sync_changes_to_pcbdoc, compile_imported_syms,
-    compile_spec_with_resolved, diff_snapshots, dump_intlib,
-    dump_pcbdoc, dump_pcblib, dump_placement_block, dump_prjpcb, dump_schdoc, dump_schlib,
-    filter_changes, format_spec, project_pcbdoc_spec, project_schdoc_spec, reconcile_pcbdoc,
-    reconcile_pcbdoc_empty, reconcile_prjpcb,
-    reconcile_prjpcb_empty, reconcile_schdoc, reconcile_schdoc_empty, reconcile_schlib,
-    reconcile_schlib_empty, render_eco_report, resolve_imports, rewrite_pcbdoc_spec_with_changes,
-    validate_pcbdoc_spec, validate_schdoc_spec,
-};
 use autopcb_graph_import_altium::{import_pcblib, import_schlib};
 use autopcb_graph_spec::{create_workspace_bundle, save_workspace, validate_workspace};
-use autopcb_ir::{PcbIr, spec_bridge::load_ir_from_spec};
-use autopcb_placement::{
-    Direction, PlacementConfig, PlacementEdge, RectRegion, UserConstraint, named_region_from_board,
-    solve_placement,
+use autopcb_spec::{
+    FormatConfig, PcbDocSpec, SpecDomain, SyncChange, SyncDirection, SyncPolicy, apply_spec_pcbdoc,
+    apply_spec_prjpcb, apply_spec_schdoc, apply_spec_schlib, apply_sync_changes_to_pcbdoc,
+    compile_imported_syms, compile_spec_with_resolved, diff_snapshots, dump_intlib, dump_pcbdoc,
+    dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib, filter_changes, format_spec,
+    project_pcbdoc_spec, project_schdoc_spec, reconcile_pcbdoc, reconcile_pcbdoc_empty,
+    reconcile_prjpcb, reconcile_prjpcb_empty, reconcile_schdoc, reconcile_schdoc_empty,
+    reconcile_schlib, reconcile_schlib_empty, render_eco_report, resolve_imports,
+    rewrite_pcbdoc_spec_with_changes, validate_pcbdoc_spec, validate_schdoc_spec,
 };
 use clap::{Parser, Subcommand};
-use tracing::{debug, info};
 
 mod cfb;
-pub mod placement_bridge;
 pub mod spec_merge;
-pub mod spec_rewriter;
 
 #[derive(Parser)]
 #[command(name = "altium", about = "CLI tool for Altium Designer files")]
@@ -155,11 +144,6 @@ enum Commands {
         #[arg(long)]
         limit: Option<usize>,
     },
-    /// Placement solver commands for .pcb files
-    Placement {
-        #[command(subcommand)]
-        sub: PlacementSubcommand,
-    },
     /// Canonical AutoPCB graph workspace commands
     Graph {
         #[command(subcommand)]
@@ -180,11 +164,6 @@ enum Commands {
     Spec {
         #[command(subcommand)]
         sub: SpecSubcommand,
-    },
-    /// Routing commands for .routes files and spec-driven autorouting
-    Routing {
-        #[command(subcommand)]
-        sub: RoutingSubcommand,
     },
 }
 
@@ -238,68 +217,6 @@ enum InspectSubcommand {
 }
 
 #[derive(Subcommand)]
-enum PlacementSubcommand {
-    /// Solve placement constraints from a .pcb file
-    Solve {
-        /// Path to .pcb source file
-        spec_file: PathBuf,
-        /// Emit JSON report
-        #[arg(long, default_value_t = false)]
-        json: bool,
-        /// Write iteration snapshots for autopcb-viewer playback
-        #[arg(long)]
-        iterations_out: Option<PathBuf>,
-        #[arg(long, default_value_t = 2.0)]
-        gamma_start: f64,
-        #[arg(long, default_value_t = 10.0)]
-        gamma_end: f64,
-        #[arg(long, default_value_t = 250)]
-        max_iters: usize,
-    },
-    /// Auto-place components from a .pcb file and rewrite it with solved positions
-    Autoplace {
-        /// Path to .pcb source file
-        spec_file: PathBuf,
-        /// Show plan without writing any files
-        #[arg(long, default_value_t = false)]
-        dry_run: bool,
-        /// Write updated spec to this path (default: overwrite spec_file)
-        #[arg(long)]
-        output: Option<PathBuf>,
-        #[arg(long, default_value_t = 2.0)]
-        gamma_start: f64,
-        #[arg(long, default_value_t = 10.0)]
-        gamma_end: f64,
-        #[arg(long, default_value_t = 250)]
-        max_iters: usize,
-        /// Disable simulated annealing refinement after analytical placement
-        #[arg(long = "no-sa", action = clap::ArgAction::SetFalse, default_value_t = true)]
-        sa: bool,
-    },
-    /// Dump current component positions from a PcbDoc as a placement spec
-    Dump {
-        /// Target PcbDoc file
-        target: PathBuf,
-    },
-    /// Show placement ECO plan (what would change)
-    Plan {
-        /// Path to .pcb source file
-        spec_file: PathBuf,
-        /// Target .PcbDoc file
-        #[arg(long)]
-        target: PathBuf,
-    },
-    /// Apply placement spec to PcbDoc
-    Apply {
-        /// Path to .pcb source file
-        spec_file: PathBuf,
-        /// Target .PcbDoc file
-        #[arg(long)]
-        target: PathBuf,
-    },
-}
-
-#[derive(Subcommand)]
 enum GraphSubcommand {
     /// Create a new graph-spec workspace bundle
     New {
@@ -345,34 +262,6 @@ enum SpecSubcommand {
         /// Use when syncing multiple schematic sheets into one PcbDoc.
         #[arg(long)]
         append: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum RoutingSubcommand {
-    /// Load a .routes file and print routing statistics
-    Inspect {
-        /// Path to the .routes file (binary or JSON)
-        path: PathBuf,
-        /// Show detailed per-violation output
-        #[arg(long)]
-        verbose: bool,
-        /// Output in JSON format
-        #[arg(long)]
-        json: bool,
-        // Note: --drc for live DRC is not supported here because running DRC
-        // requires a full PcbIr, which is not available from a .routes file alone.
-    },
-    /// Solve routing from a .pcb file and write a .routes file
-    Solve {
-        /// Path to .pcb file
-        spec_file: PathBuf,
-        /// Output .routes file path (default: <spec_stem>.routes)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-        /// Emit JSON output
-        #[arg(long)]
-        json: bool,
     },
 }
 
@@ -493,12 +382,6 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-        Commands::Placement { sub } => {
-            if let Err(e) = run_placement(sub) {
-                eprintln!("Error: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
         Commands::Graph { sub } => {
             if let Err(e) = run_graph(sub) {
                 eprintln!("Error: {e}");
@@ -518,12 +401,6 @@ fn main() -> ExitCode {
         },
         Commands::Spec { sub } => {
             if let Err(e) = run_spec(sub) {
-                eprintln!("Error: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-        Commands::Routing { sub } => {
-            if let Err(e) = run_routing(sub) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -572,17 +449,11 @@ fn run_spec_sync(
 
     let schdoc_spec = match schdoc_result.model {
         autopcb_spec::model::SpecModel::Sch(spec) => spec,
-        _ => anyhow::bail!(
-            "{} is not a valid .sch file",
-            schdoc_spec_path.display()
-        ),
+        _ => anyhow::bail!("{} is not a valid .sch file", schdoc_spec_path.display()),
     };
     let pcbdoc_spec_model = match pcbdoc_result.model {
         autopcb_spec::model::SpecModel::Pcb(spec) => spec,
-        _ => anyhow::bail!(
-            "{} is not a valid .pcb file",
-            pcbdoc_spec_path.display()
-        ),
+        _ => anyhow::bail!("{} is not a valid .pcb file", pcbdoc_spec_path.display()),
     };
 
     // ── Step 3: Validate both specs ───────────────────────────────────────────
@@ -1067,9 +938,9 @@ fn detect_spec_domain(path: &PathBuf) -> anyhow::Result<SpecDomain> {
         Some("sch") => Ok(SpecDomain::Sch),
         Some("pcb") => Ok(SpecDomain::Pcb),
         Some("proj") => Ok(SpecDomain::Proj),
-        Some(ext) => anyhow::bail!(
-            "unknown spec file extension .{ext} (supported: .sym, .sch, .pcb, .proj)"
-        ),
+        Some(ext) => {
+            anyhow::bail!("unknown spec file extension .{ext} (supported: .sym, .sch, .pcb, .proj)")
+        }
         None => anyhow::bail!("spec file has no extension: {}", path.display()),
     }
 }
@@ -1299,10 +1170,7 @@ fn apply_for_model(
     output: Option<&PathBuf>,
     spec_file: &PathBuf,
     domain: &SpecDomain,
-    imported_components: &std::collections::HashMap<
-        String,
-        autopcb_spec::model::ComponentSpec,
-    >,
+    imported_components: &std::collections::HashMap<String, autopcb_spec::model::ComponentSpec>,
     import_paths: &[PathBuf],
 ) -> anyhow::Result<()> {
     let library_path = default_output_for_spec(spec_file, domain);
@@ -1552,9 +1420,7 @@ fn inject_routes_into_pcbdoc(
     let mut count = 0usize;
 
     for routed_net in solution.nets.values() {
-        let net_name = net_names
-            .get(routed_net.net_id.raw() as usize)
-            .cloned();
+        let net_name = net_names.get(routed_net.net_id.raw() as usize).cloned();
 
         for (i, seg) in routed_net.segments.iter().enumerate() {
             let layer = layer_refs
@@ -1566,14 +1432,8 @@ fn inject_routes_into_pcbdoc(
                 layer,
                 net: net_name.clone(),
                 component: None,
-                start: CoordPoint::new(
-                    Coord::from_mms(seg.start.x),
-                    Coord::from_mms(seg.start.y),
-                ),
-                end: CoordPoint::new(
-                    Coord::from_mms(seg.end.x),
-                    Coord::from_mms(seg.end.y),
-                ),
+                start: CoordPoint::new(Coord::from_mms(seg.start.x), Coord::from_mms(seg.start.y)),
+                end: CoordPoint::new(Coord::from_mms(seg.end.x), Coord::from_mms(seg.end.y)),
                 width: Coord::from_mms(seg.width_mm),
             });
             count += 1;
@@ -1624,10 +1484,7 @@ fn instantiate_footprint_primitives(
     doc: &mut PcbDoc,
     import_paths: &[PathBuf],
     pad_net_map: &std::collections::HashMap<(String, String), String>,
-    imported_components: &std::collections::HashMap<
-        String,
-        autopcb_spec::model::ComponentSpec,
-    >,
+    imported_components: &std::collections::HashMap<String, autopcb_spec::model::ComponentSpec>,
 ) -> anyhow::Result<()> {
     use altium_format_types::coord::{Coord, CoordPoint};
 
@@ -2034,12 +1891,7 @@ struct CompileResult {
     import_paths: Vec<PathBuf>,
     /// Compiled SchLib components from imports, keyed by lib_reference.
     /// Used by SchDoc apply to resolve pin positions.
-    imported_components:
-        std::collections::HashMap<String, autopcb_spec::model::ComponentSpec>,
-    /// Compiled sym libraries from imports, keyed by import alias or canonical path.
-    /// Used by routing/placement solve to resolve footprint definitions.
-    imported_footprints:
-        std::collections::HashMap<String, autopcb_spec::model::SymSpec>,
+    imported_components: std::collections::HashMap<String, autopcb_spec::model::ComponentSpec>,
 }
 
 fn compile_and_resolve(
@@ -2071,11 +1923,14 @@ fn compile_and_resolve(
         let import_name = path.display().to_string();
         anyhow::anyhow!("{}", e.render(&import_name, &import_source))
     })?;
-    let imported_components_for_exec: std::collections::HashMap<String, autopcb_spec::model::ComponentSpec> =
-        sym_libs_for_exec.into_iter()
-            .flat_map(|(_key, sym)| sym.components.into_iter())
-            .map(|c| (c.lib_reference.clone(), c))
-            .collect();
+    let imported_components_for_exec: std::collections::HashMap<
+        String,
+        autopcb_spec::model::ComponentSpec,
+    > = sym_libs_for_exec
+        .into_iter()
+        .flat_map(|(_key, sym)| sym.components.into_iter())
+        .map(|c| (c.lib_reference.clone(), c))
+        .collect();
 
     let sym_libs2 = compile_imported_syms(&resolved).map_err(|(path, e)| {
         let import_source = std::fs::read_to_string(&path).unwrap_or_default();
@@ -2083,18 +1938,13 @@ fn compile_and_resolve(
         anyhow::anyhow!("{}", e.render(&import_name, &import_source))
     })?;
     let imported_components: std::collections::HashMap<String, autopcb_spec::model::ComponentSpec> =
-        sym_libs2.into_iter()
+        sym_libs2
+            .into_iter()
             .flat_map(|(_key, sym)| sym.components.into_iter())
             .map(|c| (c.lib_reference.clone(), c))
             .collect();
     let model = compile_spec_with_resolved(&resolved, *domain, imported_components)
         .map_err(|e| anyhow::anyhow!("{}", e.render(&source_name, source)))?;
-
-    let imported_footprints = compile_imported_syms(&resolved).map_err(|(path, e)| {
-        let import_source = std::fs::read_to_string(&path).unwrap_or_default();
-        let import_name = path.display().to_string();
-        anyhow::anyhow!("{}", e.render(&import_name, &import_source))
-    })?;
 
     // Collect all import paths for --all processing.
     let import_paths: Vec<PathBuf> = resolved
@@ -2108,7 +1958,6 @@ fn compile_and_resolve(
         model,
         import_paths,
         imported_components: imported_components_for_exec,
-        imported_footprints,
     })
 }
 
@@ -2499,10 +2348,11 @@ fn run_inspect(path: &std::path::Path, sub: InspectSubcommand) -> anyhow::Result
 
     let doc = PcbDoc::open(path)
         .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", path.display()))?;
-    let board = doc.board()
+    let board = doc
+        .board()
         .map_err(|e| anyhow::anyhow!("failed to extract board: {e}"))?;
-    let imported_spec = import_pcbdoc(&board)
-        .map_err(|e| anyhow::anyhow!("failed to import PcbDoc: {e}"))?;
+    let imported_spec =
+        import_pcbdoc(&board).map_err(|e| anyhow::anyhow!("failed to import PcbDoc: {e}"))?;
     let ir = spec_to_ir(&imported_spec, &std::collections::HashMap::new())
         .map_err(|e| anyhow::anyhow!("spec compilation failed: {e:?}"))?;
 
@@ -2598,916 +2448,5 @@ fn run_inspect(path: &std::path::Path, sub: InspectSubcommand) -> anyhow::Result
     Ok(())
 }
 
-fn run_placement(sub: PlacementSubcommand) -> anyhow::Result<()> {
-    match sub {
-        PlacementSubcommand::Autoplace {
-            spec_file,
-            dry_run,
-            output,
-            gamma_start,
-            gamma_end,
-            max_iters,
-            sa,
-        } => {
-            let mut cfg = PlacementConfig {
-                gamma_start,
-                gamma_end,
-                max_iters,
-                ..PlacementConfig::default()
-            };
-            if sa {
-                cfg.sa_config = Some(autopcb_placement::simulated_annealing::SAConfig::default());
-            }
-            let report = autoplace_spec(
-                &spec_file,
-                &cfg,
-                dry_run,
-                output.as_deref(),
-            )?;
-            println!("AUTOPLACE REPORT");
-            println!("  components placed:  {}", report.autoplace_count);
-            println!("  total components:   {}", report.component_count);
-            println!("  HPWL estimate:      {:.3} mm", report.hpwl_mm);
-            println!("  duration:           {} ms", report.duration_ms);
-            if dry_run {
-                println!("  (dry-run: no files written)");
-            } else {
-                println!("  output spec:        {}", report.output_path.display());
-            }
-        }
-        PlacementSubcommand::Dump { target } => {
-            cmd_placement_dump(&target)?;
-        }
-        PlacementSubcommand::Plan { spec_file, target } => {
-            cmd_placement_plan(&spec_file, &target)?;
-        }
-        PlacementSubcommand::Apply { spec_file, target } => {
-            cmd_placement_apply(&spec_file, &target)?;
-        }
-        PlacementSubcommand::Solve {
-            spec_file,
-            json,
-            iterations_out,
-            gamma_start,
-            gamma_end,
-            max_iters,
-        } => {
-            let source = std::fs::read_to_string(&spec_file)
-                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
-            let compiled = compile_and_resolve(&source, &spec_file, &SpecDomain::Pcb)?;
-            let spec = match compiled.model {
-                autopcb_spec::model::SpecModel::Pcb(spec) => spec,
-                _ => {
-                    return Err(anyhow::anyhow!(
-                        "expected PcbDoc model for {}",
-                        spec_file.display()
-                    ));
-                }
-            };
-
-            let placement = spec.placement.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "spec {} has no placement {{ ... }} block",
-                    spec_file.display()
-                )
-            })?;
-
-            let spec_dir = spec_file.parent().unwrap_or(std::path::Path::new("."));
-            let ir = load_ir_from_spec(&spec, &compiled.imported_footprints, spec_dir)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-            let mut cfg = PlacementConfig {
-                gamma_start,
-                gamma_end,
-                max_iters,
-                ..PlacementConfig::default()
-            };
-            if let Some(all) = placement.clearance.all {
-                cfg.default_clearance_mm = all.to_mms();
-            }
-            if let Some(edge) = placement.clearance.edge {
-                cfg.board_edge_clearance_mm = edge.to_mms();
-            }
-            for rule in &spec.placement_rules {
-                if let (Some(kind), Some(gap)) = (&rule.kind, rule.gap) {
-                    match kind.as_str() {
-                        "component_clearance" => cfg.default_clearance_mm = gap.to_mms(),
-                        "board_outline_clearance" => cfg.board_edge_clearance_mm = gap.to_mms(),
-                        _ => {}
-                    }
-                }
-            }
-            cfg.ratsnest_weight = placement.optimize.ratsnest_weight;
-
-            let user_constraints =
-                build_user_constraints(&ir, &placement.places, &placement.constraints)?;
-            let result = solve_placement(&ir, &user_constraints, &cfg, &[])
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-            if let Some(path) = iterations_out {
-                let payload = serde_json::to_string_pretty(&result.snapshots)?;
-                std::fs::write(&path, payload)
-                    .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", path.display()))?;
-            }
-
-            if json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                println!("PLACEMENT REPORT");
-                println!("  status: {}", result.status);
-                println!("  iterations: {}", result.total_iterations);
-                println!("  duration: {} ms", result.duration_ms);
-                println!("  hpwl estimate: {:.3} mm", result.hpwl_estimate_mm);
-                println!("  overlap violations: {}", result.overlap_violations);
-                println!("  components: {}", result.components.len());
-                println!();
-                for c in &result.components {
-                    println!(
-                        "  {:<12} ({:>9.3}, {:>9.3}) rot {:>6.1}",
-                        c.designator, c.x_mm, c.y_mm, c.rotation_deg
-                    );
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Summary returned by [`autoplace_spec`].
-pub struct AutoplaceReport {
-    /// HPWL estimate from the solver (mm).
-    pub hpwl_mm: f64,
-    /// Total number of components in the IR.
-    pub component_count: usize,
-    /// Number of components that were auto-placed by the solver.
-    pub autoplace_count: usize,
-    /// Solver wall-clock duration.
-    pub duration_ms: u128,
-    /// Path of the written output spec (same as input when not dry-run and no --output given).
-    pub output_path: std::path::PathBuf,
-}
-
-/// Orchestrate the full autoplace pipeline:
-///
-/// 1. Read and compile the spec file.
-/// 2. Open the target PcbDoc and extract the IR.
-/// 3. Build solver constraints via [`placement_bridge::placement_spec_to_constraints`].
-/// 4. Build [`PlacementConfig`] from spec clearance/optimize settings.
-/// 5. Call [`solve_placement`].
-/// 6. Rewrite the spec file with solved positions via [`spec_rewriter::rewrite_spec_with_placement`].
-/// 7. Write the output (unless `dry_run`).
-pub fn autoplace_spec(
-    spec_path: &std::path::Path,
-    config: &PlacementConfig,
-    dry_run: bool,
-    output_path: Option<&std::path::Path>,
-) -> anyhow::Result<AutoplaceReport> {
-    use autopcb_spec::model::SpecModel;
-
-    let started = Instant::now();
-    let spec_path_buf = spec_path.to_path_buf();
-    info!(
-        target: "altium_cli::placement",
-        spec_path = %spec_path.display(),
-        dry_run,
-        has_output_override = output_path.is_some(),
-        "autoplace_spec_started"
-    );
-    let source = std::fs::read_to_string(spec_path)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_path.display()))?;
-
-    let compiled = compile_and_resolve(&source, &spec_path_buf, &SpecDomain::Pcb)?;
-    let spec = match compiled.model {
-        SpecModel::Pcb(s) => s,
-        _ => anyhow::bail!("expected PcbDoc spec for {}", spec_path.display()),
-    };
-
-    let placement = spec.placement.as_ref().ok_or_else(|| {
-        anyhow::anyhow!(
-            "spec {} has no placement {{ ... }} block",
-            spec_path.display()
-        )
-    })?;
-
-    let spec_dir = spec_path.parent().unwrap_or(std::path::Path::new("."));
-    let ir = load_ir_from_spec(&spec, &compiled.imported_footprints, spec_dir)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    info!(
-        target: "altium_cli::placement",
-        component_count = ir.components.len(),
-        net_count = ir.nets.len(),
-        "autoplace_ir_loaded"
-    );
-
-    // Build PlacementConfig from spec settings, then overlay caller-provided config.
-    let mut cfg = config.clone();
-    if let Some(all) = placement.clearance.all {
-        cfg.default_clearance_mm = all.to_mms();
-    }
-    if let Some(edge) = placement.clearance.edge {
-        cfg.board_edge_clearance_mm = edge.to_mms();
-    }
-    for rule in &spec.placement_rules {
-        if let (Some(kind), Some(gap)) = (&rule.kind, rule.gap) {
-            match kind.as_str() {
-                "component_clearance" => cfg.default_clearance_mm = gap.to_mms(),
-                "board_outline_clearance" => cfg.board_edge_clearance_mm = gap.to_mms(),
-                _ => {}
-            }
-        }
-    }
-    cfg.ratsnest_weight = placement.optimize.ratsnest_weight;
-
-    if let Some(ref ac) = placement.autoplace_config {
-        if let Some(gs) = ac.grid_snap {
-            cfg.grid_snap_mm = Some(gs.to_mms());
-        }
-        if let Some(auto_cluster) = ac.auto_cluster {
-            cfg.auto_cluster = auto_cluster;
-        }
-        if let Some(target_size) = ac.cluster_target_size {
-            cfg.cluster_target_size = target_size.max(2);
-        }
-        if let Some(max_depth) = ac.cluster_max_depth {
-            cfg.cluster_max_depth = max_depth.max(1);
-        }
-        if ac.sa_cooling.is_some()
-            || ac.sa_moves_per_temp.is_some()
-            || ac.sa_max_steps.is_some()
-            || ac.congestion_weight.is_some()
-            || ac.congestion_cell.is_some()
-            || ac.critical_net_boost.is_some()
-        {
-            let sa_cfg = cfg
-                .sa_config
-                .get_or_insert_with(autopcb_placement::simulated_annealing::SAConfig::default);
-            if let Some(cooling) = ac.sa_cooling {
-                sa_cfg.cooling_rate = cooling;
-            }
-            if let Some(moves) = ac.sa_moves_per_temp {
-                sa_cfg.moves_per_temp = moves;
-            }
-            if let Some(max_steps) = ac.sa_max_steps {
-                sa_cfg.max_steps = max_steps;
-            }
-            if let Some(weight) = ac.congestion_weight {
-                sa_cfg.congestion_weight = weight.max(0.0);
-            }
-            if let Some(cell) = ac.congestion_cell {
-                sa_cfg.congestion_cell_mm = cell.to_mms().max(0.5);
-            }
-            if let Some(boost) = ac.critical_net_boost {
-                sa_cfg.critical_net_boost = boost.max(1.0);
-            }
-        }
-    }
-
-    // Build constraints and collect autoplace designator list.
-    let (user_constraints, autoplace_designators) =
-        placement_bridge::placement_spec_to_constraints(placement, &ir)?;
-
-    let component_count = ir.components.len();
-    let autoplace_count = autoplace_designators.len();
-    info!(
-        target: "altium_cli::placement",
-        component_count,
-        autoplace_count,
-        user_constraint_count = user_constraints.len(),
-        placement_group_count = placement.groups.len(),
-        sa_enabled = cfg.sa_config.is_some(),
-        auto_cluster = cfg.auto_cluster,
-        max_iters = cfg.max_iters,
-        gamma_start = cfg.gamma_start,
-        gamma_end = cfg.gamma_end,
-        "autoplace_solver_configured"
-    );
-    debug!(
-        target: "altium_cli::placement",
-        ?autoplace_designators,
-        "autoplace_designators_resolved"
-    );
-
-    // Run solver.
-    let placement_groups: Vec<Vec<String>> = placement
-        .groups
-        .iter()
-        .map(|group| group.components.clone())
-        .collect();
-
-    let solve_started = Instant::now();
-    let result = solve_placement(&ir, &user_constraints, &cfg, &placement_groups)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    info!(
-        target: "altium_cli::placement",
-        duration_ms = solve_started.elapsed().as_millis(),
-        status = %result.status,
-        hpwl_mm = result.hpwl_estimate_mm,
-        overlap_violations = result.overlap_violations,
-        snapshot_count = result.snapshots.len(),
-        "autoplace_solver_finished"
-    );
-
-    let hpwl_mm = result.hpwl_estimate_mm;
-    let duration_ms = result.duration_ms;
-
-    // Rewrite spec text.
-    let rewrite_started = Instant::now();
-    let rewrite =
-        spec_rewriter::rewrite_spec_with_placement(&source, &result, &autoplace_designators)?;
-    info!(
-        target: "altium_cli::placement",
-        duration_ms = rewrite_started.elapsed().as_millis(),
-        rewritten_in_place_count = rewrite.rewritten_in_place.len(),
-        appended_count = rewrite.appended.len(),
-        "autoplace_spec_rewritten"
-    );
-
-    // Determine output path.
-    let out_path = output_path
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| spec_path.to_path_buf());
-
-    if !dry_run {
-        std::fs::write(&out_path, &rewrite.text)
-            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
-    }
-
-    info!(
-        target: "altium_cli::placement",
-        output_path = %out_path.display(),
-        duration_ms = started.elapsed().as_millis(),
-        "autoplace_spec_finished"
-    );
-
-    Ok(AutoplaceReport {
-        hpwl_mm,
-        component_count,
-        autoplace_count,
-        duration_ms,
-        output_path: out_path,
-    })
-}
-
-fn cmd_placement_dump(target: &std::path::Path) -> anyhow::Result<()> {
-    let doc = PcbDoc::open(target)
-        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
-    let board = doc.board()?;
-    let mut out = String::new();
-    dump_placement_block(&mut out, &board);
-    print!("{}", out);
-    Ok(())
-}
-
-fn cmd_placement_plan(spec_file: &std::path::Path, target: &std::path::Path) -> anyhow::Result<()> {
-    let spec_file_buf = spec_file.to_path_buf();
-    let source = std::fs::read_to_string(spec_file)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
-    let compiled = compile_and_resolve(&source, &spec_file_buf, &SpecDomain::Pcb)?;
-    let spec = match compiled.model {
-        autopcb_spec::model::SpecModel::Pcb(s) => s,
-        _ => anyhow::bail!("expected PcbDoc spec for {}", spec_file.display()),
-    };
-    let doc = PcbDoc::open(target)
-        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
-    let eco = reconcile_pcbdoc(&spec, &doc, target.to_path_buf(), spec_file.to_path_buf())
-        .map_err(|e| anyhow::anyhow!("reconcile failed: {e}"))?;
-    println!("{}", eco.render_text());
-    Ok(())
-}
-
-fn cmd_placement_apply(
-    spec_file: &std::path::Path,
-    target: &std::path::Path,
-) -> anyhow::Result<()> {
-    let spec_file_buf = spec_file.to_path_buf();
-    let source = std::fs::read_to_string(spec_file)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
-    let compiled = compile_and_resolve(&source, &spec_file_buf, &SpecDomain::Pcb)?;
-    let spec = match compiled.model {
-        autopcb_spec::model::SpecModel::Pcb(s) => s,
-        _ => anyhow::bail!("expected PcbDoc spec for {}", spec_file.display()),
-    };
-    let mut doc = PcbDoc::open(target)
-        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", target.display()))?;
-    apply_spec_pcbdoc(&spec, &mut doc).map_err(|e| anyhow::anyhow!("apply failed: {e}"))?;
-
-    // Apply placement positions from `place` entries to PcbDoc component records.
-    if let Some(ref placement) = spec.placement {
-        let mut board = doc
-            .board()
-            .map_err(|e| anyhow::anyhow!("failed to read board for placement: {e}"))?;
-        let mut placed = 0usize;
-        for place in &placement.places {
-            if let Some(loc) = place.at {
-                for designator in &place.designators {
-                    // Capture old position before mutating.
-                    let old_location;
-                    let old_rotation;
-                    {
-                        let comp = board
-                            .components
-                            .iter()
-                            .find(|c| &c.designator == designator);
-                        let Some(comp) = comp else { continue };
-                        old_location = comp.location;
-                        old_rotation = comp.rotation;
-                    }
-
-                    // Compute translation delta.
-                    use altium_format_types::coord::{Coord, CoordPoint};
-                    let delta_x = loc.x - old_location.x;
-                    let delta_y = loc.y - old_location.y;
-                    let new_rotation = place.rotation.unwrap_or(old_rotation);
-                    let delta_rotation = new_rotation - old_rotation;
-
-                    // Update the component record itself.
-                    {
-                        let comp = board
-                            .components
-                            .iter_mut()
-                            .find(|c| &c.designator == designator)
-                            .expect("component must exist: checked above");
-                        comp.location = loc;
-                        comp.rotation = new_rotation;
-                    }
-
-                    // Translate (and optionally rotate) every primitive owned by
-                    // this component.  Primitives store world-space absolute
-                    // coordinates, so a component move requires updating all of
-                    // them by the same delta.  When the rotation also changes,
-                    // each primitive's position is rotated around the *new*
-                    // component centre.
-                    let translate_point = |p: CoordPoint| -> CoordPoint {
-                        let mut q = CoordPoint::new(p.x + delta_x, p.y + delta_y);
-                        if delta_rotation != 0.0 {
-                            let angle_rad = delta_rotation.to_radians();
-                            let (sin_a, cos_a) = angle_rad.sin_cos();
-                            let rx = (q.x - loc.x).raw() as f64;
-                            let ry = (q.y - loc.y).raw() as f64;
-                            q = CoordPoint::new(
-                                Coord::new(
-                                    (loc.x.raw() as f64 + rx * cos_a - ry * sin_a).round() as i32,
-                                ),
-                                Coord::new(
-                                    (loc.y.raw() as f64 + rx * sin_a + ry * cos_a).round() as i32,
-                                ),
-                            );
-                        }
-                        q
-                    };
-
-                    for pad in board.pads.iter_mut() {
-                        if pad.component.as_deref() == Some(designator) {
-                            pad.location = translate_point(pad.location);
-                            pad.rotation += delta_rotation;
-                        }
-                    }
-                    for track in board.tracks.iter_mut() {
-                        if track.component.as_deref() == Some(designator) {
-                            track.start = translate_point(track.start);
-                            track.end = translate_point(track.end);
-                        }
-                    }
-                    for arc in board.arcs.iter_mut() {
-                        if arc.component.as_deref() == Some(designator) {
-                            arc.center = translate_point(arc.center);
-                        }
-                    }
-                    for fill in board.fills.iter_mut() {
-                        if fill.component.as_deref() == Some(designator) {
-                            fill.corner1 = translate_point(fill.corner1);
-                            fill.corner2 = translate_point(fill.corner2);
-                            fill.rotation += delta_rotation;
-                        }
-                    }
-                    for text in board.texts.iter_mut() {
-                        if text.component.as_deref() == Some(designator) {
-                            text.location = translate_point(text.location);
-                            text.rotation += delta_rotation;
-                        }
-                    }
-                    for region in board.regions.iter_mut() {
-                        if region.component.as_deref() == Some(designator) {
-                            for v in region.outline.iter_mut() {
-                                *v = translate_point(*v);
-                            }
-                            for hole in region.holes.iter_mut() {
-                                for v in hole.iter_mut() {
-                                    *v = translate_point(*v);
-                                }
-                            }
-                        }
-                    }
-                    for body in board.component_bodies.iter_mut() {
-                        if body.component.as_deref() == Some(designator) {
-                            for v in body.outline.iter_mut() {
-                                *v = translate_point(*v);
-                            }
-                        }
-                    }
-
-                    placed += 1;
-                }
-            }
-        }
-        if placed > 0 {
-            doc.update_board(&board)
-                .map_err(|e| anyhow::anyhow!("failed to update board with placement: {e}"))?;
-            eprintln!("Placed {} component(s)", placed);
-        }
-    }
-
-    doc.save(target)?;
-    println!("Saved: {}", target.display());
-    Ok(())
-}
-
-fn build_user_constraints(
-    ir: &PcbIr,
-    places: &[PlacementPlaceSpec],
-    constraints: &[PlacementConstraintSpec],
-) -> anyhow::Result<Vec<UserConstraint>> {
-    let mut out = Vec::new();
-
-    for place in places {
-        for d in &place.designators {
-            if let Some(edge) = &place.edge {
-                let edge = parse_edge(edge)
-                    .ok_or_else(|| anyhow::anyhow!("invalid edge value '{edge}' for place {d}"))?;
-                out.push(UserConstraint::EdgePlacement {
-                    designator: d.clone(),
-                    edge,
-                    inset_mm: place.inset.map(|v| v.to_mms()).unwrap_or(0.0),
-                });
-            }
-
-            if let (Some(near), Some(max_dist)) = (&place.near, place.max_distance) {
-                out.push(UserConstraint::Near {
-                    a: d.clone(),
-                    b: near.clone(),
-                    max_distance_mm: max_dist.to_mms(),
-                });
-            }
-
-            if let Some(region) = &place.region_name {
-                if let Some(rr) = named_region_from_board(ir, region) {
-                    out.push(UserConstraint::RegionContainment {
-                        designator: d.clone(),
-                        region: rr,
-                    });
-                }
-            }
-
-            if let Some((from, to)) = place.region_rect {
-                out.push(UserConstraint::RegionContainment {
-                    designator: d.clone(),
-                    region: RectRegion {
-                        min_x: from.x.to_mms(),
-                        min_y: from.y.to_mms(),
-                        max_x: to.x.to_mms(),
-                        max_y: to.y.to_mms(),
-                    },
-                });
-            }
-
-            if place.fixed {
-                if let Some(at) = place.at {
-                    out.push(UserConstraint::FixedPosition {
-                        designator: d.clone(),
-                        x_mm: at.x.to_mms(),
-                        y_mm: at.y.to_mms(),
-                        rotation_deg: place.rotation,
-                    });
-                }
-            } else if let Some(at) = place.at {
-                out.push(UserConstraint::FixedPosition {
-                    designator: d.clone(),
-                    x_mm: at.x.to_mms(),
-                    y_mm: at.y.to_mms(),
-                    rotation_deg: place.rotation,
-                });
-            }
-        }
-    }
-
-    for c in constraints {
-        match c {
-            PlacementConstraintSpec::LeftOf { a, b, gap } => {
-                out.push(UserConstraint::Directional {
-                    a: a.clone(),
-                    b: b.clone(),
-                    direction: Direction::LeftOf,
-                    gap_mm: gap.map(|v| v.to_mms()).unwrap_or(0.0),
-                })
-            }
-            PlacementConstraintSpec::RightOf { a, b, gap } => {
-                out.push(UserConstraint::Directional {
-                    a: a.clone(),
-                    b: b.clone(),
-                    direction: Direction::RightOf,
-                    gap_mm: gap.map(|v| v.to_mms()).unwrap_or(0.0),
-                })
-            }
-            PlacementConstraintSpec::Above { a, b, gap } => out.push(UserConstraint::Directional {
-                a: a.clone(),
-                b: b.clone(),
-                direction: Direction::Above,
-                gap_mm: gap.map(|v| v.to_mms()).unwrap_or(0.0),
-            }),
-            PlacementConstraintSpec::Below { a, b, gap } => out.push(UserConstraint::Directional {
-                a: a.clone(),
-                b: b.clone(),
-                direction: Direction::Below,
-                gap_mm: gap.map(|v| v.to_mms()).unwrap_or(0.0),
-            }),
-        }
-    }
-
-    Ok(out)
-}
-
-fn parse_edge(s: &str) -> Option<PlacementEdge> {
-    match s {
-        "top" => Some(PlacementEdge::Top),
-        "bottom" => Some(PlacementEdge::Bottom),
-        "left" => Some(PlacementEdge::Left),
-        "right" => Some(PlacementEdge::Right),
-        _ => None,
-    }
-}
-
-// ── routing ───────────────────────────────────────────────────────────────────
-
-fn run_routing(sub: RoutingSubcommand) -> anyhow::Result<()> {
-    match sub {
-        RoutingSubcommand::Inspect { path, verbose, json } => {
-            cmd_routing_inspect(&path, verbose, json)
-        }
-        RoutingSubcommand::Solve { spec_file, output, json } => {
-            cmd_routing_solve(&spec_file, output.as_deref(), json)
-        }
-    }
-}
-
-fn cmd_routing_inspect(path: &std::path::Path, verbose: bool, json: bool) -> anyhow::Result<()> {
-    let solution = autopcb_routes::load_binary(path)
-        .or_else(|_| autopcb_routes::load_json(path))
-        .map_err(|e| {
-            anyhow::anyhow!("failed to load routes file {}: {e}", path.display())
-        })?;
-
-    if json {
-        let out = serde_json::json!({
-            "path": path.display().to_string(),
-            "version": solution.version,
-            "nets_routed": solution.nets.len(),
-            "nets_unrouted": solution.unrouted.len(),
-            "iterations": solution.iterations.len(),
-            "metrics": {
-                "total_vias": solution.metrics.total_vias,
-                "total_length_mm": solution.metrics.total_length_mm,
-                "completion_pct": solution.metrics.completion_pct,
-                "drc_violations": solution.metrics.drc_violations,
-            },
-            "drc_violation_records": solution.drc_violation_records.iter().map(|v| {
-                serde_json::json!({
-                    "kind": v.kind_name,
-                    "location": { "x": v.location.x, "y": v.location.y },
-                    "layer": v.layer,
-                    "actual_mm": v.actual_mm,
-                    "required_mm": v.required_mm,
-                    "rule_name": v.rule_name,
-                })
-            }).collect::<Vec<_>>(),
-        });
-        println!("{}", serde_json::to_string_pretty(&out)?);
-        return Ok(());
-    }
-
-    let m = &solution.metrics;
-    let net_count = solution.nets.len();
-    let unrouted_count = solution.unrouted.len();
-    let iteration_count = solution.iterations.len();
-
-    println!("Routes file: {}", path.display());
-    println!("  Version:        {}", solution.version);
-    println!("  Nets routed:    {}", net_count);
-    println!("  Nets unrouted:  {}", unrouted_count);
-    println!("  Total vias:     {}", m.total_vias);
-    println!("  Total length:   {:.4} mm", m.total_length_mm);
-    println!("  Completion:     {:.1}%", m.completion_pct);
-    println!("  DRC violations: {} (from stored records)", m.drc_violations);
-    println!("  Iterations:     {}", iteration_count);
-
-    if !solution.unrouted.is_empty() {
-        println!();
-        println!("Unrouted nets:");
-        for net_id in &solution.unrouted {
-            println!("  net {}", net_id.raw());
-        }
-    }
-
-    if !solution.drc_violation_records.is_empty() {
-        println!();
-        if verbose {
-            println!("DRC Violations:");
-            for (i, v) in solution.drc_violation_records.iter().enumerate() {
-                println!(
-                    "  #{}: {} at ({:.4}, {:.4}){} — actual: {:.4} mm, required: {:.4} mm [{}]",
-                    i + 1,
-                    v.kind_name,
-                    v.location.x,
-                    v.location.y,
-                    v.layer.map(|l| format!(" layer {}", l)).unwrap_or_default(),
-                    v.actual_mm,
-                    v.required_mm,
-                    v.rule_name,
-                );
-            }
-        } else {
-            println!("DRC Violations (use --verbose for details):");
-            for (i, v) in solution.drc_violation_records.iter().enumerate() {
-                println!(
-                    "  #{}: {} at ({:.4}, {:.4}) [{}]",
-                    i + 1,
-                    v.kind_name,
-                    v.location.x,
-                    v.location.y,
-                    v.rule_name,
-                );
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn cmd_routing_solve(
-    spec_file: &std::path::Path,
-    output: Option<&std::path::Path>,
-    json: bool,
-) -> anyhow::Result<()> {
-    use autopcb_spec::model::SpecModel;
-
-    let source = std::fs::read_to_string(spec_file)
-        .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", spec_file.display()))?;
-    let spec_file_buf = spec_file.to_path_buf();
-    let result = compile_and_resolve(&source, &spec_file_buf, &SpecDomain::Pcb)?;
-    let spec = match result.model {
-        SpecModel::Pcb(s) => s,
-        _ => anyhow::bail!("routing solve requires a .pcb file"),
-    };
-
-    let spec_dir = spec_file.parent().unwrap_or(std::path::Path::new("."));
-    let ir = load_ir_from_spec(&spec, &result.imported_footprints, spec_dir)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    let config = autopcb_router::RoutingConfig::default();
-    let workspace = autopcb_router::build_workspace(&ir, &config)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let solution = autopcb_router::route_board(&workspace, &ir, &config)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    let output_path = output
-        .map(|p: &std::path::Path| p.to_path_buf())
-        .unwrap_or_else(|| spec_file.with_extension("routes"));
-    autopcb_routes::save_binary(&solution, &output_path)
-        .map_err(|e| anyhow::anyhow!("failed to save {}: {e}", output_path.display()))?;
-
-    if json {
-        println!("{}", serde_json::to_string_pretty(&solution.metrics)?);
-    } else {
-        println!("ROUTING REPORT");
-        println!("  output: {}", output_path.display());
-        println!(
-            "  nets routed: {}/{}",
-            solution.nets.len(),
-            solution.nets.len() + solution.unrouted.len()
-        );
-        println!("  unrouted: {}", solution.unrouted.len());
-        println!("  total length: {:.2} mm", solution.metrics.total_length_mm);
-        println!("  total vias: {}", solution.metrics.total_vias);
-        println!("  completion: {:.1}%", solution.metrics.completion_pct);
-        println!("  DRC violations: {}", solution.metrics.drc_violations);
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn placement_autoplace_enables_sa_by_default() {
-        let cli = Cli::try_parse_from(["altium", "placement", "autoplace", "board.pcb"])
-            .expect("autoplace args should parse");
-        match cli.command {
-            Commands::Placement {
-                sub: PlacementSubcommand::Autoplace { sa, spec_file, .. },
-            } => {
-                assert!(sa, "SA should be enabled by default");
-                assert_eq!(spec_file, PathBuf::from("board.pcb"));
-            }
-            _ => panic!("expected placement autoplace command"),
-        }
-    }
-
-    #[test]
-    fn placement_autoplace_accepts_no_sa_override() {
-        let cli = Cli::try_parse_from([
-            "altium",
-            "placement",
-            "autoplace",
-            "board.pcb",
-            "--no-sa",
-        ])
-        .expect("autoplace args should parse");
-        match cli.command {
-            Commands::Placement {
-                sub: PlacementSubcommand::Autoplace { sa, .. },
-            } => assert!(!sa, "--no-sa should disable SA"),
-            _ => panic!("expected placement autoplace command"),
-        }
-    }
-
-    #[test]
-    fn routing_inspect_parses_path_arg() {
-        let cli = Cli::try_parse_from(["altium", "routing", "inspect", "board.routes"])
-            .expect("routing inspect args should parse");
-        match cli.command {
-            Commands::Routing {
-                sub: RoutingSubcommand::Inspect { path, verbose, json },
-            } => {
-                assert_eq!(path, PathBuf::from("board.routes"));
-                assert!(!verbose);
-                assert!(!json);
-            }
-            _ => panic!("expected routing inspect command"),
-        }
-    }
-
-    #[test]
-    fn routing_inspect_loads_binary_routes_file() {
-        use autopcb_routes::{NetId, RouteSolution, save_binary};
-
-        let solution = RouteSolution::new();
-        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-        save_binary(&solution, tmp.path()).expect("save_binary");
-        cmd_routing_inspect(tmp.path(), false, false).expect("cmd_routing_inspect should succeed");
-    }
-
-    #[test]
-    fn routing_inspect_loads_json_routes_file() {
-        use autopcb_routes::{RouteSolution, save_json};
-
-        let solution = RouteSolution::new();
-        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-        save_json(&solution, tmp.path()).expect("save_json");
-        cmd_routing_inspect(tmp.path(), false, false).expect("cmd_routing_inspect should succeed on JSON");
-    }
-
-    #[test]
-    fn routing_solve_missing_spec_returns_error() {
-        let result = cmd_routing_solve(
-            std::path::Path::new("nonexistent.pcb"),
-            None,
-            false,
-        );
-        assert!(result.is_err(), "routing solve with missing spec file should return an error");
-    }
-
-    #[test]
-    fn routing_inspect_shows_zero_drc_violations() {
-        use autopcb_routes::{RouteSolution, save_binary};
-
-        let solution = RouteSolution::new();
-        assert_eq!(solution.metrics.drc_violations, 0);
-        assert!(solution.drc_violation_records.is_empty());
-
-        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-        save_binary(&solution, tmp.path()).expect("save_binary");
-        cmd_routing_inspect(tmp.path(), false, false).expect("inspect with 0 violations should succeed");
-    }
-
-    #[test]
-    fn routing_inspect_shows_drc_violation_records() {
-        use autopcb_routes::{DrcViolationRecord, Point, RouteSolution, save_binary};
-
-        let mut solution = RouteSolution::new();
-        solution.drc_violation_records.push(DrcViolationRecord {
-            kind_name: "ClearanceViolation".to_string(),
-            location: Point { x: 1.2345, y: 6.7890 },
-            layer: Some(1),
-            actual_mm: 0.05,
-            required_mm: 0.1,
-            rule_name: "Clearance_default".to_string(),
-        });
-        solution.metrics.drc_violations = 1;
-
-        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-        save_binary(&solution, tmp.path()).expect("save_binary");
-        cmd_routing_inspect(tmp.path(), false, false).expect("inspect with violations should succeed");
-    }
-}
+mod tests {}

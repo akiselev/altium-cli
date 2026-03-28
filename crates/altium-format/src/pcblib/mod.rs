@@ -18,21 +18,21 @@ use altium_format_types::{
     TCacheState, TextAutoposition, TextKind, V6Layer, V7Layer, ViaStructureType,
 };
 
+use crate::binary_io::BinaryWriter;
 use crate::block_stream::iter_blocks;
 use crate::block_stream::write_text_block;
-use crate::binary_io::BinaryWriter;
 use crate::board_config::serialize_board_config;
 use crate::cfb_document::CfbDocument;
 use crate::pcb_binary_stream::parse_pcb_section_header;
 use crate::pcb_file_header::{PcbFileHeader, parse_pcb_file_header};
+use crate::pcblib::custom_shapes::{
+    CornerRadiusChamferEntry, CustomMaskShapeEntry, CustomShapeEntry,
+};
 use crate::pcblib::library::{
     PcbEmbeddedFontEntry, PcbLayerKindMapping, PcbLibComponentTocEntry, PcbLibModelEntry,
     PcbLibraryData, PcbPadViaLibraryConfig, PcbTextureEntry, parse_component_toc,
     parse_embedded_fonts, parse_layer_kind_mapping, parse_library_data, parse_model_metadata,
     parse_pad_via_library, parse_texture_metadata, serialize_library_data_suffix,
-};
-use crate::pcblib::custom_shapes::{
-    CornerRadiusChamferEntry, CustomMaskShapeEntry, CustomShapeEntry,
 };
 use crate::pcblib::sidecar::{ExtendedPrimitiveInfoEntry, PrimitiveGuidEntry};
 use crate::tracked_cfb::TrackedCfbDocument;
@@ -611,7 +611,6 @@ fn parse_file_version_info(header_data: &[u8], data: &[u8]) -> Result<String> {
 }
 
 impl PcbLib {
-
     /// Returns the on-disk header string identifying the file format version.
     pub fn version_header(&self) -> &str {
         &self.header.version_string
@@ -666,7 +665,11 @@ impl PcbLib {
     /// Returns an error if a footprint with the same `display_name` already exists.
     pub fn add_footprint(&mut self, fp: crate::api::Footprint) -> Result<()> {
         // Check for duplicate display name
-        if self.footprints.iter().any(|f| f.display_name == fp.display_name) {
+        if self
+            .footprints
+            .iter()
+            .any(|f| f.display_name == fp.display_name)
+        {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "display_name".to_owned(),
                 detail: format!("footprint '{}' already exists", fp.display_name),
@@ -687,17 +690,15 @@ impl PcbLib {
                     ),
                 });
             }
-            self.section_keys.insert(fp.display_name.clone(), truncated.clone());
+            self.section_keys
+                .insert(fp.display_name.clone(), truncated.clone());
             truncated
         } else {
             // Check for CFB key collision
             if self.footprints.iter().any(|f| f.cfb_key == sanitized) {
                 return Err(AltiumFormatError::InvalidParamValue {
                     key: "cfb_key".to_owned(),
-                    detail: format!(
-                        "CFB key '{}' collides with existing footprint",
-                        sanitized
-                    ),
+                    detail: format!("CFB key '{}' collides with existing footprint", sanitized),
                 });
             }
             sanitized
@@ -726,18 +727,26 @@ impl PcbLib {
     ///
     /// Returns an error if no footprint with the given `display_name` exists.
     pub fn update_footprint(&mut self, fp: &crate::api::Footprint) -> Result<()> {
-        let idx = self.footprints
+        let idx = self
+            .footprints
             .iter()
             .position(|f| f.display_name == fp.display_name)
-            .ok_or_else(|| AltiumFormatError::StreamNotFound(
-                format!("footprint '{}' not found", fp.display_name),
-            ))?;
+            .ok_or_else(|| {
+                AltiumFormatError::StreamNotFound(format!(
+                    "footprint '{}' not found",
+                    fp.display_name
+                ))
+            })?;
 
         let existing = &self.footprints[idx];
         let updated = crate::api::pcblib_write::update_footprint_internal(fp, existing);
 
         // Update TOC entry
-        if let Some(toc) = self.component_toc.iter_mut().find(|t| t.name == fp.display_name) {
+        if let Some(toc) = self
+            .component_toc
+            .iter_mut()
+            .find(|t| t.name == fp.display_name)
+        {
             toc.pad_count = fp.pads.len() as u32;
             toc.height = fp.height;
             toc.description = fp.description.clone();
@@ -753,12 +762,13 @@ impl PcbLib {
     ///
     /// Returns an error if no footprint with the given name exists.
     pub fn remove_footprint(&mut self, name: &str) -> Result<()> {
-        let idx = self.footprints
+        let idx = self
+            .footprints
             .iter()
             .position(|f| f.display_name == name)
-            .ok_or_else(|| AltiumFormatError::StreamNotFound(
-                format!("footprint '{name}' not found"),
-            ))?;
+            .ok_or_else(|| {
+                AltiumFormatError::StreamNotFound(format!("footprint '{name}' not found"))
+            })?;
 
         self.footprints.remove(idx);
         self.component_toc.retain(|t| t.name != name);
@@ -813,9 +823,9 @@ impl PcbLib {
         self.footprints
             .iter()
             .find(|f| f.display_name == name)
-            .ok_or_else(|| AltiumFormatError::StreamNotFound(
-                format!("footprint '{name}' not found"),
-            ))
+            .ok_or_else(|| {
+                AltiumFormatError::StreamNotFound(format!("footprint '{name}' not found"))
+            })
     }
 
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
@@ -832,7 +842,6 @@ impl PcbLib {
     }
 
     fn parse_from_cfb(mut doc: TrackedCfbDocument) -> Result<Self> {
-
         // 1. FileHeader
         let file_header_data = doc.read_stream(&format!("/{FILE_HEADER}"))?;
         let header = parse_pcb_file_header(&file_header_data)?;
@@ -1026,12 +1035,19 @@ impl PcbLib {
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         let mut cfb = CfbDocument::create()?;
 
-        cfb.write_stream(&format!("/{FILE_HEADER}"), &serialize_pcblib_file_header(&self.header)?)?;
+        cfb.write_stream(
+            &format!("/{FILE_HEADER}"),
+            &serialize_pcblib_file_header(&self.header)?,
+        )?;
 
         cfb.create_storage("/Library")?;
         cfb.write_stream("/Library/Header", &serialize_u32_header(1))?;
-        let component_names: Vec<String> = self.component_toc.iter().map(|e| e.name.clone()).collect();
-        cfb.write_stream("/Library/Data", &serialize_library_data(&self.library, &component_names)?)?;
+        let component_names: Vec<String> =
+            self.component_toc.iter().map(|e| e.name.clone()).collect();
+        cfb.write_stream(
+            "/Library/Data",
+            &serialize_library_data(&self.library, &component_names)?,
+        )?;
 
         cfb.create_storage("/Library/ComponentParamsTOC")?;
         cfb.write_stream(
@@ -1070,7 +1086,9 @@ impl PcbLib {
             &serialize_model_entries_data(&self.model_no_embed_entries),
         )?;
 
-        if !self.layer_kind_mapping.entries.is_empty() || !self.layer_kind_mapping.version.is_empty() {
+        if !self.layer_kind_mapping.entries.is_empty()
+            || !self.layer_kind_mapping.version.is_empty()
+        {
             cfb.create_storage("/Library/LayerKindMapping")?;
             cfb.write_stream("/Library/LayerKindMapping/Header", &serialize_u32_header(1))?;
             cfb.write_stream(
@@ -1085,7 +1103,10 @@ impl PcbLib {
                 "/Library/PadViaLibrary/Header",
                 &serialize_u32_header(cfg.templates.len() as u32),
             )?;
-            cfb.write_stream("/Library/PadViaLibrary/Data", &serialize_pad_via_library(cfg))?;
+            cfb.write_stream(
+                "/Library/PadViaLibrary/Data",
+                &serialize_pad_via_library(cfg),
+            )?;
         }
 
         if !self.embedded_fonts.is_empty() {
@@ -1114,7 +1135,10 @@ impl PcbLib {
         for fp in &self.footprints {
             let storage = format!("/{}", fp.cfb_key);
             cfb.create_storage(&storage)?;
-            cfb.write_stream(&format!("{storage}/Parameters"), &serialize_footprint_parameters(fp))?;
+            cfb.write_stream(
+                &format!("{storage}/Parameters"),
+                &serialize_footprint_parameters(fp),
+            )?;
             cfb.write_stream(
                 &format!("{storage}/Header"),
                 &serialize_u32_header(fp.primitives.len() as u32),
@@ -1127,7 +1151,10 @@ impl PcbLib {
             cfb.write_stream(&format!("{storage}/WideStrings"), &wide_strings_data)?;
 
             // UniqueIDPrimitiveInformation sidecar: tracking IDs for primitives.
-            let has_unique_ids = fp.primitives.iter().any(|p| sidecar::get_unique_id(p).is_some());
+            let has_unique_ids = fp
+                .primitives
+                .iter()
+                .any(|p| sidecar::get_unique_id(p).is_some());
             if has_unique_ids {
                 let (header, data) =
                     sidecar::serialize_unique_id_primitive_information(&fp.primitives);
@@ -1159,8 +1186,7 @@ impl PcbLib {
 
             // PrimitiveGuids sidecar: GUIDs for all viewable primitives.
             if !fp.primitive_guids.is_empty() {
-                let (header, data) =
-                    sidecar::serialize_primitive_guids(&fp.primitive_guids);
+                let (header, data) = sidecar::serialize_primitive_guids(&fp.primitive_guids);
                 cfb.create_storage(&format!("{storage}/PrimitiveGuids"))?;
                 cfb.write_stream(&format!("{storage}/PrimitiveGuids/Header"), &header)?;
                 cfb.write_stream(&format!("{storage}/PrimitiveGuids/Data"), &data)?;
@@ -1174,13 +1200,17 @@ impl PcbLib {
 
             // CustomMaskShapes sidecar: per-pad custom mask shape definitions.
             if !fp.custom_mask_shapes.is_empty() {
-                let data = crate::pcblib::custom_shapes::serialize_custom_mask_shapes(&fp.custom_mask_shapes);
+                let data = crate::pcblib::custom_shapes::serialize_custom_mask_shapes(
+                    &fp.custom_mask_shapes,
+                );
                 cfb.write_stream(&format!("{storage}/CustomMaskShapes"), &data)?;
             }
 
             // CornerRadiusChamfer sidecar: per-pad corner radius settings.
             if !fp.corner_radius_chamfer.is_empty() {
-                let data = crate::pcblib::custom_shapes::serialize_corner_radius_chamfer(&fp.corner_radius_chamfer);
+                let data = crate::pcblib::custom_shapes::serialize_corner_radius_chamfer(
+                    &fp.corner_radius_chamfer,
+                );
                 cfb.write_stream(&format!("{storage}/CornerRadiusChamfer"), &data)?;
             }
 
@@ -1192,7 +1222,10 @@ impl PcbLib {
         }
 
         if !self.section_keys.is_empty() {
-            cfb.write_stream(&format!("/{SECTION_KEYS}"), &serialize_section_keys(&self.section_keys)?)?;
+            cfb.write_stream(
+                &format!("/{SECTION_KEYS}"),
+                &serialize_section_keys(&self.section_keys)?,
+            )?;
         }
 
         if let Some(fvi) = &self.file_version_info {
@@ -1276,7 +1309,10 @@ fn serialize_component_toc_data(entries: &[PcbLibComponentTocEntry]) -> Vec<u8> 
         } else {
             let mils = e.height.to_mils();
             let formatted = format!("{:.4}", mils);
-            formatted.trim_end_matches('0').trim_end_matches('.').to_owned()
+            formatted
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_owned()
         };
         text.push_str(&format!(
             "Name={}|Pad Count={}|Height={}|Description={}",
@@ -1294,7 +1330,14 @@ pub(crate) fn serialize_model_entries_data(entries: &[PcbLibModelEntry]) -> Vec<
     let mut out = Vec::new();
     for entry in entries {
         let mut params = crate::param_collection::ParameterCollection::new();
-        params.insert("EMBED", if entry.embed { "TRUE".to_owned() } else { "FALSE".to_owned() });
+        params.insert(
+            "EMBED",
+            if entry.embed {
+                "TRUE".to_owned()
+            } else {
+                "FALSE".to_owned()
+            },
+        );
         params.insert("ID", entry.id.clone());
         params.insert("ROTX", format!("{:.3}", entry.rotation_x));
         params.insert("ROTY", format!("{:.3}", entry.rotation_y));
@@ -1315,7 +1358,11 @@ pub(crate) fn serialize_model_entries_data(entries: &[PcbLibModelEntry]) -> Vec<
 
 pub(crate) fn serialize_layer_kind_mapping(mapping: &PcbLayerKindMapping) -> Vec<u8> {
     let mut w = BinaryWriter::new();
-    let utf16: Vec<u16> = mapping.version.encode_utf16().chain(std::iter::once(0)).collect();
+    let utf16: Vec<u16> = mapping
+        .version
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     let mut utf16_bytes = Vec::with_capacity(utf16.len() * 2);
     for c in utf16 {
         utf16_bytes.extend_from_slice(&c.to_le_bytes());
@@ -1448,7 +1495,10 @@ fn serialize_primitive(prim: &PcbPrimitive) -> Result<(PcbObjectId, Vec<Vec<u8>>
         PcbPrimitive::Text(p) => Ok((PcbObjectId::Text, serialize_text(p)?)),
         PcbPrimitive::Pad(p) => Ok((PcbObjectId::Pad, serialize_pad(p)?)),
         PcbPrimitive::Region(p) => Ok((PcbObjectId::Region, vec![serialize_region(p)])),
-        PcbPrimitive::ComponentBody(p) => Ok((PcbObjectId::ComponentBody, vec![serialize_component_body(p)])),
+        PcbPrimitive::ComponentBody(p) => Ok((
+            PcbObjectId::ComponentBody,
+            vec![serialize_component_body(p)],
+        )),
     }
 }
 
@@ -1574,7 +1624,6 @@ fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
     crate::pcb_primitives_serialize::serialize_component_body(p)
 }
 
-
 /// Check that a Coord used as a non-negative dimension is in `[0, MAX_REASONABLE]`.
 fn check_dimension(
     value: Coord,
@@ -1623,15 +1672,63 @@ fn check_expansion(
 fn validate_via_coords(via: &PcbVia, index: usize, footprint: &str) -> Result<()> {
     check_dimension(via.diameter, "Via", index, "diameter", footprint)?;
     check_dimension(via.hole_size, "Via", index, "hole_size", footprint)?;
-    check_expansion(via.thermal_relief_air_gap, "Via", index, "thermal_relief_air_gap", footprint)?;
-    check_expansion(via.thermal_relief_conductor_width, "Via", index, "thermal_relief_conductor_width", footprint)?;
-    check_expansion(via.power_plane_relief_expansion, "Via", index, "power_plane_relief_expansion", footprint)?;
-    check_expansion(via.power_plane_clearance, "Via", index, "power_plane_clearance", footprint)?;
-    check_expansion(via.paste_mask_expansion, "Via", index, "paste_mask_expansion", footprint)?;
-    check_expansion(via.solder_mask_expansion_front, "Via", index, "solder_mask_expansion_front", footprint)?;
-    check_expansion(via.solder_mask_expansion_back, "Via", index, "solder_mask_expansion_back", footprint)?;
+    check_expansion(
+        via.thermal_relief_air_gap,
+        "Via",
+        index,
+        "thermal_relief_air_gap",
+        footprint,
+    )?;
+    check_expansion(
+        via.thermal_relief_conductor_width,
+        "Via",
+        index,
+        "thermal_relief_conductor_width",
+        footprint,
+    )?;
+    check_expansion(
+        via.power_plane_relief_expansion,
+        "Via",
+        index,
+        "power_plane_relief_expansion",
+        footprint,
+    )?;
+    check_expansion(
+        via.power_plane_clearance,
+        "Via",
+        index,
+        "power_plane_clearance",
+        footprint,
+    )?;
+    check_expansion(
+        via.paste_mask_expansion,
+        "Via",
+        index,
+        "paste_mask_expansion",
+        footprint,
+    )?;
+    check_expansion(
+        via.solder_mask_expansion_front,
+        "Via",
+        index,
+        "solder_mask_expansion_front",
+        footprint,
+    )?;
+    check_expansion(
+        via.solder_mask_expansion_back,
+        "Via",
+        index,
+        "solder_mask_expansion_back",
+        footprint,
+    )?;
     for (i, d) in via.diameters_per_layer.iter().enumerate() {
-        check_dimension(*d, "Via", index, &format!("diameters_per_layer[{i}]"), footprint)?;
+        check_dimension(
+            *d,
+            "Via",
+            index,
+            &format!("diameters_per_layer[{i}]"),
+            footprint,
+        )?;
     }
     // Extension boolean flags (is_testpoint_top/bottom, is_assy_testpoint_top/bottom,
     // solder_mask_override, use_separate_solder_mask_expansion,
@@ -1663,13 +1760,55 @@ fn validate_pad_coords(pad: &PcbPad, index: usize, footprint: &str) -> Result<()
     check_dimension(pad.size_bot.x, "Pad", index, "size_bot.x", footprint)?;
     check_dimension(pad.size_bot.y, "Pad", index, "size_bot.y", footprint)?;
     check_dimension(pad.hole_size, "Pad", index, "hole_size", footprint)?;
-    check_expansion(pad.cache.relief_conductor_width, "Pad", index, "cache.relief_conductor_width", footprint)?;
-    check_expansion(pad.cache.relief_air_gap, "Pad", index, "cache.relief_air_gap", footprint)?;
-    check_expansion(pad.cache.power_plane_relief_expansion, "Pad", index, "cache.power_plane_relief_expansion", footprint)?;
-    check_expansion(pad.cache.power_plane_clearance, "Pad", index, "cache.power_plane_clearance", footprint)?;
-    check_expansion(pad.cache.paste_mask_expansion, "Pad", index, "cache.paste_mask_expansion", footprint)?;
-    check_expansion(pad.cache.solder_mask_expansion, "Pad", index, "cache.solder_mask_expansion", footprint)?;
-    check_dimension(pad.pin_package_length, "Pad", index, "pin_package_length", footprint)?;
+    check_expansion(
+        pad.cache.relief_conductor_width,
+        "Pad",
+        index,
+        "cache.relief_conductor_width",
+        footprint,
+    )?;
+    check_expansion(
+        pad.cache.relief_air_gap,
+        "Pad",
+        index,
+        "cache.relief_air_gap",
+        footprint,
+    )?;
+    check_expansion(
+        pad.cache.power_plane_relief_expansion,
+        "Pad",
+        index,
+        "cache.power_plane_relief_expansion",
+        footprint,
+    )?;
+    check_expansion(
+        pad.cache.power_plane_clearance,
+        "Pad",
+        index,
+        "cache.power_plane_clearance",
+        footprint,
+    )?;
+    check_expansion(
+        pad.cache.paste_mask_expansion,
+        "Pad",
+        index,
+        "cache.paste_mask_expansion",
+        footprint,
+    )?;
+    check_expansion(
+        pad.cache.solder_mask_expansion,
+        "Pad",
+        index,
+        "cache.solder_mask_expansion",
+        footprint,
+    )?;
+    check_dimension(
+        pad.pin_package_length,
+        "Pad",
+        index,
+        "pin_package_length",
+        footprint,
+    )?;
     Ok(())
 }
 
@@ -1709,16 +1848,56 @@ fn validate_text_coords(text: &PcbText, index: usize, footprint: &str) -> Result
 }
 
 fn validate_region_coords(region: &PcbRegion, index: usize, footprint: &str) -> Result<()> {
-    check_dimension(region.arc_resolution, "Region", index, "arc_resolution", footprint)?;
-    check_expansion(region.cavity_height, "Region", index, "cavity_height", footprint)?;
+    check_dimension(
+        region.arc_resolution,
+        "Region",
+        index,
+        "arc_resolution",
+        footprint,
+    )?;
+    check_expansion(
+        region.cavity_height,
+        "Region",
+        index,
+        "cavity_height",
+        footprint,
+    )?;
     Ok(())
 }
 
-fn validate_component_body_coords(body: &PcbComponentBody, index: usize, footprint: &str) -> Result<()> {
-    check_expansion(body.standoff_height, "ComponentBody", index, "standoff_height", footprint)?;
-    check_expansion(body.overall_height, "ComponentBody", index, "overall_height", footprint)?;
-    check_dimension(body.arc_resolution, "ComponentBody", index, "arc_resolution", footprint)?;
-    check_expansion(body.cavity_height, "ComponentBody", index, "cavity_height", footprint)?;
+fn validate_component_body_coords(
+    body: &PcbComponentBody,
+    index: usize,
+    footprint: &str,
+) -> Result<()> {
+    check_expansion(
+        body.standoff_height,
+        "ComponentBody",
+        index,
+        "standoff_height",
+        footprint,
+    )?;
+    check_expansion(
+        body.overall_height,
+        "ComponentBody",
+        index,
+        "overall_height",
+        footprint,
+    )?;
+    check_dimension(
+        body.arc_resolution,
+        "ComponentBody",
+        index,
+        "arc_resolution",
+        footprint,
+    )?;
+    check_expansion(
+        body.cavity_height,
+        "ComponentBody",
+        index,
+        "cavity_height",
+        footprint,
+    )?;
     Ok(())
 }
 
@@ -1822,8 +2001,8 @@ fn validate_pcblib_invariants(lib: &PcbLib) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use altium_format_types::pcb::LayerRef;
     use altium_format_types::PcbObjectId;
+    use altium_format_types::pcb::LayerRef;
     #[cfg(feature = "proptest")]
     use proptest::prelude::*;
     #[cfg(feature = "test-fixtures")]
@@ -2027,45 +2206,47 @@ mod tests {
     // ── High-Level API tests ─────────────────────────────────────────────
 
     fn make_test_footprint(name: &str) -> crate::api::Footprint {
-        use crate::api::{Pad, PadStack, TrackGraphic, PcbGraphic};
+        use crate::api::{Pad, PadStack, PcbGraphic, TrackGraphic};
         let pad_size = Coord::from_mils(60).expect("60 mils fits Coord");
         crate::api::Footprint {
             display_name: name.to_owned(),
             description: format!("Test footprint {name}"),
             pattern: name.to_owned(),
             height: Coord::from_mils(50).expect("50 mils fits Coord"),
-            pads: vec![
-                Pad {
-                    pad_name: "1".to_owned(),
-                    unique_id: None,
-                    location: CoordPoint::new(Coord::ZERO, Coord::ZERO),
-                    shape: PadShape::Round,
-                    x_size: pad_size,
-                    y_size: pad_size,
-                    rotation: 0.0,
-                    hole_size: Coord::from_mils(30).expect("30 mils fits Coord"),
-                    is_plated: true,
-                    layer: LayerRef::from_v6(V6Layer::MultiLayer),
-                    pad_mode: PadStackMode::Simple,
-                    solder_mask_expansion: Coord::ZERO,
-                    paste_mask_expansion: Coord::ZERO,
-                    plane_connection: PlaneConnectionStyle::default(),
-                    relief_conductor_width: Coord::ZERO,
-                    relief_entries: 4,
-                    relief_air_gap: Coord::ZERO,
-                    stack: PadStack::simple(PadShape::Round, pad_size, pad_size),
-                },
-            ],
-            graphics: vec![
-                PcbGraphic::Track(TrackGraphic {
-                    unique_id: None,
-                    layer: LayerRef::from_v6(V6Layer::TopOverlay),
-                    flags: PcbFlags::default(),
-                    start: CoordPoint::new(Coord::from_mils(-50).expect("-50 mils fits Coord"), Coord::from_mils(-50).expect("-50 mils fits Coord")),
-                    end: CoordPoint::new(Coord::from_mils(50).expect("50 mils fits Coord"), Coord::from_mils(-50).expect("-50 mils fits Coord")),
-                    width: Coord::from_mils(10).expect("10 mils fits Coord"),
-                }),
-            ],
+            pads: vec![Pad {
+                pad_name: "1".to_owned(),
+                unique_id: None,
+                location: CoordPoint::new(Coord::ZERO, Coord::ZERO),
+                shape: PadShape::Round,
+                x_size: pad_size,
+                y_size: pad_size,
+                rotation: 0.0,
+                hole_size: Coord::from_mils(30).expect("30 mils fits Coord"),
+                is_plated: true,
+                layer: LayerRef::from_v6(V6Layer::MultiLayer),
+                pad_mode: PadStackMode::Simple,
+                solder_mask_expansion: Coord::ZERO,
+                paste_mask_expansion: Coord::ZERO,
+                plane_connection: PlaneConnectionStyle::default(),
+                relief_conductor_width: Coord::ZERO,
+                relief_entries: 4,
+                relief_air_gap: Coord::ZERO,
+                stack: PadStack::simple(PadShape::Round, pad_size, pad_size),
+            }],
+            graphics: vec![PcbGraphic::Track(TrackGraphic {
+                unique_id: None,
+                layer: LayerRef::from_v6(V6Layer::TopOverlay),
+                flags: PcbFlags::default(),
+                start: CoordPoint::new(
+                    Coord::from_mils(-50).expect("-50 mils fits Coord"),
+                    Coord::from_mils(-50).expect("-50 mils fits Coord"),
+                ),
+                end: CoordPoint::new(
+                    Coord::from_mils(50).expect("50 mils fits Coord"),
+                    Coord::from_mils(-50).expect("-50 mils fits Coord"),
+                ),
+                width: Coord::from_mils(10).expect("10 mils fits Coord"),
+            })],
         }
     }
 
@@ -2114,7 +2295,10 @@ mod tests {
         fp.pads.push(crate::api::Pad {
             pad_name: "2".to_owned(),
             unique_id: None,
-            location: CoordPoint::new(Coord::from_mils(100).expect("100 mils fits Coord"), Coord::ZERO),
+            location: CoordPoint::new(
+                Coord::from_mils(100).expect("100 mils fits Coord"),
+                Coord::ZERO,
+            ),
             shape: PadShape::Round,
             x_size: pad_size,
             y_size: pad_size,
@@ -2227,11 +2411,14 @@ mod tests {
     }
 
     #[cfg(feature = "test-fixtures")]
-    fn roundtrip_semantic_report(path: &std::path::Path) -> crate::test_utils::CfbSemanticDiffReport {
+    fn roundtrip_semantic_report(
+        path: &std::path::Path,
+    ) -> crate::test_utils::CfbSemanticDiffReport {
         let lib = PcbLib::open(path).expect("PcbLib::open must succeed");
         let tmp = tempfile::NamedTempFile::new().expect("create temp file");
         lib.save(tmp.path()).expect("PcbLib::save must succeed");
-        crate::test_utils::diff_cfb_files_semantic(path, tmp.path()).expect("semantic diff must succeed")
+        crate::test_utils::diff_cfb_files_semantic(path, tmp.path())
+            .expect("semantic diff must succeed")
     }
 
     #[cfg(feature = "test-fixtures")]

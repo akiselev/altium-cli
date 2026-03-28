@@ -7,14 +7,14 @@ use crate::binary_io::BinaryReader;
 use crate::param_collection::ParameterCollection;
 use crate::pcb_binary_stream::parse_pcb_section_header;
 use crate::pcblib::PcbFootprint;
+use crate::pcblib::custom_shapes::{
+    parse_corner_radius_chamfer, parse_custom_mask_shapes, parse_custom_shapes,
+    validate_custom_shape_entries,
+};
 use crate::pcblib::primitives;
 use crate::pcblib::sidecar::{
     merge_sidecars, parse_extended_primitive_information, parse_primitive_guids,
     parse_unique_id_primitive_information, validate_extended_entries,
-};
-use crate::pcblib::custom_shapes::{
-    parse_corner_radius_chamfer, parse_custom_mask_shapes, parse_custom_shapes,
-    validate_custom_shape_entries,
 };
 use crate::pcblib::wide_strings::parse_pcblib_wide_strings;
 use crate::tracked_cfb::TrackedCfbDocument;
@@ -86,7 +86,9 @@ pub(crate) fn load_footprint(
     Ok(footprint)
 }
 
-fn parse_parameters_stream(data: &[u8]) -> Result<(String, Coord, String, String, String, Option<i32>)> {
+fn parse_parameters_stream(
+    data: &[u8],
+) -> Result<(String, Coord, String, String, String, Option<i32>)> {
     let mut reader = BinaryReader::new(data);
     let str_len = reader.read_u32_le()? as usize;
     let str_bytes = reader.read_bytes(str_len)?;
@@ -117,7 +119,14 @@ fn parse_parameters_stream(data: &[u8]) -> Result<(String, Coord, String, String
     let _smart_union_storage = params.remove_optional::<String>("SMARTUNIONSSTORAGE")?;
     let _smart_union_items = params.remove_prefixed("SMARTUNION_");
     params.assert_exhausted()?;
-    Ok((pattern, height, description, item_guid, revision_guid, component_kind))
+    Ok((
+        pattern,
+        height,
+        description,
+        item_guid,
+        revision_guid,
+        component_kind,
+    ))
 }
 
 /// Parses the HEIGHT parameter from PcbLib footprint Parameters.
@@ -227,8 +236,7 @@ fn load_sidecars(
     };
 
     // ExtendedPrimitiveInformation: optional Header/Data substorage.
-    let extended_info =
-        if doc.exists(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Header")) {
+    let extended_info = if doc.exists(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Header")) {
         let header_data =
             doc.read_stream(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Header"))?;
         let data = doc.read_stream(&format!("/{cfb_key}/ExtendedPrimitiveInformation/Data"))?;
@@ -287,12 +295,11 @@ fn load_sidecars(
     )?;
 
     // SharedUnion: optional single stream.
-    footprint.shared_unions =
-        match doc.read_stream_optional(&format!("/{cfb_key}/SharedUnion"))? {
-            Some(data) => crate::shared_union::parse_shared_union_stream(&data)
-                .with_context(|| format!("parsing /{cfb_key}/SharedUnion"))?,
-            None => Vec::new(),
-        };
+    footprint.shared_unions = match doc.read_stream_optional(&format!("/{cfb_key}/SharedUnion"))? {
+        Some(data) => crate::shared_union::parse_shared_union_stream(&data)
+            .with_context(|| format!("parsing /{cfb_key}/SharedUnion"))?,
+        None => Vec::new(),
+    };
 
     merge_sidecars(&mut footprint.primitives, wide_strings, unique_ids)?;
 

@@ -188,7 +188,9 @@ impl<'a> Parser<'a> {
             let seg = segments.remove(0);
             // Unwrap single-segment chain into a plain selector
             Ok(Spanned::new(
-                QueryExpr::Selector(SelectorChain { segments: vec![seg] }),
+                QueryExpr::Selector(SelectorChain {
+                    segments: vec![seg],
+                }),
                 span,
             ))
         } else {
@@ -203,9 +205,9 @@ impl<'a> Parser<'a> {
     fn parse_paren_group(&mut self) -> QueryResult<Spanned<QueryExpr>> {
         let open = self.expect_kind(&TokenKind::LParen)?;
         let inner = self.parse_union()?;
-        let close = self.expect_kind(&TokenKind::RParen).map_err(|e| {
-            e.with_help("expected ')' to close parenthesized group")
-        })?;
+        let close = self
+            .expect_kind(&TokenKind::RParen)
+            .map_err(|e| e.with_help("expected ')' to close parenthesized group"))?;
         // Preserve the inner expression but update span to include parens
         let span = open.span.merge(close.span);
         Ok(Spanned::new(inner.node, span))
@@ -225,7 +227,7 @@ impl<'a> Parser<'a> {
                     | TokenKind::Hash
                     | TokenKind::Star
                     | TokenKind::LParen
-                    | TokenKind::Colon  // standalone pseudo like `:power`
+                    | TokenKind::Colon // standalone pseudo like `:power`
             ),
         }
     }
@@ -348,15 +350,12 @@ impl<'a> Parser<'a> {
         // Parse value
         let value = self.parse_filter_value()?;
 
-        let close = self.expect_kind(&TokenKind::RBracket).map_err(|e| {
-            e.with_help("expected ']' to close attribute filter")
-        })?;
+        let close = self
+            .expect_kind(&TokenKind::RBracket)
+            .map_err(|e| e.with_help("expected ']' to close attribute filter"))?;
 
         let span = open.span.merge(close.span);
-        Ok(Spanned::new(
-            AttributeFilter { field, op, value },
-            span,
-        ))
+        Ok(Spanned::new(AttributeFilter { field, op, value }, span))
     }
 
     fn parse_field_path(&mut self) -> QueryResult<FieldPath> {
@@ -512,7 +511,10 @@ impl<'a> Parser<'a> {
             TokenKind::Dollar => {
                 self.advance();
                 let name = self.parse_pattern_ident()?;
-                let end_span = Span::new(start_span.start, (start_span.end as usize + name.len()) as u32);
+                let end_span = Span::new(
+                    start_span.start,
+                    (start_span.end as usize + name.len()) as u32,
+                );
                 Ok(Spanned::new(
                     BaseSelector::PartNumber(name),
                     start_span.merge(end_span),
@@ -521,7 +523,9 @@ impl<'a> Parser<'a> {
             TokenKind::At => {
                 self.advance();
                 let name = self.parse_pattern_value()?;
-                let end_span = self.tokens.get(self.pos.wrapping_sub(1))
+                let end_span = self
+                    .tokens
+                    .get(self.pos.wrapping_sub(1))
                     .map(|t| t.span)
                     .unwrap_or(start_span);
                 Ok(Spanned::new(
@@ -532,7 +536,9 @@ impl<'a> Parser<'a> {
             TokenKind::Percent => {
                 self.advance();
                 let name = self.parse_pattern_ident()?;
-                let end_span = self.tokens.get(self.pos.wrapping_sub(1))
+                let end_span = self
+                    .tokens
+                    .get(self.pos.wrapping_sub(1))
                     .map(|t| t.span)
                     .unwrap_or(start_span);
                 Ok(Spanned::new(
@@ -558,7 +564,10 @@ impl<'a> Parser<'a> {
                 // Synthesize as type Any + pseudo-class — but we handle this
                 // at compound_selector level. If we reach here, treat `:` as
                 // starting an Any selector (the pseudo will be parsed after).
-                Ok(Spanned::new(BaseSelector::Any, Span::new(start_span.start, start_span.start)))
+                Ok(Spanned::new(
+                    BaseSelector::Any,
+                    Span::new(start_span.start, start_span.start),
+                ))
             }
 
             // Identifier: could be type selector, designator pattern, or component:pin
@@ -634,13 +643,11 @@ impl<'a> Parser<'a> {
                 ))
             }
 
-            _ => {
-                Err(QueryError::new(
-                    QueryErrorCode::ExpectedSelector,
-                    format!("expected selector, found {:?}", tok.kind),
-                )
-                .with_span(start_span))
-            }
+            _ => Err(QueryError::new(
+                QueryErrorCode::ExpectedSelector,
+                format!("expected selector, found {:?}", tok.kind),
+            )
+            .with_span(start_span)),
         }
     }
 
@@ -679,10 +686,7 @@ impl<'a> Parser<'a> {
     /// Parse a value after `@` (can be ident, string, or number-like token).
     fn parse_pattern_value(&mut self) -> QueryResult<String> {
         let tok = self.peek().ok_or_else(|| {
-            QueryError::new(
-                QueryErrorCode::ExpectedSelector,
-                "expected value after '@'",
-            )
+            QueryError::new(QueryErrorCode::ExpectedSelector, "expected value after '@'")
         })?;
         match &tok.kind {
             TokenKind::Ident(s) => {
@@ -699,7 +703,11 @@ impl<'a> Parser<'a> {
                 let s = n.to_string();
                 self.advance();
                 // Check if followed by ident (e.g., @100nF → "100" + "nF")
-                if let Some(Token { kind: TokenKind::Ident(suffix), .. }) = self.peek() {
+                if let Some(Token {
+                    kind: TokenKind::Ident(suffix),
+                    ..
+                }) = self.peek()
+                {
                     let result = format!("{s}{suffix}");
                     self.advance();
                     return Ok(result);
@@ -738,15 +746,13 @@ mod tests {
     fn test_parse_designator_pattern_star() {
         let q = parse_query("R*").unwrap();
         match &q.expr.node {
-            QueryExpr::Selector(chain) => {
-                match &chain.segments[0].selector.node.base.node {
-                    BaseSelector::DesignatorPattern(dp) => {
-                        assert_eq!(dp.prefix, "R");
-                        assert_eq!(dp.wildcard, Wildcard::Star);
-                    }
-                    other => panic!("expected DesignatorPattern, got {other:?}"),
+            QueryExpr::Selector(chain) => match &chain.segments[0].selector.node.base.node {
+                BaseSelector::DesignatorPattern(dp) => {
+                    assert_eq!(dp.prefix, "R");
+                    assert_eq!(dp.wildcard, Wildcard::Star);
                 }
-            }
+                other => panic!("expected DesignatorPattern, got {other:?}"),
+            },
             other => panic!("expected Selector, got {other:?}"),
         }
     }
@@ -755,15 +761,13 @@ mod tests {
     fn test_parse_designator_pattern_question() {
         let q = parse_query("C??").unwrap();
         match &q.expr.node {
-            QueryExpr::Selector(chain) => {
-                match &chain.segments[0].selector.node.base.node {
-                    BaseSelector::DesignatorPattern(dp) => {
-                        assert_eq!(dp.prefix, "C");
-                        assert_eq!(dp.wildcard, Wildcard::Fixed(2));
-                    }
-                    other => panic!("expected DesignatorPattern, got {other:?}"),
+            QueryExpr::Selector(chain) => match &chain.segments[0].selector.node.base.node {
+                BaseSelector::DesignatorPattern(dp) => {
+                    assert_eq!(dp.prefix, "C");
+                    assert_eq!(dp.wildcard, Wildcard::Fixed(2));
                 }
-            }
+                other => panic!("expected DesignatorPattern, got {other:?}"),
+            },
             other => panic!("expected Selector, got {other:?}"),
         }
     }
@@ -772,12 +776,10 @@ mod tests {
     fn test_parse_part_number() {
         let q = parse_query("$LM358").unwrap();
         match &q.expr.node {
-            QueryExpr::Selector(chain) => {
-                match &chain.segments[0].selector.node.base.node {
-                    BaseSelector::PartNumber(name) => assert_eq!(name, "LM358"),
-                    other => panic!("expected PartNumber, got {other:?}"),
-                }
-            }
+            QueryExpr::Selector(chain) => match &chain.segments[0].selector.node.base.node {
+                BaseSelector::PartNumber(name) => assert_eq!(name, "LM358"),
+                other => panic!("expected PartNumber, got {other:?}"),
+            },
             other => panic!("expected Selector, got {other:?}"),
         }
     }
@@ -786,12 +788,10 @@ mod tests {
     fn test_parse_value_pattern() {
         let q = parse_query("@10K").unwrap();
         match &q.expr.node {
-            QueryExpr::Selector(chain) => {
-                match &chain.segments[0].selector.node.base.node {
-                    BaseSelector::ValuePattern(v) => assert_eq!(v, "10K"),
-                    other => panic!("expected ValuePattern, got {other:?}"),
-                }
-            }
+            QueryExpr::Selector(chain) => match &chain.segments[0].selector.node.base.node {
+                BaseSelector::ValuePattern(v) => assert_eq!(v, "10K"),
+                other => panic!("expected ValuePattern, got {other:?}"),
+            },
             other => panic!("expected Selector, got {other:?}"),
         }
     }
@@ -800,12 +800,10 @@ mod tests {
     fn test_parse_net_name() {
         let q = parse_query("%VCC").unwrap();
         match &q.expr.node {
-            QueryExpr::Selector(chain) => {
-                match &chain.segments[0].selector.node.base.node {
-                    BaseSelector::NetName(name) => assert_eq!(name, "VCC"),
-                    other => panic!("expected NetName, got {other:?}"),
-                }
-            }
+            QueryExpr::Selector(chain) => match &chain.segments[0].selector.node.base.node {
+                BaseSelector::NetName(name) => assert_eq!(name, "VCC"),
+                other => panic!("expected NetName, got {other:?}"),
+            },
             other => panic!("expected Selector, got {other:?}"),
         }
     }
@@ -814,12 +812,10 @@ mod tests {
     fn test_parse_record_id() {
         let q = parse_query("#42").unwrap();
         match &q.expr.node {
-            QueryExpr::Selector(chain) => {
-                match &chain.segments[0].selector.node.base.node {
-                    BaseSelector::RecordId(id) => assert_eq!(*id, 42),
-                    other => panic!("expected RecordId, got {other:?}"),
-                }
-            }
+            QueryExpr::Selector(chain) => match &chain.segments[0].selector.node.base.node {
+                BaseSelector::RecordId(id) => assert_eq!(*id, 42),
+                other => panic!("expected RecordId, got {other:?}"),
+            },
             other => panic!("expected Selector, got {other:?}"),
         }
     }
@@ -828,15 +824,13 @@ mod tests {
     fn test_parse_component_pin() {
         let q = parse_query("U1:VCC").unwrap();
         match &q.expr.node {
-            QueryExpr::Selector(chain) => {
-                match &chain.segments[0].selector.node.base.node {
-                    BaseSelector::ComponentPin { component, pin } => {
-                        assert_eq!(component, "U1");
-                        assert_eq!(pin, "VCC");
-                    }
-                    other => panic!("expected ComponentPin, got {other:?}"),
+            QueryExpr::Selector(chain) => match &chain.segments[0].selector.node.base.node {
+                BaseSelector::ComponentPin { component, pin } => {
+                    assert_eq!(component, "U1");
+                    assert_eq!(pin, "VCC");
                 }
-            }
+                other => panic!("expected ComponentPin, got {other:?}"),
+            },
             other => panic!("expected Selector, got {other:?}"),
         }
     }
@@ -847,7 +841,10 @@ mod tests {
         match &q.expr.node {
             QueryExpr::Selector(chain) => {
                 let sel = &chain.segments[0].selector.node;
-                assert!(matches!(sel.base.node, BaseSelector::Type(TypeSelector::Component)));
+                assert!(matches!(
+                    sel.base.node,
+                    BaseSelector::Type(TypeSelector::Component)
+                ));
                 assert_eq!(sel.attrs.len(), 1);
                 let attr = &sel.attrs[0].node;
                 assert_eq!(attr.field.name, "value");
@@ -876,7 +873,10 @@ mod tests {
         match &q.expr.node {
             QueryExpr::Selector(chain) => {
                 let sel = &chain.segments[0].selector.node;
-                assert!(matches!(sel.base.node, BaseSelector::Type(TypeSelector::Pin)));
+                assert!(matches!(
+                    sel.base.node,
+                    BaseSelector::Type(TypeSelector::Pin)
+                ));
                 assert_eq!(sel.pseudos.len(), 1);
                 assert_eq!(sel.pseudos[0].node, PseudoClass::Power);
             }
@@ -966,7 +966,10 @@ mod tests {
         let q = parse_query("*").unwrap();
         match &q.expr.node {
             QueryExpr::Selector(chain) => {
-                assert!(matches!(chain.segments[0].selector.node.base.node, BaseSelector::Any));
+                assert!(matches!(
+                    chain.segments[0].selector.node.base.node,
+                    BaseSelector::Any
+                ));
             }
             other => panic!("expected Selector(Any), got {other:?}"),
         }
@@ -981,12 +984,18 @@ mod tests {
                 assert_eq!(chain.segments.len(), 2);
                 // First: component[value="10K"]
                 let first = &chain.segments[0].selector.node;
-                assert!(matches!(first.base.node, BaseSelector::Type(TypeSelector::Component)));
+                assert!(matches!(
+                    first.base.node,
+                    BaseSelector::Type(TypeSelector::Component)
+                ));
                 assert_eq!(first.attrs.len(), 1);
                 // Second: pin:power (child combinator)
                 assert_eq!(chain.segments[1].combinator, Combinator::Child);
                 let second = &chain.segments[1].selector.node;
-                assert!(matches!(second.base.node, BaseSelector::Type(TypeSelector::Pin)));
+                assert!(matches!(
+                    second.base.node,
+                    BaseSelector::Type(TypeSelector::Pin)
+                ));
                 assert_eq!(second.pseudos.len(), 1);
             }
             other => panic!("expected Selector, got {other:?}"),
@@ -1012,7 +1021,10 @@ mod tests {
         match &q.expr.node {
             QueryExpr::Selector(chain) => {
                 let attr = &chain.segments[0].selector.node.attrs[0].node;
-                assert!(matches!(attr.value.node, FilterValue::Dim(10.0, crate::diagnostic::Unit::Mil)));
+                assert!(matches!(
+                    attr.value.node,
+                    FilterValue::Dim(10.0, crate::diagnostic::Unit::Mil)
+                ));
             }
             other => panic!("expected Selector, got {other:?}"),
         }

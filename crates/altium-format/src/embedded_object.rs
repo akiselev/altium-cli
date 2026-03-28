@@ -36,8 +36,7 @@ pub(crate) fn parse_embedded_object(data: &[u8]) -> Result<EmbeddedObject> {
     }
     let id_len = reader.read_u8()? as usize;
     let id_bytes = reader.read_bytes(id_len)?;
-    let (id_cow, _encoding_used, _had_replacements) =
-        encoding_rs::WINDOWS_1252.decode(id_bytes);
+    let (id_cow, _encoding_used, _had_replacements) = encoding_rs::WINDOWS_1252.decode(id_bytes);
     let id = id_cow.into_owned();
     let compressed_size = (reader.read_i32_le()? & BLOCK_SIZE_MASK as i32) as usize;
     let compressed_bytes = reader.read_bytes(compressed_size)?;
@@ -112,8 +111,7 @@ pub(crate) fn serialize_embedded_object(id: &str, inner_data: &[u8]) -> Result<V
     let compressed = zlib_compress(inner_data)?;
     let mut w = BinaryWriter::new();
     w.write_u8(INSTRUCTION_BINARY);
-    let (id_bytes, _encoding_used, _had_unmappable) =
-        encoding_rs::WINDOWS_1252.encode(id);
+    let (id_bytes, _encoding_used, _had_unmappable) = encoding_rs::WINDOWS_1252.encode(id);
     w.write_u8(id_bytes.len() as u8);
     w.write_bytes(&id_bytes);
     w.write_i32_le(compressed.len() as i32);

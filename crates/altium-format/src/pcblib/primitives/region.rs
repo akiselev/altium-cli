@@ -2,16 +2,19 @@ use altium_format_types::{Coord, CoordPoint, PolySegmentKind, RegionKind};
 
 use crate::binary_io::BinaryReader;
 use crate::param_collection::ParameterCollection;
-use crate::pcblib::{Contour, PolySegment, PcbRegion};
 use crate::pcblib::primitives::common::parse_common_header;
+use crate::pcblib::{Contour, PcbRegion, PolySegment};
 use crate::{AltiumFormatError, Result};
 
 /// Parses a PolySegmentKind from its u8 string representation.
 fn parse_poly_segment_kind(s: &str) -> Result<PolySegmentKind> {
-    let raw: u8 = s.trim().parse().map_err(|_| AltiumFormatError::InvalidParamValue {
-        key: "KIND".to_owned(),
-        detail: format!("cannot parse '{}' as u8 PolySegmentKind", s),
-    })?;
+    let raw: u8 = s
+        .trim()
+        .parse()
+        .map_err(|_| AltiumFormatError::InvalidParamValue {
+            key: "KIND".to_owned(),
+            detail: format!("cannot parse '{}' as u8 PolySegmentKind", s),
+        })?;
     PolySegmentKind::try_from(raw).map_err(|e| AltiumFormatError::InvalidParamValue {
         key: "KIND".to_owned(),
         detail: e.to_string(),
@@ -40,10 +43,12 @@ fn parse_float_str(s: &str, key: &str) -> Result<f64> {
     if trimmed.is_empty() {
         return Ok(0.0);
     }
-    trimmed.parse::<f64>().map_err(|e| AltiumFormatError::InvalidParamValue {
-        key: key.to_owned(),
-        detail: format!("cannot parse '{}' as f64: {}", s, e),
-    })
+    trimmed
+        .parse::<f64>()
+        .map_err(|e| AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("cannot parse '{}' as f64: {}", s, e),
+        })
 }
 
 /// Parses a mil-format coordinate string (e.g. "0.5mil", "0mil", "-3.937mil").
@@ -200,9 +205,7 @@ pub(crate) fn parse_region(data: &[u8], is_shape_based_section: bool) -> Result<
     let layer = params
         .remove_optional::<String>("LAYER")?
         .unwrap_or_default();
-    let keepout = params
-        .remove_optional::<bool>("KEEPOUT")?
-        .unwrap_or(false);
+    let keepout = params.remove_optional::<bool>("KEEPOUT")?.unwrap_or(false);
     let is_board_cutout = params
         .remove_optional::<bool>("ISBOARDCUTOUT")?
         .unwrap_or(false);
@@ -215,9 +218,7 @@ pub(crate) fn parse_region(data: &[u8], is_shape_based_section: bool) -> Result<
     let bending_line_count = params
         .remove_optional::<i32>("BENDINGLINECOUNT")?
         .unwrap_or(0);
-    let locked_3d = params
-        .remove_optional::<bool>("LOCKED3D")?
-        .unwrap_or(false);
+    let locked_3d = params.remove_optional::<bool>("LOCKED3D")?.unwrap_or(false);
     let layer_stack_id = params
         .remove_optional::<String>("LAYERSTACKID")?
         .unwrap_or_default();
@@ -350,7 +351,10 @@ pub(crate) fn parse_region(data: &[u8], is_shape_based_section: bool) -> Result<
     // Hole contours: always legacy f64 vertex pairs.
     let mut holes = Vec::with_capacity(hole_count);
     for i in 0..hole_count {
-        holes.push(Contour::Legacy(read_f64_contour(&mut reader, &format!("hole{}", i))?));
+        holes.push(Contour::Legacy(read_f64_contour(
+            &mut reader,
+            &format!("hole{}", i),
+        )?));
     }
 
     reader.assert_exhausted()?;

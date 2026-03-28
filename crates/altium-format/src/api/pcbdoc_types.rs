@@ -8,21 +8,21 @@
 //! resolved net names and component designators. Indices are resolved to human-
 //! readable strings during the `board()` conversion.
 
+use super::pcb_common::PadStack;
 use altium_format_types::color::Color;
 use altium_format_types::common::Unit;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
+    BgaFanoutDirection, BgaFanoutViaMode, ComponentCollisionCheckMode, CornerStyle,
+    FanoutDirection, FanoutStyle, NetTopology, PolygonReliefAngle, RouteVia,
+};
+use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, PadShape, PadStackMode, PlaneConnectionStyle,
     RegionKind, RuleKind,
 };
-use super::pcb_common::PadStack;
 use altium_format_types::{
     ComponentPlacementType, ConfinementStyle, DielectricType, LayerStackStyle, NetScope,
     RuleLayerKind,
-};
-use altium_format_types::pcb::{
-    BgaFanoutDirection, BgaFanoutViaMode, ComponentCollisionCheckMode, CornerStyle,
-    FanoutDirection, FanoutStyle, NetTopology, PolygonReliefAngle, RouteVia,
 };
 
 // ── Root type ───────────────────────────────────────────────────────────────

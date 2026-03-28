@@ -5,7 +5,9 @@ use altium_format_types::constants::component::{
     ALIAS_COUNT, ALL_PIN_COUNT, COMP_COUNT, COMP_DESCR, LIB_REF, LIB_REFERENCE, PART_COUNT,
 };
 use altium_format_types::constants::file_headers::SCH_LIBRARY_BINARY_HEADER_V50;
-use altium_format_types::constants::parsing::{C_BASE_UNIT, C_MAX_SHORT_STRING_LENGTH, C_SCH_SPECIAL_DELIMITER, INSTRUCTION_EXTRA_OBJECT_INDEX};
+use altium_format_types::constants::parsing::{
+    C_BASE_UNIT, C_MAX_SHORT_STRING_LENGTH, C_SCH_SPECIAL_DELIMITER, INSTRUCTION_EXTRA_OBJECT_INDEX,
+};
 use altium_format_types::constants::pin::{
     DEF_VALUE, PAIR_SWAP_ID, PIN_BINARY_CODE, PIN_DEFINED_FUNCTION, PIN_DEFINED_FUNCTIONS_COUNT,
     PIN_PACKAGE_LENGTH as PIN_PACKAGE_LENGTH_KEY,
@@ -45,9 +47,8 @@ use altium_format_types::sch::{
     ParameterReadOnlyState, ParameterType, SchDisplayStyle, SchFont, TextHorzAnchor, TextVertAnchor,
 };
 use altium_format_types::{
-    Color, Coord, CoordPoint, RotationBy90,
-    SchDisplaySettings, SchRecordType, SheetBorderStyle, SheetOrientation,
-    SheetReferenceZoneStyle, SheetStyle, TextJustification,
+    Color, Coord, CoordPoint, RotationBy90, SchDisplaySettings, SchRecordType, SheetBorderStyle,
+    SheetOrientation, SheetReferenceZoneStyle, SheetStyle, TextJustification,
 };
 
 // Sidecar parameter keys: Delphi convention (all-uppercase, no separators) for
@@ -65,16 +66,16 @@ use crate::cfb_document::CfbDocument;
 use crate::embedded_object::{parse_embedded_object_stream, serialize_embedded_object_stream};
 use crate::param_collection::ParameterCollection;
 use crate::param_value::ToParamValue;
-use crate::util::generate_unique_id;
 use crate::sch_records::{
     PinTextPositioning, SchArc, SchBezier, SchDesignator, SchEllipse, SchEllipticalArc, SchImage,
     SchImplementation, SchImplementationList, SchImplementationMap, SchLabel, SchLibComponent,
     SchLine, SchMapDefiner, SchParameter, SchParameterList, SchPie, SchPin, SchPolygon,
     SchPolyline, SchPrimitiveBase, SchRecord, SchRectangle, SchRoundRectangle, SchSymbol,
-    SchTextFrame, parse_binary_pin, parse_component_record,
-    serialize_component_record, serialize_record,
+    SchTextFrame, parse_binary_pin, parse_component_record, serialize_component_record,
+    serialize_record,
 };
 use crate::tracked_cfb::TrackedCfbDocument;
+use crate::util::generate_unique_id;
 use crate::{AltiumFormatError, Result, ResultExt};
 
 pub struct SchLib {
@@ -1011,7 +1012,10 @@ fn write_pin_text_positioning_struct(w: &mut BinaryWriter, data: Option<&PinText
 /// - Field exceeds 254 bytes (binary pin length-prefix is u8)
 /// - Field contains non-ANSI characters (> 0x7E, except 0x8E which is the pipe escape)
 fn pin_field_needs_wide_text(value: &str) -> bool {
-    value.len() > C_MAX_SHORT_STRING_LENGTH as usize || value.chars().any(|c| c as u32 > 0x7E && c != C_SCH_SPECIAL_DELIMITER)
+    value.len() > C_MAX_SHORT_STRING_LENGTH as usize
+        || value
+            .chars()
+            .any(|c| c as u32 > 0x7E && c != C_SCH_SPECIAL_DELIMITER)
 }
 
 // Returns PinWideText sidecar stream if any pin has fields that need wide text.
@@ -1718,7 +1722,10 @@ fn sanitize_cfb_name(name: &str) -> String {
         .collect()
 }
 
-fn generate_unique_key(sanitized: &str, used: &std::collections::HashSet<String>) -> Result<String> {
+fn generate_unique_key(
+    sanitized: &str,
+    used: &std::collections::HashSet<String>,
+) -> Result<String> {
     let base = if sanitized.len() > 31 {
         &sanitized[..31]
     } else {
@@ -1805,76 +1812,80 @@ impl SchLib {
             aliases: Vec::new(),
         };
         // Append default designator record
-        lib.components[0].records.push(SchRecord::Designator(SchDesignator {
-            base: SchPrimitiveBase {
-                owner_index: 0,
-                is_not_accessible: false,
-                index_in_sheet: 0,
-                owner_part_id: 0,
-                owner_part_display_mode: 0,
-                selection_memory: 0,
-                graphically_locked: false,
-                union_index: 0,
-                style_id: 0,
-            },
-            location: CoordPoint::zero(),
-            color: Color::new(0x00000080),
-            font_id: 1,
-            text: "U?".to_owned(),
-            name: "Designator".to_owned(),
-            is_hidden: false,
-            orientation: RotationBy90::Rotate0,
-            justification: TextJustification::BottomLeft,
-            is_mirrored: false,
-            unique_id: generate_unique_id(),
-            show_name: false,
-            read_only_state: ParameterReadOnlyState::Name,
-            not_auto_position: false,
-            override_not_auto_position: false,
-            not_allow_library_synchronize: false,
-            not_allow_database_synchronize: false,
-            description: String::new(),
-            param_type: ParameterType::String,
-            text_horz_anchor: TextHorzAnchor::None,
-            text_vert_anchor: TextVertAnchor::None,
-            is_image_parameter: false,
-        }));
+        lib.components[0]
+            .records
+            .push(SchRecord::Designator(SchDesignator {
+                base: SchPrimitiveBase {
+                    owner_index: 0,
+                    is_not_accessible: false,
+                    index_in_sheet: 0,
+                    owner_part_id: 0,
+                    owner_part_display_mode: 0,
+                    selection_memory: 0,
+                    graphically_locked: false,
+                    union_index: 0,
+                    style_id: 0,
+                },
+                location: CoordPoint::zero(),
+                color: Color::new(0x00000080),
+                font_id: 1,
+                text: "U?".to_owned(),
+                name: "Designator".to_owned(),
+                is_hidden: false,
+                orientation: RotationBy90::Rotate0,
+                justification: TextJustification::BottomLeft,
+                is_mirrored: false,
+                unique_id: generate_unique_id(),
+                show_name: false,
+                read_only_state: ParameterReadOnlyState::Name,
+                not_auto_position: false,
+                override_not_auto_position: false,
+                not_allow_library_synchronize: false,
+                not_allow_database_synchronize: false,
+                description: String::new(),
+                param_type: ParameterType::String,
+                text_horz_anchor: TextHorzAnchor::None,
+                text_vert_anchor: TextVertAnchor::None,
+                is_image_parameter: false,
+            }));
 
         // Append default comment record (RECORD=41, Parameter)
-        lib.components[0].records.push(SchRecord::Parameter(SchParameter {
-            base: SchPrimitiveBase {
-                owner_index: 0,
-                is_not_accessible: false,
-                index_in_sheet: 0,
-                owner_part_id: 0,
-                owner_part_display_mode: 0,
-                selection_memory: 0,
-                graphically_locked: false,
-                union_index: 0,
-                style_id: 0,
-            },
-            location: CoordPoint::zero(),
-            color: Color::new(0x00000080),
-            font_id: 1,
-            name: "Comment".to_owned(),
-            text: "*".to_owned(),
-            read_only_state: ParameterReadOnlyState::None,
-            is_hidden: true,
-            orientation: RotationBy90::Rotate0,
-            justification: TextJustification::BottomLeft,
-            is_mirrored: false,
-            unique_id: generate_unique_id(),
-            param_type: ParameterType::String,
-            show_name: false,
-            description: String::new(),
-            not_allow_library_synchronize: false,
-            not_allow_database_synchronize: false,
-            not_auto_position: false,
-            override_not_auto_position: false,
-            text_horz_anchor: TextHorzAnchor::None,
-            text_vert_anchor: TextVertAnchor::None,
-            is_image_parameter: false,
-        }));
+        lib.components[0]
+            .records
+            .push(SchRecord::Parameter(SchParameter {
+                base: SchPrimitiveBase {
+                    owner_index: 0,
+                    is_not_accessible: false,
+                    index_in_sheet: 0,
+                    owner_part_id: 0,
+                    owner_part_display_mode: 0,
+                    selection_memory: 0,
+                    graphically_locked: false,
+                    union_index: 0,
+                    style_id: 0,
+                },
+                location: CoordPoint::zero(),
+                color: Color::new(0x00000080),
+                font_id: 1,
+                name: "Comment".to_owned(),
+                text: "*".to_owned(),
+                read_only_state: ParameterReadOnlyState::None,
+                is_hidden: true,
+                orientation: RotationBy90::Rotate0,
+                justification: TextJustification::BottomLeft,
+                is_mirrored: false,
+                unique_id: generate_unique_id(),
+                param_type: ParameterType::String,
+                show_name: false,
+                description: String::new(),
+                not_allow_library_synchronize: false,
+                not_allow_database_synchronize: false,
+                not_auto_position: false,
+                override_not_auto_position: false,
+                text_horz_anchor: TextHorzAnchor::None,
+                text_vert_anchor: TextVertAnchor::None,
+                is_image_parameter: false,
+            }));
 
         Ok(lib)
     }
@@ -2016,7 +2027,6 @@ impl SchLib {
         validate_schlib_invariants(&self.header, &self.components, &self.aliases)
     }
 
-
     /// Serializes this SchLib back to a CFB file at `path`.
     pub fn save(&self, path: impl AsRef<Path>) -> crate::Result<()> {
         let section_keys = build_section_keys(&self.header)?;
@@ -2113,7 +2123,11 @@ impl SchLib {
     /// Returns an error if a component with the same `lib_reference` already exists.
     pub fn add_component(&mut self, comp: crate::api::Component) -> Result<()> {
         // Check for duplicate
-        if self.components.iter().any(|c| c.component.lib_reference == comp.lib_reference) {
+        if self
+            .components
+            .iter()
+            .any(|c| c.component.lib_reference == comp.lib_reference)
+        {
             return Err(AltiumFormatError::InvalidParamValue {
                 key: "lib_reference".to_owned(),
                 detail: format!("component '{}' already exists", comp.lib_reference),
@@ -2149,12 +2163,16 @@ impl SchLib {
     ///
     /// Returns an error if no component with the given `lib_reference` exists.
     pub fn update_component(&mut self, comp: &crate::api::Component) -> Result<()> {
-        let idx = self.components
+        let idx = self
+            .components
             .iter()
             .position(|c| c.component.lib_reference == comp.lib_reference)
-            .ok_or_else(|| AltiumFormatError::StreamNotFound(
-                format!("component '{}' not found", comp.lib_reference),
-            ))?;
+            .ok_or_else(|| {
+                AltiumFormatError::StreamNotFound(format!(
+                    "component '{}' not found",
+                    comp.lib_reference
+                ))
+            })?;
 
         let existing = &self.components[idx].component;
         let (sch_comp, records, additional_records, index_entry) =
@@ -2188,12 +2206,13 @@ impl SchLib {
     ///
     /// Returns an error if no component with the given name exists.
     pub fn remove_component(&mut self, lib_ref: &str) -> Result<()> {
-        let idx = self.components
+        let idx = self
+            .components
             .iter()
             .position(|c| c.component.lib_reference == lib_ref)
-            .ok_or_else(|| AltiumFormatError::StreamNotFound(
-                format!("component '{lib_ref}' not found"),
-            ))?;
+            .ok_or_else(|| {
+                AltiumFormatError::StreamNotFound(format!("component '{lib_ref}' not found"))
+            })?;
 
         // Remove aliases for this component
         self.aliases.retain(|a| a.canonical_name != lib_ref);
@@ -2215,9 +2234,9 @@ impl SchLib {
             .enumerate()
             .find(|(_, c)| c.component.lib_reference == lib_ref)
             .map(|(idx, c)| (c, idx))
-            .ok_or_else(|| AltiumFormatError::StreamNotFound(
-                format!("component '{lib_ref}' not found"),
-            ))
+            .ok_or_else(|| {
+                AltiumFormatError::StreamNotFound(format!("component '{lib_ref}' not found"))
+            })
     }
 
     /// Render a single component by lib reference name.
@@ -2316,7 +2335,6 @@ impl SchLibComponent {
     }
 }
 
-
 fn record_owner_index(rec: &SchRecord) -> i32 {
     match rec {
         SchRecord::Sheet(v) => v.base.owner_index,
@@ -2372,8 +2390,6 @@ fn record_owner_index(rec: &SchRecord) -> i32 {
         SchRecord::HighLevelCodeFileName(v) => v.base.owner_index,
     }
 }
-
-
 
 /// Compute the weight value for the file header.
 ///
@@ -3091,61 +3107,57 @@ mod tests {
             component_kind: None,
             part_count: 1,
             show_hidden_pins: false,
-            pins: vec![
-                crate::api::Pin {
-                    designator: "1".to_owned(),
-                    name: "A".to_owned(),
-                    electrical: altium_format_types::PinElectricalType::Passive,
-                    location: CoordPoint::zero(),
-                    length: Coord::from_mils(30).expect("30 mils fits Coord"),
-                    orientation: RotationBy90::Rotate0,
-                    is_hidden: false,
-                    hidden_net_name: String::new(),
-                    owner_part_id: 1,
-                    show_name: true,
-                    show_designator: true,
-                    symbol_inner_edge: altium_format_types::IeeeSymbol::NoSymbol,
-                    symbol_outer_edge: altium_format_types::IeeeSymbol::NoSymbol,
-                    symbol_inside: altium_format_types::IeeeSymbol::NoSymbol,
-                    symbol_outside: altium_format_types::IeeeSymbol::NoSymbol,
-                    swap_id_pin: String::new(),
-                    swap_id_part: String::new(),
-                    swap_id_pair: String::new(),
-                    default_value: String::new(),
-                    pin_package_length: String::new(),
-                    propagation_delay: String::new(),
-                    pin_symbol_line_width: None,
-                    name_text_data: None,
-                    designator_text_data: None,
-                    description: String::new(),
-                    formal_type: altium_format_types::StdLogicState::Uninitialized,
-                    spice_pin_name: String::new(),
-                    unique_id: String::new(),
-                    color: Color::BLACK,
-                    is_not_accessible: false,
-                    graphically_locked: false,
-                    owner_part_display_mode: 0,
-                },
-            ],
-            parameters: vec![
-                crate::api::Parameter {
-                    name: "Comment".to_owned(),
-                    text: "100k".to_owned(),
-                    is_hidden: true,
-                    read_only: altium_format_types::ParameterReadOnlyState::None,
-                    location: CoordPoint::zero(),
-                    orientation: RotationBy90::Rotate0,
-                    color: Color::BLACK,
-                    font_id: 1,
-                    justification: TextJustification::BottomLeft,
-                    is_mirrored: false,
-                    show_name: false,
-                    unique_id: String::new(),
-                    not_auto_position: false,
-                    param_type: altium_format_types::ParameterType::String,
-                    description: String::new(),
-                },
-            ],
+            pins: vec![crate::api::Pin {
+                designator: "1".to_owned(),
+                name: "A".to_owned(),
+                electrical: altium_format_types::PinElectricalType::Passive,
+                location: CoordPoint::zero(),
+                length: Coord::from_mils(30).expect("30 mils fits Coord"),
+                orientation: RotationBy90::Rotate0,
+                is_hidden: false,
+                hidden_net_name: String::new(),
+                owner_part_id: 1,
+                show_name: true,
+                show_designator: true,
+                symbol_inner_edge: altium_format_types::IeeeSymbol::NoSymbol,
+                symbol_outer_edge: altium_format_types::IeeeSymbol::NoSymbol,
+                symbol_inside: altium_format_types::IeeeSymbol::NoSymbol,
+                symbol_outside: altium_format_types::IeeeSymbol::NoSymbol,
+                swap_id_pin: String::new(),
+                swap_id_part: String::new(),
+                swap_id_pair: String::new(),
+                default_value: String::new(),
+                pin_package_length: String::new(),
+                propagation_delay: String::new(),
+                pin_symbol_line_width: None,
+                name_text_data: None,
+                designator_text_data: None,
+                description: String::new(),
+                formal_type: altium_format_types::StdLogicState::Uninitialized,
+                spice_pin_name: String::new(),
+                unique_id: String::new(),
+                color: Color::BLACK,
+                is_not_accessible: false,
+                graphically_locked: false,
+                owner_part_display_mode: 0,
+            }],
+            parameters: vec![crate::api::Parameter {
+                name: "Comment".to_owned(),
+                text: "100k".to_owned(),
+                is_hidden: true,
+                read_only: altium_format_types::ParameterReadOnlyState::None,
+                location: CoordPoint::zero(),
+                orientation: RotationBy90::Rotate0,
+                color: Color::BLACK,
+                font_id: 1,
+                justification: TextJustification::BottomLeft,
+                is_mirrored: false,
+                show_name: false,
+                unique_id: String::new(),
+                not_auto_position: false,
+                param_type: altium_format_types::ParameterType::String,
+                description: String::new(),
+            }],
             footprints: vec![],
             graphics: vec![],
             aliases: vec![],
@@ -3200,7 +3212,8 @@ mod tests {
     fn api_remove_component() {
         let mut lib = SchLib::new_blank_ad26().expect("blank schlib");
         assert_eq!(lib.component_names().len(), 1);
-        lib.remove_component("Component_1").expect("remove component");
+        lib.remove_component("Component_1")
+            .expect("remove component");
         assert_eq!(lib.component_names().len(), 0);
     }
 
@@ -3222,25 +3235,23 @@ mod tests {
             part_count: 1,
             show_hidden_pins: false,
             pins: vec![],
-            parameters: vec![
-                crate::api::Parameter {
-                    name: "Comment".to_owned(),
-                    text: "*".to_owned(),
-                    is_hidden: true,
-                    read_only: altium_format_types::ParameterReadOnlyState::None,
-                    location: CoordPoint::zero(),
-                    orientation: RotationBy90::Rotate0,
-                    color: Color::new(0x00000080),
-                    font_id: 1,
-                    justification: TextJustification::BottomLeft,
-                    is_mirrored: false,
-                    show_name: false,
-                    unique_id: String::new(),
-                    not_auto_position: false,
-                    param_type: altium_format_types::ParameterType::String,
-                    description: String::new(),
-                },
-            ],
+            parameters: vec![crate::api::Parameter {
+                name: "Comment".to_owned(),
+                text: "*".to_owned(),
+                is_hidden: true,
+                read_only: altium_format_types::ParameterReadOnlyState::None,
+                location: CoordPoint::zero(),
+                orientation: RotationBy90::Rotate0,
+                color: Color::new(0x00000080),
+                font_id: 1,
+                justification: TextJustification::BottomLeft,
+                is_mirrored: false,
+                show_name: false,
+                unique_id: String::new(),
+                not_auto_position: false,
+                param_type: altium_format_types::ParameterType::String,
+                description: String::new(),
+            }],
             footprints: vec![],
             graphics: vec![],
             aliases: vec![],
@@ -3270,9 +3281,8 @@ mod tests {
         for comp in &components {
             assert!(!comp.lib_reference.is_empty());
             // Components should have either pins or graphics (or both)
-            let has_content = !comp.pins.is_empty()
-                || !comp.graphics.is_empty()
-                || !comp.parameters.is_empty();
+            let has_content =
+                !comp.pins.is_empty() || !comp.graphics.is_empty() || !comp.parameters.is_empty();
             assert!(
                 has_content,
                 "component '{}' should have some content",
@@ -3290,9 +3300,10 @@ mod tests {
             let entry = entry.expect("read dir entry");
             let path = entry.path();
             if path.extension().map(|e| e == "SchLib").unwrap_or(false) {
-                let lib = SchLib::open(&path)
-                    .unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
-                let _components = lib.components()
+                let lib =
+                    SchLib::open(&path).unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
+                let _components = lib
+                    .components()
                     .unwrap_or_else(|e| panic!("read components from {}: {e}", path.display()));
             }
         }

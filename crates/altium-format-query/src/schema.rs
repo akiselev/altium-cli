@@ -206,336 +206,1260 @@ pub fn fields_for_type(ts: TypeSelector) -> &'static [FieldDef] {
 // ── Field definitions ────────────────────────────────────────────────────────
 
 static COMPONENT_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "lib_reference", aliases: &["LibReference", "name"], field_type: FieldType::String },
-    FieldDef { canonical_name: "designator", aliases: &["Designator"], field_type: FieldType::String },
-    FieldDef { canonical_name: "description", aliases: &["Description"], field_type: FieldType::String },
-    FieldDef { canonical_name: "component_kind", aliases: &["ComponentKind", "kind"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "part_count", aliases: &["PartCount"], field_type: FieldType::Integer },
-    FieldDef { canonical_name: "show_hidden_pins", aliases: &["ShowHiddenPins"], field_type: FieldType::Bool },
+    FieldDef {
+        canonical_name: "lib_reference",
+        aliases: &["LibReference", "name"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "designator",
+        aliases: &["Designator"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "description",
+        aliases: &["Description"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "component_kind",
+        aliases: &["ComponentKind", "kind"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "part_count",
+        aliases: &["PartCount"],
+        field_type: FieldType::Integer,
+    },
+    FieldDef {
+        canonical_name: "show_hidden_pins",
+        aliases: &["ShowHiddenPins"],
+        field_type: FieldType::Bool,
+    },
 ];
 
 static PIN_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "designator", aliases: &["Designator"], field_type: FieldType::String },
-    FieldDef { canonical_name: "name", aliases: &["Name", "PinName"], field_type: FieldType::String },
-    FieldDef { canonical_name: "electrical", aliases: &["Electrical", "ElectricalType"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "length", aliases: &["Length", "PinLength"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "orientation", aliases: &["Orientation", "Rotation"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "is_hidden", aliases: &["IsHidden", "Hidden"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "hidden_net_name", aliases: &["HiddenNetName"], field_type: FieldType::String },
-    FieldDef { canonical_name: "owner_part_id", aliases: &["OwnerPartId", "Part"], field_type: FieldType::Integer },
-    FieldDef { canonical_name: "show_name", aliases: &["ShowName"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "show_designator", aliases: &["ShowDesignator"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "description", aliases: &["Description"], field_type: FieldType::String },
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "is_not_accessible", aliases: &["IsNotAccessible"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "graphically_locked", aliases: &["GraphicallyLocked"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "owner_part_display_mode", aliases: &["OwnerPartDisplayMode"], field_type: FieldType::Integer },
+    FieldDef {
+        canonical_name: "designator",
+        aliases: &["Designator"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "name",
+        aliases: &["Name", "PinName"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "electrical",
+        aliases: &["Electrical", "ElectricalType"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "length",
+        aliases: &["Length", "PinLength"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "orientation",
+        aliases: &["Orientation", "Rotation"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "is_hidden",
+        aliases: &["IsHidden", "Hidden"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "hidden_net_name",
+        aliases: &["HiddenNetName"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "owner_part_id",
+        aliases: &["OwnerPartId", "Part"],
+        field_type: FieldType::Integer,
+    },
+    FieldDef {
+        canonical_name: "show_name",
+        aliases: &["ShowName"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "show_designator",
+        aliases: &["ShowDesignator"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "description",
+        aliases: &["Description"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "is_not_accessible",
+        aliases: &["IsNotAccessible"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "graphically_locked",
+        aliases: &["GraphicallyLocked"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "owner_part_display_mode",
+        aliases: &["OwnerPartDisplayMode"],
+        field_type: FieldType::Integer,
+    },
 ];
 
 static PARAMETER_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "name", aliases: &["Name"], field_type: FieldType::String },
-    FieldDef { canonical_name: "text", aliases: &["Text", "Value"], field_type: FieldType::String },
-    FieldDef { canonical_name: "is_hidden", aliases: &["IsHidden", "Hidden"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "read_only", aliases: &["ReadOnly"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "orientation", aliases: &["Orientation"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "font_id", aliases: &["FontId"], field_type: FieldType::Integer },
-    FieldDef { canonical_name: "justification", aliases: &["Justification"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "is_mirrored", aliases: &["IsMirrored"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "show_name", aliases: &["ShowName"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "not_auto_position", aliases: &["NotAutoPosition"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "param_type", aliases: &["ParamType", "Type"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "description", aliases: &["Description"], field_type: FieldType::String },
+    FieldDef {
+        canonical_name: "name",
+        aliases: &["Name"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "text",
+        aliases: &["Text", "Value"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "is_hidden",
+        aliases: &["IsHidden", "Hidden"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "read_only",
+        aliases: &["ReadOnly"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "orientation",
+        aliases: &["Orientation"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "font_id",
+        aliases: &["FontId"],
+        field_type: FieldType::Integer,
+    },
+    FieldDef {
+        canonical_name: "justification",
+        aliases: &["Justification"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "is_mirrored",
+        aliases: &["IsMirrored"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "show_name",
+        aliases: &["ShowName"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "not_auto_position",
+        aliases: &["NotAutoPosition"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "param_type",
+        aliases: &["ParamType", "Type"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "description",
+        aliases: &["Description"],
+        field_type: FieldType::String,
+    },
 ];
 
 static FOOTPRINT_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "model_name", aliases: &["ModelName", "name"], field_type: FieldType::String },
-    FieldDef { canonical_name: "description", aliases: &["Description"], field_type: FieldType::String },
-    FieldDef { canonical_name: "is_current", aliases: &["IsCurrent"], field_type: FieldType::Bool },
+    FieldDef {
+        canonical_name: "model_name",
+        aliases: &["ModelName", "name"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "description",
+        aliases: &["Description"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "is_current",
+        aliases: &["IsCurrent"],
+        field_type: FieldType::Bool,
+    },
 ];
 
 // Common graphic fields (shared across graphic variants)
 static GRAPHIC_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "owner_part_id", aliases: &["OwnerPartId", "Part"], field_type: FieldType::Integer },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "is_solid", aliases: &["IsSolid"], field_type: FieldType::Bool },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "owner_part_id",
+        aliases: &["OwnerPartId", "Part"],
+        field_type: FieldType::Integer,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "is_solid",
+        aliases: &["IsSolid"],
+        field_type: FieldType::Bool,
+    },
 ];
 
 // ── PcbLib field definitions ─────────────────────────────────────────────────
 
 static PCB_FOOTPRINT_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "display_name", aliases: &["DisplayName", "name"], field_type: FieldType::String },
-    FieldDef { canonical_name: "description", aliases: &["Description"], field_type: FieldType::String },
-    FieldDef { canonical_name: "pattern", aliases: &["Pattern"], field_type: FieldType::String },
-    FieldDef { canonical_name: "height", aliases: &["Height"], field_type: FieldType::Coord },
+    FieldDef {
+        canonical_name: "display_name",
+        aliases: &["DisplayName", "name"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "description",
+        aliases: &["Description"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "pattern",
+        aliases: &["Pattern"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "height",
+        aliases: &["Height"],
+        field_type: FieldType::Coord,
+    },
 ];
 
 static PAD_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "pad_name", aliases: &["PadName", "name", "designator"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "shape", aliases: &["Shape"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "x_size", aliases: &["XSize", "Width"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y_size", aliases: &["YSize", "Height"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "rotation", aliases: &["Rotation"], field_type: FieldType::Float },
-    FieldDef { canonical_name: "hole_size", aliases: &["HoleSize"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "is_plated", aliases: &["IsPlated", "Plated"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "layer", aliases: &["Layer"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "pad_mode", aliases: &["PadMode"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "solder_mask_expansion", aliases: &["SolderMaskExpansion"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "paste_mask_expansion", aliases: &["PasteMaskExpansion"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "plane_connection", aliases: &["PlaneConnection"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "relief_conductor_width", aliases: &["ReliefConductorWidth"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "relief_entries", aliases: &["ReliefEntries"], field_type: FieldType::Integer },
-    FieldDef { canonical_name: "relief_air_gap", aliases: &["ReliefAirGap"], field_type: FieldType::Coord },
+    FieldDef {
+        canonical_name: "pad_name",
+        aliases: &["PadName", "name", "designator"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "shape",
+        aliases: &["Shape"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "x_size",
+        aliases: &["XSize", "Width"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y_size",
+        aliases: &["YSize", "Height"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "rotation",
+        aliases: &["Rotation"],
+        field_type: FieldType::Float,
+    },
+    FieldDef {
+        canonical_name: "hole_size",
+        aliases: &["HoleSize"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "is_plated",
+        aliases: &["IsPlated", "Plated"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "layer",
+        aliases: &["Layer"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "pad_mode",
+        aliases: &["PadMode"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "solder_mask_expansion",
+        aliases: &["SolderMaskExpansion"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "paste_mask_expansion",
+        aliases: &["PasteMaskExpansion"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "plane_connection",
+        aliases: &["PlaneConnection"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "relief_conductor_width",
+        aliases: &["ReliefConductorWidth"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "relief_entries",
+        aliases: &["ReliefEntries"],
+        field_type: FieldType::Integer,
+    },
+    FieldDef {
+        canonical_name: "relief_air_gap",
+        aliases: &["ReliefAirGap"],
+        field_type: FieldType::Coord,
+    },
 ];
 
 static TRACK_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "layer", aliases: &["Layer"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "width", aliases: &["Width"], field_type: FieldType::Coord },
+    FieldDef {
+        canonical_name: "layer",
+        aliases: &["Layer"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "width",
+        aliases: &["Width"],
+        field_type: FieldType::Coord,
+    },
 ];
 
 static VIA_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "layer", aliases: &["Layer"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "diameter", aliases: &["Diameter"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "hole_size", aliases: &["HoleSize"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "from_layer", aliases: &["FromLayer"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "to_layer", aliases: &["ToLayer"], field_type: FieldType::Enum },
+    FieldDef {
+        canonical_name: "layer",
+        aliases: &["Layer"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "diameter",
+        aliases: &["Diameter"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "hole_size",
+        aliases: &["HoleSize"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "from_layer",
+        aliases: &["FromLayer"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "to_layer",
+        aliases: &["ToLayer"],
+        field_type: FieldType::Enum,
+    },
 ];
 
 static FILL_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "layer", aliases: &["Layer"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "rotation", aliases: &["Rotation"], field_type: FieldType::Float },
+    FieldDef {
+        canonical_name: "layer",
+        aliases: &["Layer"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "rotation",
+        aliases: &["Rotation"],
+        field_type: FieldType::Float,
+    },
 ];
 
-static REGION_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "layer", aliases: &["Layer"], field_type: FieldType::Enum },
-];
+static REGION_FIELDS: &[FieldDef] = &[FieldDef {
+    canonical_name: "layer",
+    aliases: &["Layer"],
+    field_type: FieldType::Enum,
+}];
 
 static TEXT_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "layer", aliases: &["Layer"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "text", aliases: &["Text"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "rotation", aliases: &["Rotation"], field_type: FieldType::Float },
-    FieldDef { canonical_name: "height", aliases: &["Height"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "width", aliases: &["Width"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
+    FieldDef {
+        canonical_name: "layer",
+        aliases: &["Layer"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "text",
+        aliases: &["Text"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "rotation",
+        aliases: &["Rotation"],
+        field_type: FieldType::Float,
+    },
+    FieldDef {
+        canonical_name: "height",
+        aliases: &["Height"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "width",
+        aliases: &["Width"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
 ];
 
 static PCB_ARC_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "layer", aliases: &["Layer"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "radius", aliases: &["Radius"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "start_angle", aliases: &["StartAngle"], field_type: FieldType::Float },
-    FieldDef { canonical_name: "end_angle", aliases: &["EndAngle"], field_type: FieldType::Float },
-    FieldDef { canonical_name: "width", aliases: &["Width"], field_type: FieldType::Coord },
+    FieldDef {
+        canonical_name: "layer",
+        aliases: &["Layer"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "radius",
+        aliases: &["Radius"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "start_angle",
+        aliases: &["StartAngle"],
+        field_type: FieldType::Float,
+    },
+    FieldDef {
+        canonical_name: "end_angle",
+        aliases: &["EndAngle"],
+        field_type: FieldType::Float,
+    },
+    FieldDef {
+        canonical_name: "width",
+        aliases: &["Width"],
+        field_type: FieldType::Coord,
+    },
 ];
 
-static COMPONENT_BODY_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "layer", aliases: &["Layer"], field_type: FieldType::Enum },
-];
+static COMPONENT_BODY_FIELDS: &[FieldDef] = &[FieldDef {
+    canonical_name: "layer",
+    aliases: &["Layer"],
+    field_type: FieldType::Enum,
+}];
 
 // ── SchDoc field definitions ──────────────────────────────────────────────────
 
 static SCHDOC_COMPONENT_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "designator", aliases: &["Designator"], field_type: FieldType::String },
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "lib_reference", aliases: &["LibReference", "name"], field_type: FieldType::String },
-    FieldDef { canonical_name: "source_library_name", aliases: &["SourceLibraryName"], field_type: FieldType::String },
-    FieldDef { canonical_name: "design_item_id", aliases: &["DesignItemId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "library_path", aliases: &["LibraryPath"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "orientation", aliases: &["Orientation", "Rotation"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "is_mirrored", aliases: &["IsMirrored"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "description", aliases: &["Description"], field_type: FieldType::String },
-    FieldDef { canonical_name: "component_kind", aliases: &["ComponentKind", "kind"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "part_count", aliases: &["PartCount"], field_type: FieldType::Integer },
-    FieldDef { canonical_name: "current_part_id", aliases: &["CurrentPartId"], field_type: FieldType::Integer },
-    FieldDef { canonical_name: "show_hidden_pins", aliases: &["ShowHiddenPins"], field_type: FieldType::Bool },
+    FieldDef {
+        canonical_name: "designator",
+        aliases: &["Designator"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "lib_reference",
+        aliases: &["LibReference", "name"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "source_library_name",
+        aliases: &["SourceLibraryName"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "design_item_id",
+        aliases: &["DesignItemId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "library_path",
+        aliases: &["LibraryPath"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "orientation",
+        aliases: &["Orientation", "Rotation"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "is_mirrored",
+        aliases: &["IsMirrored"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "description",
+        aliases: &["Description"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "component_kind",
+        aliases: &["ComponentKind", "kind"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "part_count",
+        aliases: &["PartCount"],
+        field_type: FieldType::Integer,
+    },
+    FieldDef {
+        canonical_name: "current_part_id",
+        aliases: &["CurrentPartId"],
+        field_type: FieldType::Integer,
+    },
+    FieldDef {
+        canonical_name: "show_hidden_pins",
+        aliases: &["ShowHiddenPins"],
+        field_type: FieldType::Bool,
+    },
 ];
 
 static WIRE_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "line_width", aliases: &["LineWidth"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "line_style", aliases: &["LineStyle"], field_type: FieldType::Enum },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "line_width",
+        aliases: &["LineWidth"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "line_style",
+        aliases: &["LineStyle"],
+        field_type: FieldType::Enum,
+    },
 ];
 
 static BUS_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "line_width", aliases: &["LineWidth"], field_type: FieldType::Enum },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "line_width",
+        aliases: &["LineWidth"],
+        field_type: FieldType::Enum,
+    },
 ];
 
 static NET_LABEL_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "text", aliases: &["Text", "Name"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "orientation", aliases: &["Orientation"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "justification", aliases: &["Justification"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "font_id", aliases: &["FontId"], field_type: FieldType::Integer },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "is_mirrored", aliases: &["IsMirrored"], field_type: FieldType::Bool },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "text",
+        aliases: &["Text", "Name"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "orientation",
+        aliases: &["Orientation"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "justification",
+        aliases: &["Justification"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "font_id",
+        aliases: &["FontId"],
+        field_type: FieldType::Integer,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "is_mirrored",
+        aliases: &["IsMirrored"],
+        field_type: FieldType::Bool,
+    },
 ];
 
 static POWER_OBJECT_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "text", aliases: &["Text", "Name"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "orientation", aliases: &["Orientation"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "style", aliases: &["Style"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "show_net_name", aliases: &["ShowNetName"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "font_id", aliases: &["FontId"], field_type: FieldType::Integer },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "is_cross_sheet_connector", aliases: &["IsCrossSheetConnector"], field_type: FieldType::Bool },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "text",
+        aliases: &["Text", "Name"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "orientation",
+        aliases: &["Orientation"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "style",
+        aliases: &["Style"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "show_net_name",
+        aliases: &["ShowNetName"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "font_id",
+        aliases: &["FontId"],
+        field_type: FieldType::Integer,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "is_cross_sheet_connector",
+        aliases: &["IsCrossSheetConnector"],
+        field_type: FieldType::Bool,
+    },
 ];
 
 static PORT_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "name", aliases: &["Name"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "io_type", aliases: &["IoType", "IOType"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "style", aliases: &["Style"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "width", aliases: &["Width"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "height", aliases: &["Height"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "font_id", aliases: &["FontId"], field_type: FieldType::Integer },
-    FieldDef { canonical_name: "alignment", aliases: &["Alignment"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "harness_type", aliases: &["HarnessType"], field_type: FieldType::String },
-    FieldDef { canonical_name: "auto_size", aliases: &["AutoSize"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "port_name_is_hidden", aliases: &["PortNameIsHidden"], field_type: FieldType::Bool },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "name",
+        aliases: &["Name"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "io_type",
+        aliases: &["IoType", "IOType"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "style",
+        aliases: &["Style"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "width",
+        aliases: &["Width"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "height",
+        aliases: &["Height"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "font_id",
+        aliases: &["FontId"],
+        field_type: FieldType::Integer,
+    },
+    FieldDef {
+        canonical_name: "alignment",
+        aliases: &["Alignment"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "harness_type",
+        aliases: &["HarnessType"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "auto_size",
+        aliases: &["AutoSize"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "port_name_is_hidden",
+        aliases: &["PortNameIsHidden"],
+        field_type: FieldType::Bool,
+    },
 ];
 
 static JUNCTION_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
 ];
 
 static NO_CONNECT_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "orientation", aliases: &["Orientation"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "symbol", aliases: &["Symbol"], field_type: FieldType::String },
-    FieldDef { canonical_name: "is_active", aliases: &["IsActive"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "suppress_all", aliases: &["SuppressAll"], field_type: FieldType::Bool },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "orientation",
+        aliases: &["Orientation"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "symbol",
+        aliases: &["Symbol"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "is_active",
+        aliases: &["IsActive"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "suppress_all",
+        aliases: &["SuppressAll"],
+        field_type: FieldType::Bool,
+    },
 ];
 
 static BUS_ENTRY_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "line_width", aliases: &["LineWidth"], field_type: FieldType::Enum },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "line_width",
+        aliases: &["LineWidth"],
+        field_type: FieldType::Enum,
+    },
 ];
 
 static SHEET_SYMBOL_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "x_size", aliases: &["XSize", "Width"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y_size", aliases: &["YSize", "Height"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "is_solid", aliases: &["IsSolid"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "symbol_type", aliases: &["SymbolType"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "sheet_name", aliases: &["SheetName", "name"], field_type: FieldType::String },
-    FieldDef { canonical_name: "file_name", aliases: &["FileName"], field_type: FieldType::String },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "x_size",
+        aliases: &["XSize", "Width"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y_size",
+        aliases: &["YSize", "Height"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "is_solid",
+        aliases: &["IsSolid"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "symbol_type",
+        aliases: &["SymbolType"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "sheet_name",
+        aliases: &["SheetName", "name"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "file_name",
+        aliases: &["FileName"],
+        field_type: FieldType::String,
+    },
 ];
 
 static NOTE_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "text", aliases: &["Text"], field_type: FieldType::String },
-    FieldDef { canonical_name: "author", aliases: &["Author"], field_type: FieldType::String },
-    FieldDef { canonical_name: "font_id", aliases: &["FontId"], field_type: FieldType::Integer },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "is_solid", aliases: &["IsSolid"], field_type: FieldType::Bool },
-    FieldDef { canonical_name: "collapsed", aliases: &["Collapsed"], field_type: FieldType::Bool },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "text",
+        aliases: &["Text"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "author",
+        aliases: &["Author"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "font_id",
+        aliases: &["FontId"],
+        field_type: FieldType::Integer,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "is_solid",
+        aliases: &["IsSolid"],
+        field_type: FieldType::Bool,
+    },
+    FieldDef {
+        canonical_name: "collapsed",
+        aliases: &["Collapsed"],
+        field_type: FieldType::Bool,
+    },
 ];
 
 static PROBE_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "orientation", aliases: &["Orientation"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "name", aliases: &["Name"], field_type: FieldType::String },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "orientation",
+        aliases: &["Orientation"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "name",
+        aliases: &["Name"],
+        field_type: FieldType::String,
+    },
 ];
 
 static COMPILE_MASK_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "collapsed", aliases: &["Collapsed"], field_type: FieldType::Bool },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "collapsed",
+        aliases: &["Collapsed"],
+        field_type: FieldType::Bool,
+    },
 ];
 
 static BLANKET_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "line_style", aliases: &["LineStyle"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "collapsed", aliases: &["Collapsed"], field_type: FieldType::Bool },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "line_style",
+        aliases: &["LineStyle"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "collapsed",
+        aliases: &["Collapsed"],
+        field_type: FieldType::Bool,
+    },
 ];
 
 static HARNESS_CONNECTOR_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "x_size", aliases: &["XSize", "Width"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y_size", aliases: &["YSize", "Height"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "x_size",
+        aliases: &["XSize", "Width"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y_size",
+        aliases: &["YSize", "Height"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
 ];
 
 static SIGNAL_HARNESS_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "line_width", aliases: &["LineWidth"], field_type: FieldType::Enum },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "line_width",
+        aliases: &["LineWidth"],
+        field_type: FieldType::Enum,
+    },
 ];
 
 static SHEET_ENTRY_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "name", aliases: &["Name"], field_type: FieldType::String },
-    FieldDef { canonical_name: "io_type", aliases: &["IoType", "IOType"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "side", aliases: &["Side"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "distance_from_top", aliases: &["DistanceFromTop"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "style", aliases: &["Style"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "area_color", aliases: &["AreaColor"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "text_color", aliases: &["TextColor"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "text_font_id", aliases: &["TextFontId", "FontId"], field_type: FieldType::Integer },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "name",
+        aliases: &["Name"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "io_type",
+        aliases: &["IoType", "IOType"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "side",
+        aliases: &["Side"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "distance_from_top",
+        aliases: &["DistanceFromTop"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "style",
+        aliases: &["Style"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "area_color",
+        aliases: &["AreaColor"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "text_color",
+        aliases: &["TextColor"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "text_font_id",
+        aliases: &["TextFontId", "FontId"],
+        field_type: FieldType::Integer,
+    },
 ];
 
 static PARAMETER_SET_FIELDS: &[FieldDef] = &[
-    FieldDef { canonical_name: "unique_id", aliases: &["UniqueId"], field_type: FieldType::String },
-    FieldDef { canonical_name: "x", aliases: &["X"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "y", aliases: &["Y"], field_type: FieldType::Coord },
-    FieldDef { canonical_name: "color", aliases: &["Color"], field_type: FieldType::Color },
-    FieldDef { canonical_name: "orientation", aliases: &["Orientation"], field_type: FieldType::Enum },
-    FieldDef { canonical_name: "name", aliases: &["Name"], field_type: FieldType::String },
-    FieldDef { canonical_name: "style", aliases: &["Style"], field_type: FieldType::Integer },
+    FieldDef {
+        canonical_name: "unique_id",
+        aliases: &["UniqueId"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "x",
+        aliases: &["X"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "y",
+        aliases: &["Y"],
+        field_type: FieldType::Coord,
+    },
+    FieldDef {
+        canonical_name: "color",
+        aliases: &["Color"],
+        field_type: FieldType::Color,
+    },
+    FieldDef {
+        canonical_name: "orientation",
+        aliases: &["Orientation"],
+        field_type: FieldType::Enum,
+    },
+    FieldDef {
+        canonical_name: "name",
+        aliases: &["Name"],
+        field_type: FieldType::String,
+    },
+    FieldDef {
+        canonical_name: "style",
+        aliases: &["Style"],
+        field_type: FieldType::Integer,
+    },
 ];
 
 #[cfg(test)]

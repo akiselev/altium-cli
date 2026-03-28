@@ -21,32 +21,32 @@ pub enum TokenKind {
     Hash,    // #
 
     // Wildcards
-    Star,      // *
-    Question,  // ?
+    Star,     // *
+    Question, // ?
 
     // Comparison operators
-    Eq,           // =
-    NotEq,        // !=
-    Contains,     // *=
-    StartsWith,   // ^=
-    EndsWith,     // $=
-    WordMatch,    // ~=
-    Gt,           // > (inside [...])
-    Lt,           // <
-    Gte,          // >=
-    Lte,          // <=
+    Eq,         // =
+    NotEq,      // !=
+    Contains,   // *=
+    StartsWith, // ^=
+    EndsWith,   // $=
+    WordMatch,  // ~=
+    Gt,         // > (inside [...])
+    Lt,         // <
+    Gte,        // >=
+    Lte,        // <=
 
     // Structural
-    LBracket,     // [
-    RBracket,     // ]
-    LParen,       // (
-    RParen,       // )
-    Colon,        // :
-    Comma,        // ,
-    Dot,          // .
+    LBracket, // [
+    RBracket, // ]
+    LParen,   // (
+    RParen,   // )
+    Colon,    // :
+    Comma,    // ,
+    Dot,      // .
 
     // Combinators
-    ChildCombinator,     // > (outside [...])
+    ChildCombinator, // > (outside [...])
 
     // Keywords
     And,
@@ -386,10 +386,11 @@ pub fn lex(input: &str) -> Result<Vec<Token>, QueryError> {
             }
 
             // Numbers (integers, floats, dimensional values)
-            b'0'..=b'9' | b'-' if {
-                // Negative numbers: '-' followed by digit
-                bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit()
-            } || bytes[i].is_ascii_digit() =>
+            b'0'..=b'9' | b'-'
+                if {
+                    // Negative numbers: '-' followed by digit
+                    bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit()
+                } || bytes[i].is_ascii_digit() =>
             {
                 let num_start = i;
                 if bytes[i] == b'-' {
@@ -401,7 +402,11 @@ pub fn lex(input: &str) -> Result<Vec<Token>, QueryError> {
                 }
                 let mut is_float = false;
                 // Fractional part
-                if i < bytes.len() && bytes[i] == b'.' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+                if i < bytes.len()
+                    && bytes[i] == b'.'
+                    && i + 1 < bytes.len()
+                    && bytes[i + 1].is_ascii_digit()
+                {
                     is_float = true;
                     i += 1; // skip '.'
                     while i < bytes.len() && bytes[i].is_ascii_digit() {
@@ -542,7 +547,10 @@ mod tests {
 
     #[test]
     fn test_simple_ident() {
-        assert_eq!(kinds("component").unwrap(), vec![TokenKind::Ident("component".into())]);
+        assert_eq!(
+            kinds("component").unwrap(),
+            vec![TokenKind::Ident("component".into())]
+        );
     }
 
     #[test]
@@ -575,9 +583,18 @@ mod tests {
 
     #[test]
     fn test_dimensional_values() {
-        assert_eq!(kinds("100mil").unwrap(), vec![TokenKind::Dim(100.0, Unit::Mil)]);
-        assert_eq!(kinds("2.54mm").unwrap(), vec![TokenKind::Dim(2.54, Unit::Mm)]);
-        assert_eq!(kinds("0.1in").unwrap(), vec![TokenKind::Dim(0.1, Unit::Inch)]);
+        assert_eq!(
+            kinds("100mil").unwrap(),
+            vec![TokenKind::Dim(100.0, Unit::Mil)]
+        );
+        assert_eq!(
+            kinds("2.54mm").unwrap(),
+            vec![TokenKind::Dim(2.54, Unit::Mm)]
+        );
+        assert_eq!(
+            kinds("0.1in").unwrap(),
+            vec![TokenKind::Dim(0.1, Unit::Inch)]
+        );
     }
 
     #[test]
@@ -655,7 +672,11 @@ mod tests {
         );
         assert_eq!(
             kinds("@10K").unwrap(),
-            vec![TokenKind::At, TokenKind::Integer(10), TokenKind::Ident("K".into())]
+            vec![
+                TokenKind::At,
+                TokenKind::Integer(10),
+                TokenKind::Ident("K".into())
+            ]
         );
         assert_eq!(
             kinds("%VCC").unwrap(),

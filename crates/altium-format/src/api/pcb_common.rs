@@ -5,9 +5,9 @@
 //! `PcbContour`, `ContourSegment`).
 
 use crate::pcblib::{Contour, PcbPad, PolySegment};
+use altium_format_types::PolySegmentKind;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::PadShape;
-use altium_format_types::PolySegmentKind;
 
 // ── Contour types ─────────────────────────────────────────────────────────────
 
@@ -114,7 +114,11 @@ impl PadStack {
 pub(crate) fn extract_pad_stack(p: &PcbPad) -> PadStack {
     let (top_cr, mid_cr, bot_cr) = if let Some(sd) = &p.stack_data {
         // corner_radius_pct[0] = top, [1] = mid, [31] = bot
-        (sd.corner_radius_pct[0], sd.corner_radius_pct[1], sd.corner_radius_pct[31])
+        (
+            sd.corner_radius_pct[0],
+            sd.corner_radius_pct[1],
+            sd.corner_radius_pct[31],
+        )
     } else {
         (0, 0, 0)
     };
@@ -190,9 +194,7 @@ pub(crate) fn contour_to_pcb_contour(contour: &Contour) -> PcbContour {
         Contour::ShapeBased(segs) => segs
             .iter()
             .map(|s| match s.kind {
-                PolySegmentKind::Line => ContourSegment::Line {
-                    endpoint: s.vertex,
-                },
+                PolySegmentKind::Line => ContourSegment::Line { endpoint: s.vertex },
                 PolySegmentKind::Arc => ContourSegment::Arc {
                     endpoint: s.vertex,
                     center: s.center,
@@ -212,7 +214,10 @@ pub(crate) fn contour_to_pcb_contour(contour: &Contour) -> PcbContour {
 ///
 /// Produces `ShapeBased` if any arc segments are present, `Legacy` if all lines.
 pub(crate) fn pcb_contour_to_internal(contour: &PcbContour) -> Contour {
-    let has_arcs = contour.segments.iter().any(|s| matches!(s, ContourSegment::Arc { .. }));
+    let has_arcs = contour
+        .segments
+        .iter()
+        .any(|s| matches!(s, ContourSegment::Arc { .. }));
 
     if has_arcs {
         let segs = contour

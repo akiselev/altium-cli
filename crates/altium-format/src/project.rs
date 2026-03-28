@@ -509,10 +509,19 @@ mod tests {
         let project = AltiumProject::parse("TestProject".to_owned(), input).unwrap();
 
         assert_eq!(project.name(), "TestProject");
-        assert_eq!(project.design().get("Version").map(|s| s.as_str()), Some("1.0"));
-        assert_eq!(project.design().get("HierarchyMode").map(|s| s.as_str()), Some("0"));
         assert_eq!(
-            project.preferences().get("PrefsVaultGUID").map(|s| s.as_str()),
+            project.design().get("Version").map(|s| s.as_str()),
+            Some("1.0")
+        );
+        assert_eq!(
+            project.design().get("HierarchyMode").map(|s| s.as_str()),
+            Some("0")
+        );
+        assert_eq!(
+            project
+                .preferences()
+                .get("PrefsVaultGUID")
+                .map(|s| s.as_str()),
             Some("")
         );
     }
@@ -523,7 +532,10 @@ mod tests {
         let input = format!("{}[Design]\nVersion=2.0\n", bom);
         let content = input.strip_prefix('\u{FEFF}').unwrap_or(&input);
         let project = AltiumProject::parse("BomTest".to_owned(), content).unwrap();
-        assert_eq!(project.design().get("Version").map(|s| s.as_str()), Some("2.0"));
+        assert_eq!(
+            project.design().get("Version").map(|s| s.as_str()),
+            Some("2.0")
+        );
     }
 
     #[test]
@@ -531,9 +543,18 @@ mod tests {
         assert_eq!(split_output_key("OutputType1"), Some(("OutputType", 1)));
         assert_eq!(split_output_key("OutputName21"), Some(("OutputName", 21)));
         assert_eq!(split_output_key("PageOptions3"), Some(("PageOptions", 3)));
-        assert_eq!(split_output_key("OutputDefault10"), Some(("OutputDefault", 10)));
-        assert_eq!(split_output_key("OutputVariantName5"), Some(("OutputVariantName", 5)));
-        assert_eq!(split_output_key("OutputDocumentPath2"), Some(("OutputDocumentPath", 2)));
+        assert_eq!(
+            split_output_key("OutputDefault10"),
+            Some(("OutputDefault", 10))
+        );
+        assert_eq!(
+            split_output_key("OutputVariantName5"),
+            Some(("OutputVariantName", 5))
+        );
+        assert_eq!(
+            split_output_key("OutputDocumentPath2"),
+            Some(("OutputDocumentPath", 2))
+        );
         // Non-output keys return None.
         assert_eq!(split_output_key("Name"), None);
         assert_eq!(split_output_key("PrinterOptions"), None);
@@ -557,7 +578,10 @@ mod tests {
         let groups = project.output_groups();
         assert_eq!(groups.len(), 1);
         let g = &groups[0];
-        assert_eq!(g.keys().get("Name").map(|s| s.as_str()), Some("Netlist Outputs"));
+        assert_eq!(
+            g.keys().get("Name").map(|s| s.as_str()),
+            Some("Netlist Outputs")
+        );
         assert_eq!(g.keys().get("Description").map(|s| s.as_str()), Some(""));
         assert_eq!(g.outputs().len(), 2);
         assert_eq!(
@@ -581,14 +605,20 @@ mod tests {
     fn test_value_with_equals_sign() {
         let input = "[Design]\nFoo=a=b=c\n";
         let project = AltiumProject::parse("EqTest".to_owned(), input).unwrap();
-        assert_eq!(project.design().get("Foo").map(|s| s.as_str()), Some("a=b=c"));
+        assert_eq!(
+            project.design().get("Foo").map(|s| s.as_str()),
+            Some("a=b=c")
+        );
     }
 
     #[test]
     fn test_unknown_section_ignored() {
         let input = "[UnknownFutureSection]\nKey=Value\n[Design]\nVersion=1.0\n";
         let project = AltiumProject::parse("UnkTest".to_owned(), input).unwrap();
-        assert_eq!(project.design().get("Version").map(|s| s.as_str()), Some("1.0"));
+        assert_eq!(
+            project.design().get("Version").map(|s| s.as_str()),
+            Some("1.0")
+        );
     }
 
     #[test]
@@ -596,11 +626,22 @@ mod tests {
         let proj = AltiumProject::new_blank_ad26();
 
         // Verify key structural properties of the blank project.
-        assert_eq!(proj.design().get("Version").map(|s| s.as_str()), Some("1.0"));
-        assert_eq!(proj.documents().len(), 0, "blank project should have no documents");
+        assert_eq!(
+            proj.design().get("Version").map(|s| s.as_str()),
+            Some("1.0")
+        );
+        assert_eq!(
+            proj.documents().len(),
+            0,
+            "blank project should have no documents"
+        );
         assert_eq!(proj.configurations().len(), 1);
         assert_eq!(proj.output_groups().len(), 10);
-        assert_eq!(proj.erc_matrix().len(), 17, "ERC matrix should have 17 rows");
+        assert_eq!(
+            proj.erc_matrix().len(),
+            17,
+            "ERC matrix should have 17 rows"
+        );
         assert!(!proj.modification_levels().is_empty());
         assert!(!proj.difference_levels().is_empty());
         assert!(!proj.erc_levels().is_empty());
@@ -617,8 +658,14 @@ mod tests {
         assert_eq!(reopened.configurations().len(), 1);
         assert_eq!(reopened.output_groups().len(), 10);
         assert_eq!(reopened.erc_matrix().len(), 17);
-        assert_eq!(reopened.modification_levels().len(), proj.modification_levels().len());
-        assert_eq!(reopened.difference_levels().len(), proj.difference_levels().len());
+        assert_eq!(
+            reopened.modification_levels().len(),
+            proj.modification_levels().len()
+        );
+        assert_eq!(
+            reopened.difference_levels().len(),
+            proj.difference_levels().len()
+        );
         assert_eq!(reopened.erc_levels().len(), proj.erc_levels().len());
 
         // Verify save→reopen produces identical INI content.

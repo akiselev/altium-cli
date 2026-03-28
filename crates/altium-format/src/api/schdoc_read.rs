@@ -12,16 +12,15 @@
 use std::collections::HashMap;
 
 use crate::api::sch_common::{
-    pin_from_internal, parameter_from_internal, graphic_from_record,
-    build_footprint_maps_schdoc,
+    build_footprint_maps_schdoc, graphic_from_record, parameter_from_internal, pin_from_internal,
 };
 use crate::api::schdoc_types::*;
 use crate::api::schlib_types::Parameter;
 use crate::sch_records::SchRecord;
 use crate::{AltiumFormatError, Result, ResultExt};
 
-use altium_format_types::sch::SheetStyle;
 use altium_format_types::constants::record_structure::RECORD;
+use altium_format_types::sch::SheetStyle;
 
 /// Convert the flat SchDoc record lists into a structured `SchDocSheet`.
 pub(crate) fn sheet_from_internal(
@@ -53,16 +52,20 @@ pub(crate) fn sheet_from_internal(
     };
 
     // Extract fonts
-    let fonts: Vec<Font> = sheet.fonts.iter().map(|f| Font {
-        id: f.id,
-        name: f.name.clone(),
-        size: f.size,
-        bold: f.bold,
-        italic: f.italic,
-        underline: f.underline,
-        strikeout: f.strikeout,
-        rotation: f.rotation,
-    }).collect();
+    let fonts: Vec<Font> = sheet
+        .fonts
+        .iter()
+        .map(|f| Font {
+            id: f.id,
+            name: f.name.clone(),
+            size: f.size,
+            bold: f.bold,
+            italic: f.italic,
+            underline: f.underline,
+            strikeout: f.strikeout,
+            rotation: f.rotation,
+        })
+        .collect();
 
     // Extract display settings
     let ds = &sheet.display_settings;
@@ -113,12 +116,8 @@ pub(crate) fn sheet_from_internal(
             continue;
         }
 
-        let obj = convert_sheet_child(
-            records,
-            additional_records,
-            child_idx,
-            &ownership_map,
-        ).with_context(|| format!("converting sheet child at record index {child_idx}"))?;
+        let obj = convert_sheet_child(records, additional_records, child_idx, &ownership_map)
+            .with_context(|| format!("converting sheet child at record index {child_idx}"))?;
 
         if let Some(o) = obj {
             objects.push(o);
@@ -283,21 +282,33 @@ fn convert_sheet_child(
         SchRecord::Component(comp) => {
             let children = ownership_map.get(&idx).cloned().unwrap_or_default();
             let component = component_from_schdoc_internal(
-                records, additional_records, comp, &children, ownership_map,
+                records,
+                additional_records,
+                comp,
+                &children,
+                ownership_map,
             )?;
             Ok(Some(SheetObject::Component(component)))
         }
         SchRecord::Wire(w) => Ok(Some(SheetObject::Wire(wire_from_internal(w)))),
         SchRecord::Bus(b) => Ok(Some(SheetObject::Bus(bus_from_internal(b)))),
         SchRecord::NetLabel(n) => Ok(Some(SheetObject::NetLabel(net_label_from_internal(n)))),
-        SchRecord::PowerObject(p) => Ok(Some(SheetObject::PowerObject(power_object_from_internal(p)))),
+        SchRecord::PowerObject(p) => Ok(Some(SheetObject::PowerObject(
+            power_object_from_internal(p),
+        ))),
         SchRecord::Port(p) => Ok(Some(SheetObject::Port(port_from_internal(p)))),
         SchRecord::Junction(j) => Ok(Some(SheetObject::Junction(junction_from_internal(j)))),
         SchRecord::NoConnect(n) => Ok(Some(SheetObject::NoConnect(no_connect_from_internal(n)))),
         SchRecord::BusEntry(b) => Ok(Some(SheetObject::BusEntry(bus_entry_from_internal(b)))),
         SchRecord::SheetSymbol(ss) => {
             let children = ownership_map.get(&idx).cloned().unwrap_or_default();
-            let sym = sheet_symbol_from_internal(records, additional_records, ss, &children, ownership_map)?;
+            let sym = sheet_symbol_from_internal(
+                records,
+                additional_records,
+                ss,
+                &children,
+                ownership_map,
+            )?;
             Ok(Some(SheetObject::SheetSymbol(sym)))
         }
         SchRecord::ParameterSet(ps) => {
@@ -307,18 +318,20 @@ fn convert_sheet_child(
         }
         SchRecord::Note(n) => Ok(Some(SheetObject::Note(note_from_internal(n)))),
         SchRecord::Probe(p) => Ok(Some(SheetObject::Probe(probe_from_internal(p)))),
-        SchRecord::CompileMask(c) => Ok(Some(SheetObject::CompileMask(compile_mask_from_internal(c)))),
+        SchRecord::CompileMask(c) => Ok(Some(SheetObject::CompileMask(
+            compile_mask_from_internal(c),
+        ))),
         SchRecord::Blanket(b) => Ok(Some(SheetObject::Blanket(blanket_from_internal(b)))),
         SchRecord::HarnessConnector(hc) => {
             let children = ownership_map.get(&idx).cloned().unwrap_or_default();
             let conn = harness_connector_from_internal(records, additional_records, hc, &children)?;
             Ok(Some(SheetObject::HarnessConnector(conn)))
         }
-        SchRecord::SignalHarness(sh) => Ok(Some(SheetObject::SignalHarness(signal_harness_from_internal(sh)))),
+        SchRecord::SignalHarness(sh) => Ok(Some(SheetObject::SignalHarness(
+            signal_harness_from_internal(sh),
+        ))),
         // Sheet-level parameters
-        SchRecord::Parameter(p) => {
-            Ok(Some(SheetObject::Parameter(parameter_from_internal(p))))
-        }
+        SchRecord::Parameter(p) => Ok(Some(SheetObject::Parameter(parameter_from_internal(p)))),
         // Sheet-level designators (title block fields)
         SchRecord::Designator(d) => {
             // Designators at sheet level are title block fields — treat as parameters
@@ -351,7 +364,13 @@ fn convert_sheet_child(
         // HighLevelCode variants (treated like SheetSymbol)
         SchRecord::HighLevelCodeSymbol(ss) => {
             let children = ownership_map.get(&idx).cloned().unwrap_or_default();
-            let sym = sheet_symbol_from_internal(records, additional_records, ss, &children, ownership_map)?;
+            let sym = sheet_symbol_from_internal(
+                records,
+                additional_records,
+                ss,
+                &children,
+                ownership_map,
+            )?;
             Ok(Some(SheetObject::SheetSymbol(sym)))
         }
         other => match graphic_from_record(other) {
@@ -360,10 +379,11 @@ fn convert_sheet_child(
                 key: RECORD.to_owned(),
                 detail: format!(
                     "unexpected record type {:?} as sheet child at index {}",
-                    std::mem::discriminant(other), idx
+                    std::mem::discriminant(other),
+                    idx
                 ),
             }),
-        }
+        },
     }
 }
 
@@ -411,16 +431,18 @@ fn component_from_schdoc_internal(
                     children.push(ComponentChild::Graphic(graphic));
                 }
                 None => {
-                    return Err(AltiumFormatError::NotImplemented(
-                        format!("record type {:?} as Component child", std::mem::discriminant(other))
-                    ));
+                    return Err(AltiumFormatError::NotImplemented(format!(
+                        "record type {:?} as Component child",
+                        std::mem::discriminant(other)
+                    )));
                 }
-            }
+            },
         }
     }
 
     // Build footprint maps from the implementation chain
-    let footprint_maps = build_footprint_maps_schdoc(records, additional_records, child_indices, ownership_map)?;
+    let footprint_maps =
+        build_footprint_maps_schdoc(records, additional_records, child_indices, ownership_map)?;
     for fm in footprint_maps {
         children.push(ComponentChild::FootprintMap(fm));
     }
@@ -493,9 +515,10 @@ fn sheet_symbol_from_internal(
             | SchRecord::ImplementationMap(_)
             | SchRecord::MapDefiner(_) => {}
             other => {
-                return Err(AltiumFormatError::NotImplemented(
-                    format!("record type {:?} as SheetSymbol child", std::mem::discriminant(other))
-                ));
+                return Err(AltiumFormatError::NotImplemented(format!(
+                    "record type {:?} as SheetSymbol child",
+                    std::mem::discriminant(other)
+                )));
             }
         }
     }
@@ -565,9 +588,10 @@ fn harness_connector_from_internal(
                 children.push(HarnessChild::Parameter(parameter_from_internal(p)));
             }
             other => {
-                return Err(AltiumFormatError::NotImplemented(
-                    format!("record type {:?} as HarnessConnector child", std::mem::discriminant(other))
-                ));
+                return Err(AltiumFormatError::NotImplemented(format!(
+                    "record type {:?} as HarnessConnector child",
+                    std::mem::discriminant(other)
+                )));
             }
         }
     }

@@ -15,8 +15,7 @@ altium-format          (core: parsing, serialization, high-level API, rendering 
   ├→ altium-format-query       (AQL query language engine)
   ├→ altium-format-render-svg  (SVG rendering backend)
   └→ altium-format-render-png  (PNG rasterization via resvg)
-autopcb-spec           (spec DSL: compiler, executor, reconciler, dump)
-altium-cli             (CLI binary)
+altium-cli             (CLI binary — depends on autopcb-spec via cross-repo path dep)
 ```
 
 ## Document Type Support

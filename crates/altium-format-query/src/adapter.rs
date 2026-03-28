@@ -1,8 +1,8 @@
-use altium_format::api;
 use altium_format::PcbDoc;
 use altium_format::PcbLib;
 use altium_format::SchDoc;
 use altium_format::SchLib;
+use altium_format::api;
 
 use crate::ast::TypeSelector;
 use crate::error::{QueryError, QueryErrorCode};
@@ -141,21 +141,51 @@ impl Queryable for PcbDoc {
             )
         })?;
         let mut nodes = Vec::new();
-        for n in board.nets { nodes.push(QueryNode::PcbDocNet(n)); }
-        for c in board.components { nodes.push(QueryNode::PcbDocComponent(c)); }
-        for t in board.tracks { nodes.push(QueryNode::PcbDocTrack(t)); }
-        for a in board.arcs { nodes.push(QueryNode::PcbDocArc(a)); }
-        for v in board.vias { nodes.push(QueryNode::PcbDocVia(v)); }
-        for p in board.pads { nodes.push(QueryNode::PcbDocPad(p)); }
-        for f in board.fills { nodes.push(QueryNode::PcbDocFill(f)); }
-        for t in board.texts { nodes.push(QueryNode::PcbDocText(t)); }
-        for r in board.regions { nodes.push(QueryNode::PcbDocRegion(r)); }
-        for b in board.component_bodies { nodes.push(QueryNode::PcbDocComponentBody(b)); }
-        for p in board.polygons { nodes.push(QueryNode::PcbDocPolygon(p)); }
-        for r in board.rules { nodes.push(QueryNode::PcbDocRule(r)); }
-        for c in board.classes { nodes.push(QueryNode::PcbDocClass(c)); }
-        for d in board.dimensions { nodes.push(QueryNode::PcbDocDimension(d)); }
-        for dp in board.differential_pairs { nodes.push(QueryNode::PcbDocDifferentialPair(dp)); }
+        for n in board.nets {
+            nodes.push(QueryNode::PcbDocNet(n));
+        }
+        for c in board.components {
+            nodes.push(QueryNode::PcbDocComponent(c));
+        }
+        for t in board.tracks {
+            nodes.push(QueryNode::PcbDocTrack(t));
+        }
+        for a in board.arcs {
+            nodes.push(QueryNode::PcbDocArc(a));
+        }
+        for v in board.vias {
+            nodes.push(QueryNode::PcbDocVia(v));
+        }
+        for p in board.pads {
+            nodes.push(QueryNode::PcbDocPad(p));
+        }
+        for f in board.fills {
+            nodes.push(QueryNode::PcbDocFill(f));
+        }
+        for t in board.texts {
+            nodes.push(QueryNode::PcbDocText(t));
+        }
+        for r in board.regions {
+            nodes.push(QueryNode::PcbDocRegion(r));
+        }
+        for b in board.component_bodies {
+            nodes.push(QueryNode::PcbDocComponentBody(b));
+        }
+        for p in board.polygons {
+            nodes.push(QueryNode::PcbDocPolygon(p));
+        }
+        for r in board.rules {
+            nodes.push(QueryNode::PcbDocRule(r));
+        }
+        for c in board.classes {
+            nodes.push(QueryNode::PcbDocClass(c));
+        }
+        for d in board.dimensions {
+            nodes.push(QueryNode::PcbDocDimension(d));
+        }
+        for dp in board.differential_pairs {
+            nodes.push(QueryNode::PcbDocDifferentialPair(dp));
+        }
         Ok(nodes)
     }
 }
@@ -280,9 +310,15 @@ impl QueryNode {
                 for child in &c.children {
                     match child {
                         api::ComponentChild::Pin(p) => children.push(QueryNode::Pin(p.clone())),
-                        api::ComponentChild::Parameter(p) => children.push(QueryNode::Parameter(p.clone())),
-                        api::ComponentChild::Graphic(g) => children.push(QueryNode::Graphic(g.clone())),
-                        api::ComponentChild::FootprintMap(f) => children.push(QueryNode::FootprintMap(f.clone())),
+                        api::ComponentChild::Parameter(p) => {
+                            children.push(QueryNode::Parameter(p.clone()))
+                        }
+                        api::ComponentChild::Graphic(g) => {
+                            children.push(QueryNode::Graphic(g.clone()))
+                        }
+                        api::ComponentChild::FootprintMap(f) => {
+                            children.push(QueryNode::FootprintMap(f.clone()))
+                        }
                     }
                 }
                 children
@@ -318,9 +354,11 @@ impl QueryNode {
                 }
                 children
             }
-            QueryNode::ParameterSet(ps) => {
-                ps.parameters.iter().map(|p| QueryNode::Parameter(p.clone())).collect()
-            }
+            QueryNode::ParameterSet(ps) => ps
+                .parameters
+                .iter()
+                .map(|p| QueryNode::Parameter(p.clone()))
+                .collect(),
             // Leaf nodes have no children
             _ => Vec::new(),
         }

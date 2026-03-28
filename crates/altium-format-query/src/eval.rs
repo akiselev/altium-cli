@@ -1,4 +1,4 @@
-use crate::adapter::{Queryable, QueryMatch, QueryNode, QueryResultSet};
+use crate::adapter::{QueryMatch, QueryNode, QueryResultSet, Queryable};
 use crate::ast::*;
 use crate::diagnostic::Spanned;
 use crate::error::{QueryError, QueryErrorCode, QueryResult};
@@ -45,7 +45,11 @@ fn eval_expr(expr: &Spanned<QueryExpr>, roots: &[QueryNode]) -> QueryResult<Quer
             let all = collect_all_nodes(roots);
             let result = all
                 .into_iter()
-                .filter(|m| !inner_matches.iter().any(|im| nodes_equal(&m.node, &im.node)))
+                .filter(|m| {
+                    !inner_matches
+                        .iter()
+                        .any(|im| nodes_equal(&m.node, &im.node))
+                })
                 .collect();
             Ok(result)
         }
@@ -53,10 +57,7 @@ fn eval_expr(expr: &Spanned<QueryExpr>, roots: &[QueryNode]) -> QueryResult<Quer
     }
 }
 
-fn eval_selector_chain(
-    chain: &SelectorChain,
-    roots: &[QueryNode],
-) -> QueryResult<QueryResultSet> {
+fn eval_selector_chain(chain: &SelectorChain, roots: &[QueryNode]) -> QueryResult<QueryResultSet> {
     if chain.segments.is_empty() {
         return Ok(Vec::new());
     }
@@ -86,10 +87,7 @@ fn eval_selector_chain(
             for m in matches {
                 let mut path = candidate.path.clone();
                 path.push(m.node.display_name());
-                next_candidates.push(QueryMatch {
-                    node: m.node,
-                    path,
-                });
+                next_candidates.push(QueryMatch { node: m.node, path });
             }
         }
         candidates = next_candidates;
@@ -127,10 +125,7 @@ fn match_selector_against_pool(
 }
 
 /// Check if a single node matches a compound selector.
-fn matches_compound_selector(
-    node: &QueryNode,
-    selector: &CompoundSelector,
-) -> QueryResult<bool> {
+fn matches_compound_selector(node: &QueryNode, selector: &CompoundSelector) -> QueryResult<bool> {
     // Check base selector
     if !matches_base_selector(node, &selector.base)? {
         return Ok(false);
@@ -154,20 +149,13 @@ fn matches_compound_selector(
 }
 
 /// Check if a node matches a base selector.
-fn matches_base_selector(
-    node: &QueryNode,
-    base: &Spanned<BaseSelector>,
-) -> QueryResult<bool> {
+fn matches_base_selector(node: &QueryNode, base: &Spanned<BaseSelector>) -> QueryResult<bool> {
     match &base.node {
         BaseSelector::Any => Ok(true),
 
-        BaseSelector::Type(ts) => {
-            Ok(node_matches_type(node, *ts))
-        }
+        BaseSelector::Type(ts) => Ok(node_matches_type(node, *ts)),
 
-        BaseSelector::DesignatorPattern(pat) => {
-            Ok(matches_designator_pattern(node, pat))
-        }
+        BaseSelector::DesignatorPattern(pat) => Ok(matches_designator_pattern(node, pat)),
 
         BaseSelector::PartNumber(name) => {
             // Match against lib_reference (exact match)
@@ -185,12 +173,10 @@ fn matches_base_selector(
             }
         }
 
-        BaseSelector::NetName(name) => {
-            match node.net_name() {
-                Some(nn) => Ok(nn.eq_ignore_ascii_case(name)),
-                None => Ok(false),
-            }
-        }
+        BaseSelector::NetName(name) => match node.net_name() {
+            Some(nn) => Ok(nn.eq_ignore_ascii_case(name)),
+            None => Ok(false),
+        },
 
         BaseSelector::RecordId(_) => {
             // Record IDs violate the design philosophy
@@ -208,13 +194,14 @@ fn matches_base_selector(
                 QueryNode::Pin(p) => {
                     // We can only match the pin name here — component context
                     // would require walking the parent tree. For now, match pin name.
-                    Ok(p.designator.eq_ignore_ascii_case(pin)
-                        || p.name.eq_ignore_ascii_case(pin))
+                    Ok(p.designator.eq_ignore_ascii_case(pin) || p.name.eq_ignore_ascii_case(pin))
                 }
                 QueryNode::Component(c) => {
                     // Check if component matches and has the pin
                     let comp_match = c.lib_reference.eq_ignore_ascii_case(component)
-                        || c.designator.as_ref().is_some_and(|d| d.eq_ignore_ascii_case(component));
+                        || c.designator
+                            .as_ref()
+                            .is_some_and(|d| d.eq_ignore_ascii_case(component));
                     if !comp_match {
                         return Ok(false);
                     }
@@ -239,10 +226,7 @@ fn node_matches_type(node: &QueryNode, ts: TypeSelector) -> bool {
 
     // `graphic` matches any graphic sub-type
     if ts == TypeSelector::Graphic {
-        return matches!(
-            node,
-            QueryNode::Graphic(_)
-        );
+        return matches!(node, QueryNode::Graphic(_));
     }
 
     // A specific graphic sub-type like `line` should match Graphic::Line
@@ -265,8 +249,7 @@ fn node_matches_type(node: &QueryNode, ts: TypeSelector) -> bool {
 /// Check if a node matches a designator pattern.
 fn matches_designator_pattern(node: &QueryNode, pat: &DesignatorPattern) -> bool {
     // For SchLib: match against lib_reference
-    let target = node.lib_reference()
-        .or_else(|| node.designator());
+    let target = node.lib_reference().or_else(|| node.designator());
 
     let target = match target {
         Some(t) => t,
@@ -291,10 +274,7 @@ fn matches_designator_pattern(node: &QueryNode, pat: &DesignatorPattern) -> bool
 }
 
 /// Check if a node matches an attribute filter.
-fn matches_attribute_filter(
-    node: &QueryNode,
-    attr: &AttributeFilter,
-) -> QueryResult<bool> {
+fn matches_attribute_filter(node: &QueryNode, attr: &AttributeFilter) -> QueryResult<bool> {
     // Resolve field value
     let value = if let Some(prefix) = &attr.field.prefix {
         match prefix.to_ascii_lowercase().as_str() {
@@ -359,8 +339,8 @@ fn matches_pseudo_class(node: &QueryNode, pseudo: PseudoClass) -> bool {
         },
         // PcbDoc layer/pad pseudo-classes
         QueryNode::PcbDocPad(p) => {
-            use altium_format_types::pcb::V6Layer;
             use altium_format_types::coord::Coord;
+            use altium_format_types::pcb::V6Layer;
             match pseudo {
                 PseudoClass::Smd => p.hole_size == Coord::ZERO,
                 PseudoClass::ThroughHole => p.hole_size != Coord::ZERO,
@@ -477,13 +457,13 @@ fn nodes_equal(a: &QueryNode, b: &QueryNode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapter::Queryable;
     use crate::parser::parse_query;
     use altium_format::api;
     use altium_format_types::color::Color;
     use altium_format_types::common::RotationBy90;
     use altium_format_types::coord::{Coord, CoordPoint};
     use altium_format_types::sch::*;
-    use crate::adapter::Queryable;
 
     fn make_test_component() -> api::Component {
         api::Component {
@@ -512,7 +492,10 @@ mod tests {
             designator: des.to_string(),
             name: name.to_string(),
             electrical,
-            location: CoordPoint { x: Coord::ZERO, y: Coord::ZERO },
+            location: CoordPoint {
+                x: Coord::ZERO,
+                y: Coord::ZERO,
+            },
             length: Coord::from_mils(30).expect("30 mils fits Coord"),
             orientation: RotationBy90::Rotate0,
             is_hidden: false,
@@ -550,7 +533,10 @@ mod tests {
             text: text.to_string(),
             is_hidden: false,
             read_only: ParameterReadOnlyState::default(),
-            location: CoordPoint { x: Coord::ZERO, y: Coord::ZERO },
+            location: CoordPoint {
+                x: Coord::ZERO,
+                y: Coord::ZERO,
+            },
             orientation: RotationBy90::Rotate0,
             color: Color::BLACK,
             font_id: 0,
@@ -571,7 +557,11 @@ mod tests {
 
     impl Queryable for MockDoc {
         fn root_nodes(&self) -> Result<Vec<QueryNode>, QueryError> {
-            Ok(self.components.iter().map(|c| QueryNode::Component(c.clone())).collect())
+            Ok(self
+                .components
+                .iter()
+                .map(|c| QueryNode::Component(c.clone()))
+                .collect())
         }
     }
 

@@ -39,9 +39,15 @@ fn match_string(s: &str, op: CompareOp, filter: &FilterValue) -> bool {
     match op {
         CompareOp::Eq => s.eq_ignore_ascii_case(&filter_str),
         CompareOp::NotEq => !s.eq_ignore_ascii_case(&filter_str),
-        CompareOp::Contains => s.to_ascii_lowercase().contains(&filter_str.to_ascii_lowercase()),
-        CompareOp::StartsWith => s.to_ascii_lowercase().starts_with(&filter_str.to_ascii_lowercase()),
-        CompareOp::EndsWith => s.to_ascii_lowercase().ends_with(&filter_str.to_ascii_lowercase()),
+        CompareOp::Contains => s
+            .to_ascii_lowercase()
+            .contains(&filter_str.to_ascii_lowercase()),
+        CompareOp::StartsWith => s
+            .to_ascii_lowercase()
+            .starts_with(&filter_str.to_ascii_lowercase()),
+        CompareOp::EndsWith => s
+            .to_ascii_lowercase()
+            .ends_with(&filter_str.to_ascii_lowercase()),
         CompareOp::WordMatch => {
             let lower = filter_str.to_ascii_lowercase();
             s.split_whitespace()

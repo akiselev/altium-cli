@@ -20,14 +20,11 @@ use altium_format_types::color::Color;
 use altium_format_types::common::{ComponentKind, RotationBy90};
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::sch::{
-    HorizontalAlign, LeftRightSide, LineStyle,
-    PenWidth, PortArrowStyle, PortIoType,
+    HorizontalAlign, LeftRightSide, LineStyle, PenWidth, PortArrowStyle, PortIoType,
     PowerObjectStyle, SheetStyle, SheetSymbolType, TextJustification,
 };
 
-use super::schlib_types::{
-    FootprintMap, Graphic, Parameter, Pin,
-};
+use super::schlib_types::{FootprintMap, Graphic, Parameter, Pin};
 
 // ── Top-level document ───────────────────────────────────────────────────────
 
@@ -93,119 +90,163 @@ pub struct Template {
 impl SchDocSheet {
     /// All components on the sheet.
     pub fn components(&self) -> Vec<&SchDocComponent> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::Component(c) => Some(c),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::Component(c) => Some(c),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Find a component by designator (case-sensitive).
     pub fn component(&self, designator: &str) -> Option<&SchDocComponent> {
-        self.components().into_iter().find(|c| c.designator == designator)
+        self.components()
+            .into_iter()
+            .find(|c| c.designator == designator)
     }
 
     /// All wires on the sheet.
     pub fn wires(&self) -> Vec<&Wire> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::Wire(w) => Some(w),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::Wire(w) => Some(w),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All buses on the sheet.
     pub fn buses(&self) -> Vec<&Bus> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::Bus(b) => Some(b),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::Bus(b) => Some(b),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All net labels on the sheet.
     pub fn net_labels(&self) -> Vec<&NetLabel> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::NetLabel(n) => Some(n),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::NetLabel(n) => Some(n),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All power objects on the sheet.
     pub fn power_objects(&self) -> Vec<&PowerObject> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::PowerObject(p) => Some(p),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::PowerObject(p) => Some(p),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All ports on the sheet.
     pub fn ports(&self) -> Vec<&Port> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::Port(p) => Some(p),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::Port(p) => Some(p),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All sheet symbols on the sheet.
     pub fn sheet_symbols(&self) -> Vec<&SheetSymbol> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::SheetSymbol(s) => Some(s),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::SheetSymbol(s) => Some(s),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All junctions on the sheet.
     pub fn junctions(&self) -> Vec<&Junction> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::Junction(j) => Some(j),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::Junction(j) => Some(j),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All no-connect markers on the sheet.
     pub fn no_connects(&self) -> Vec<&NoConnect> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::NoConnect(n) => Some(n),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::NoConnect(n) => Some(n),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All bus entries on the sheet.
     pub fn bus_entries(&self) -> Vec<&BusEntry> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::BusEntry(b) => Some(b),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::BusEntry(b) => Some(b),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All parameter sets on the sheet.
     pub fn parameter_sets(&self) -> Vec<&ParameterSet> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::ParameterSet(p) => Some(p),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::ParameterSet(p) => Some(p),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All notes on the sheet.
     pub fn notes(&self) -> Vec<&Note> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::Note(n) => Some(n),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::Note(n) => Some(n),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All sheet-level graphics (not owned by a component).
     pub fn graphics(&self) -> Vec<&Graphic> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::Graphic(g) => Some(g),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::Graphic(g) => Some(g),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All sheet-level parameters.
     pub fn parameters(&self) -> Vec<&Parameter> {
-        self.objects.iter().filter_map(|o| match o {
-            SheetObject::Parameter(p) => Some(p),
-            _ => None,
-        }).collect()
+        self.objects
+            .iter()
+            .filter_map(|o| match o {
+                SheetObject::Parameter(p) => Some(p),
+                _ => None,
+            })
+            .collect()
     }
 
     // ── Mutation methods ──────────────────────────────────────
@@ -344,10 +385,13 @@ pub enum ComponentChild {
 impl SchDocComponent {
     /// All pins in this component.
     pub fn pins(&self) -> Vec<&Pin> {
-        self.children.iter().filter_map(|c| match c {
-            ComponentChild::Pin(p) => Some(p),
-            _ => None,
-        }).collect()
+        self.children
+            .iter()
+            .filter_map(|c| match c {
+                ComponentChild::Pin(p) => Some(p),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Find a pin by designator.
@@ -357,10 +401,13 @@ impl SchDocComponent {
 
     /// All parameters in this component.
     pub fn parameters(&self) -> Vec<&Parameter> {
-        self.children.iter().filter_map(|c| match c {
-            ComponentChild::Parameter(p) => Some(p),
-            _ => None,
-        }).collect()
+        self.children
+            .iter()
+            .filter_map(|c| match c {
+                ComponentChild::Parameter(p) => Some(p),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Find a parameter by name.
@@ -370,18 +417,24 @@ impl SchDocComponent {
 
     /// All graphics in this component.
     pub fn graphics(&self) -> Vec<&Graphic> {
-        self.children.iter().filter_map(|c| match c {
-            ComponentChild::Graphic(g) => Some(g),
-            _ => None,
-        }).collect()
+        self.children
+            .iter()
+            .filter_map(|c| match c {
+                ComponentChild::Graphic(g) => Some(g),
+                _ => None,
+            })
+            .collect()
     }
 
     /// All footprint maps in this component.
     pub fn footprints(&self) -> Vec<&FootprintMap> {
-        self.children.iter().filter_map(|c| match c {
-            ComponentChild::FootprintMap(f) => Some(f),
-            _ => None,
-        }).collect()
+        self.children
+            .iter()
+            .filter_map(|c| match c {
+                ComponentChild::FootprintMap(f) => Some(f),
+                _ => None,
+            })
+            .collect()
     }
 }
 
@@ -537,10 +590,13 @@ pub struct SheetEntry {
 impl SheetSymbol {
     /// All entries in this sheet symbol.
     pub fn entries(&self) -> Vec<&SheetEntry> {
-        self.children.iter().filter_map(|c| match c {
-            SheetSymbolChild::Entry(e) => Some(e),
-            _ => None,
-        }).collect()
+        self.children
+            .iter()
+            .filter_map(|c| match c {
+                SheetSymbolChild::Entry(e) => Some(e),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Find an entry by name.
@@ -550,10 +606,13 @@ impl SheetSymbol {
 
     /// All parameters in this sheet symbol.
     pub fn parameters(&self) -> Vec<&Parameter> {
-        self.children.iter().filter_map(|c| match c {
-            SheetSymbolChild::Parameter(p) => Some(p),
-            _ => None,
-        }).collect()
+        self.children
+            .iter()
+            .filter_map(|c| match c {
+                SheetSymbolChild::Parameter(p) => Some(p),
+                _ => None,
+            })
+            .collect()
     }
 }
 

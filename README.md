@@ -23,7 +23,6 @@ This software is provided as-is without warranty. YOU area responsible for anyth
 - `altium-format-types`: domain types, enums, constants
 - `altium-format-derive`: proc-macro derives
 - `altium-format`: core parsers/serializers for Altium formats
-- `autopcb-spec`: spec DSL compiler, executor, and reconciler
 - `altium-cli`: command-line interface
 
 ## Current CLI commands
@@ -38,8 +37,9 @@ This software is provided as-is without warranty. YOU area responsible for anyth
 - `info <path>` — document summary
 - `query <path> "<AQL>"` — query with Altium Query Language
 - `inspect <pcbdoc> {summary,components,nets,board-outline,rules}`
-- `placement solve <spec> --target <pcbdoc>` — component placement solver
 - `cfb ls|dump|blocks|diff|cat ...` — CFB/OLE container inspection
+
+> **Note:** Placement and routing commands have moved to `autopcb-cli` in `~/cadatomic/autopcb/`.
 
 ### IntLib support
 

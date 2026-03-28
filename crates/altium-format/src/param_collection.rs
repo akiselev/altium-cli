@@ -58,7 +58,8 @@ impl ParameterCollection {
     pub(crate) fn set(&mut self, key: &str, value: String) {
         // Remove old entry (case-insensitive) then insert new.
         let key_upper = key.to_ascii_uppercase();
-        self.params.retain(|k, _| k.to_ascii_uppercase() != key_upper);
+        self.params
+            .retain(|k, _| k.to_ascii_uppercase() != key_upper);
         self.params.insert(key.to_owned(), value);
     }
 
@@ -343,7 +344,10 @@ impl ParameterCollection {
         let found = self.find_key(key).map(|k| k.to_owned());
         match found {
             Some(actual_key) => {
-                let value = self.params.shift_remove(&actual_key).expect("key found by find_key");
+                let value = self
+                    .params
+                    .shift_remove(&actual_key)
+                    .expect("key found by find_key");
                 T::from_param_value(&actual_key, &value)
             }
             None => Err(AltiumFormatError::MissingParam(key.to_owned())),
@@ -355,7 +359,10 @@ impl ParameterCollection {
         let found = self.find_key(key).map(|k| k.to_owned());
         match found {
             Some(actual_key) => {
-                let value = self.params.shift_remove(&actual_key).expect("key found by find_key");
+                let value = self
+                    .params
+                    .shift_remove(&actual_key)
+                    .expect("key found by find_key");
                 T::from_param_value(&actual_key, &value).map(Some)
             }
             None => Ok(None),
@@ -1113,9 +1120,7 @@ mod tests {
         params.push_str("|\0");
 
         let mut pc = ParameterCollection::from_bytes(params.as_bytes()).unwrap();
-        let points = pc
-            .remove_indexed_coords("LocationCount", "X", "Y")
-            .unwrap();
+        let points = pc.remove_indexed_coords("LocationCount", "X", "Y").unwrap();
         assert_eq!(points.len(), 52);
         // Check vertex 51 (first overflow)
         assert_eq!(points[50].x.to_internal(), 51 * 100_000);
@@ -1133,7 +1138,8 @@ mod tests {
         pc.insert("NAME", "test".to_owned());
         pc.insert("VALUE", "42".to_owned());
         let bytes = pc.to_bytes();
-        let s = std::str::from_utf8(&bytes[..bytes.len() - 1]).expect("to_bytes should produce valid UTF-8");
+        let s = std::str::from_utf8(&bytes[..bytes.len() - 1])
+            .expect("to_bytes should produce valid UTF-8");
         // Order must be: |RECORD=1|NAME=test|VALUE=42 (no trailing pipe)
         assert_eq!(s, "|RECORD=1|NAME=test|VALUE=42", "got: {s}");
     }

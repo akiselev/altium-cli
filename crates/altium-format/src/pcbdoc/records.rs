@@ -536,8 +536,11 @@ pub(crate) fn parse_wide_strings6_records(data: &[u8]) -> Result<Vec<WideString6
         }
 
         let index = u32::from_le_bytes(data[offset..offset + 4].try_into().expect("4-byte slice"));
-        let byte_len =
-            u32::from_le_bytes(data[offset + 4..offset + 8].try_into().expect("4-byte slice")) as usize;
+        let byte_len = u32::from_le_bytes(
+            data[offset + 4..offset + 8]
+                .try_into()
+                .expect("4-byte slice"),
+        ) as usize;
 
         if index != expected_index {
             let sample_len = (data.len() - offset).min(16);
@@ -714,9 +717,7 @@ pub(crate) fn parse_primitive_parameter_records(
         let header_size = reader.read_u32_le()? as usize;
         let header_payload = reader.read_bytes(header_size)?;
         let mut header_params = ParameterCollection::from_bytes(header_payload)
-            .with_context(|| {
-                format!("PrimitiveParameters group {group_index} component header")
-            })?;
+            .with_context(|| format!("PrimitiveParameters group {group_index} component header"))?;
 
         // Extract COUNT to know how many parameter blocks follow
         let count: usize = header_params.remove_required("COUNT").with_context(|| {
@@ -755,9 +756,8 @@ pub(crate) fn parse_indexed_param_records(data: &[u8]) -> Result<Vec<IndexedPara
         let index = reader.read_u32_le()?;
         let size = reader.read_u32_le()? as usize;
         let payload = reader.read_bytes(size)?;
-        let params = ParameterCollection::from_bytes(payload).with_context(|| {
-            format!("indexed param record {} (index={index})", out.len())
-        })?;
+        let params = ParameterCollection::from_bytes(payload)
+            .with_context(|| format!("indexed param record {} (index={index})", out.len()))?;
         out.push(IndexedParamRecord { index, params });
     }
 
@@ -774,9 +774,7 @@ pub(crate) fn parse_indexed_param_records(data: &[u8]) -> Result<Vec<IndexedPara
 ///
 /// Format: `[u32 len][header block]` optionally followed by
 /// `[u32 len][detail block]` × HIDDENPRIMITIVESCOUNT.
-pub(crate) fn parse_shared_union_param_records(
-    data: &[u8],
-) -> Result<Vec<SharedUnionParamGroup>> {
+pub(crate) fn parse_shared_union_param_records(data: &[u8]) -> Result<Vec<SharedUnionParamGroup>> {
     let mut reader = BinaryReader::new(data);
     let mut groups = Vec::new();
 
@@ -786,10 +784,8 @@ pub(crate) fn parse_shared_union_param_records(
         // Read header block
         let header_size = reader.read_u32_le()? as usize;
         let header_payload = reader.read_bytes(header_size)?;
-        let mut header_params =
-            ParameterCollection::from_bytes(header_payload).with_context(|| {
-                format!("SharedUnion group {group_index} header")
-            })?;
+        let mut header_params = ParameterCollection::from_bytes(header_payload)
+            .with_context(|| format!("SharedUnion group {group_index} header"))?;
 
         // HIDDENPRIMITIVESCOUNT indicates child detail blocks follow;
         // PRIMITIVESCOUNT uses inline REFnINDEX/REFnOBJID references (no child blocks);
@@ -804,10 +800,8 @@ pub(crate) fn parse_shared_union_param_records(
         for i in 0..count {
             let detail_size = reader.read_u32_le()? as usize;
             let detail_payload = reader.read_bytes(detail_size)?;
-            let params =
-                ParameterCollection::from_bytes(detail_payload).with_context(|| {
-                    format!("SharedUnion group {group_index}, detail block {i}")
-                })?;
+            let params = ParameterCollection::from_bytes(detail_payload)
+                .with_context(|| format!("SharedUnion group {group_index}, detail block {i}"))?;
             hidden_primitives.push(params);
         }
 

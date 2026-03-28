@@ -1,24 +1,22 @@
 //! Write path: convert public API types → internal SchLib records.
 
-use crate::api::schlib_types::*;
+use crate::Result;
 use crate::api::sch_common::{
-    default_base, pin_to_internal, parameter_to_internal, graphic_to_record,
+    default_base, graphic_to_record, parameter_to_internal, pin_to_internal,
 };
+use crate::api::schlib_types::*;
 use crate::sch_records::{
-    SchComponent, SchRecord,
-    SchPrimitiveBase, SchDesignator,
-    SchImplementationList, SchImplementation, SchImplementationMap, SchMapDefiner,
+    SchComponent, SchDesignator, SchImplementation, SchImplementationList, SchImplementationMap,
+    SchMapDefiner, SchPrimitiveBase, SchRecord,
 };
 use crate::schlib::SchLibComponentIndex;
 use crate::util::generate_unique_id;
-use crate::Result;
 
 use altium_format_types::color::Color;
 use altium_format_types::common::{ComponentKind, RotationBy90};
 use altium_format_types::coord::CoordPoint;
 use altium_format_types::sch::{
-    ParameterReadOnlyState, ParameterType,
-    TextJustification, TextHorzAnchor, TextVertAnchor,
+    ParameterReadOnlyState, ParameterType, TextHorzAnchor, TextJustification, TextVertAnchor,
 };
 
 /// Convert a public `Component` to internal representation.
@@ -26,7 +24,12 @@ use altium_format_types::sch::{
 /// Returns: (SchComponent header, records vec, additional_records vec, SchLibComponentIndex)
 pub(crate) fn component_to_internal(
     comp: &Component,
-) -> Result<(SchComponent, Vec<SchRecord>, Vec<SchRecord>, SchLibComponentIndex)> {
+) -> Result<(
+    SchComponent,
+    Vec<SchRecord>,
+    Vec<SchRecord>,
+    SchLibComponentIndex,
+)> {
     let mut records = Vec::new();
 
     // Compute body rectangle bounds and pin extents for text placement.
@@ -242,7 +245,12 @@ pub(crate) fn component_to_internal(
 pub(crate) fn update_component_internal(
     comp: &Component,
     existing: &SchComponent,
-) -> Result<(SchComponent, Vec<SchRecord>, Vec<SchRecord>, SchLibComponentIndex)> {
+) -> Result<(
+    SchComponent,
+    Vec<SchRecord>,
+    Vec<SchRecord>,
+    SchLibComponentIndex,
+)> {
     let (mut sch_comp, records, additional, index) = component_to_internal(comp)?;
 
     // Preserve format-internal fields from the existing component that the API doesn't expose

@@ -7,6 +7,7 @@ use std::path::Path;
 
 use altium_format_types::constants::component::DESIGNATOR;
 use altium_format_types::constants::file_headers::SCH_SHEET_BINARY_HEADER_V50;
+use altium_format_types::constants::parsing::INSTRUCTION_EXTRA_OBJECT_INDEX;
 use altium_format_types::constants::pin::{
     DEF_VALUE, DESIGNATOR_CUSTOM_COLOR, DESIGNATOR_CUSTOM_FONT_ID,
     DESIGNATOR_CUSTOM_POSITION_MARGIN, NAME_CUSTOM_COLOR, NAME_CUSTOM_FONT_ID,
@@ -19,7 +20,6 @@ use altium_format_types::constants::pin::{
     SWAP_ID_PAIR, SWAP_ID_PART, SWAP_ID_PIN, SYMBOL, SYMBOL_INNER, SYMBOL_INNER_EDGE,
     SYMBOL_LINE_WIDTH, SYMBOL_OUTER, SYMBOL_OUTER_EDGE,
 };
-use altium_format_types::constants::parsing::INSTRUCTION_EXTRA_OBJECT_INDEX;
 use altium_format_types::constants::record_structure::{HEADER, RECORD, RECORD_EX, WEIGHT};
 use altium_format_types::constants::record_structure::{
     OWNER_INDEX, OWNER_PART_DISPLAY_MODE, OWNER_PART_ID, UNIQUE_ID,
@@ -57,12 +57,12 @@ use crate::cfb_document::CfbDocument;
 use crate::embedded_object::{parse_embedded_object_stream, serialize_embedded_object_stream};
 use crate::param_collection::ParameterCollection;
 use crate::param_value::ToParamValue;
-use crate::util::generate_unique_id;
 use crate::sch_records::{SchPin, SchPrimitiveBase, SchRecord, SchSheet, serialize_record};
 use crate::schdoc::dispatch::dispatch_record_type;
 use crate::schdoc::fileheader::parse_fileheader_stream;
 use crate::schdoc::types::{SchDocEmbeddedObject, SchDocHeaderMetadata};
 use crate::tracked_cfb::TrackedCfbDocument;
+use crate::util::generate_unique_id;
 use crate::{AltiumFormatError, Result, ResultExt};
 
 pub use types::SchDoc;
@@ -188,10 +188,8 @@ impl SchDoc {
     /// preserved from the existing records by matching on `unique_id` or
     /// `designator`.
     pub fn update_sheet(&mut self, sheet: &crate::api::SchDocSheet) -> Result<()> {
-        let (mut new_records, additional_records) = crate::api::schdoc_write::sheet_to_internal(
-            sheet,
-            Some(&self.records),
-        )?;
+        let (mut new_records, additional_records) =
+            crate::api::schdoc_write::sheet_to_internal(sheet, Some(&self.records))?;
 
         // sheet_to_internal emits records starting at index 1 (Template onward).
         // Record 0 must be the Sheet record (RECORD=31) with updated fonts.
@@ -200,16 +198,20 @@ impl SchDoc {
         let mut old_records_iter = old_records.into_iter();
         let sheet_record = match old_records_iter.next() {
             Some(SchRecord::Sheet(mut s)) => {
-                s.fonts = sheet.fonts.iter().map(|f| SchFont {
-                    id: f.id,
-                    name: f.name.clone(),
-                    size: f.size,
-                    rotation: f.rotation,
-                    bold: f.bold,
-                    italic: f.italic,
-                    underline: f.underline,
-                    strikeout: f.strikeout,
-                }).collect();
+                s.fonts = sheet
+                    .fonts
+                    .iter()
+                    .map(|f| SchFont {
+                        id: f.id,
+                        name: f.name.clone(),
+                        size: f.size,
+                        rotation: f.rotation,
+                        bold: f.bold,
+                        italic: f.italic,
+                        underline: f.underline,
+                        strikeout: f.strikeout,
+                    })
+                    .collect();
                 SchRecord::Sheet(s)
             }
             other => {
@@ -230,16 +232,20 @@ impl SchDoc {
                         union_index: 0,
                         style_id: 0,
                     },
-                    fonts: sheet.fonts.iter().map(|f| SchFont {
-                        id: f.id,
-                        name: f.name.clone(),
-                        size: f.size,
-                        rotation: f.rotation,
-                        bold: f.bold,
-                        italic: f.italic,
-                        underline: f.underline,
-                        strikeout: f.strikeout,
-                    }).collect(),
+                    fonts: sheet
+                        .fonts
+                        .iter()
+                        .map(|f| SchFont {
+                            id: f.id,
+                            name: f.name.clone(),
+                            size: f.size,
+                            rotation: f.rotation,
+                            bold: f.bold,
+                            italic: f.italic,
+                            underline: f.underline,
+                            strikeout: f.strikeout,
+                        })
+                        .collect(),
                     display_settings: SchDisplaySettings::default(),
                     template_vault_guid: String::new(),
                     template_item_guid: String::new(),
@@ -277,7 +283,6 @@ impl SchDoc {
     }
 
     fn parse_from_cfb(mut tracked: TrackedCfbDocument) -> Result<Self> {
-
         let (root_storages, root_streams) = tracked
             .list_entries("/")
             .context("listing root CFB entries")?;
@@ -1245,7 +1250,10 @@ mod tests {
     fn schdoc_blank_sheet_api() {
         let doc = SchDoc::new_blank_ad26();
         let sheet = doc.sheet().expect("blank doc sheet() must succeed");
-        assert!(!sheet.fonts.is_empty(), "blank doc should have at least one font");
+        assert!(
+            !sheet.fonts.is_empty(),
+            "blank doc should have at least one font"
+        );
         assert!(sheet.objects.is_empty(), "blank doc should have no objects");
         assert!(sheet.snap_grid_on, "snap grid should default to on");
         assert!(sheet.visible_grid_on, "visible grid should default to on");

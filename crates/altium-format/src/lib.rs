@@ -17,22 +17,23 @@ mod param_value;
 #[allow(dead_code)]
 mod pcb_binary_stream;
 #[allow(dead_code)]
-mod pcb_primitives_serialize;
-#[allow(dead_code)]
 mod pcb_file_header;
+#[allow(dead_code)]
+mod pcb_primitives_serialize;
 #[allow(dead_code)]
 mod prefixed_param_stream;
 #[allow(dead_code)]
-mod shared_union;
-pub(crate) mod util;
-#[allow(dead_code)]
 mod sch_records;
+#[allow(dead_code)]
+mod shared_union;
 pub mod test_utils;
 #[allow(dead_code)]
 mod tracked_cfb;
+pub(crate) mod util;
 #[allow(dead_code)]
 mod wide_strings_tlv;
 
+pub mod api;
 #[allow(dead_code)]
 pub mod document;
 #[allow(dead_code)]
@@ -42,7 +43,6 @@ pub mod pcbdoc;
 #[allow(dead_code)]
 pub mod pcblib;
 pub mod project;
-pub mod api;
 pub mod render;
 #[allow(dead_code)]
 pub mod schdoc;

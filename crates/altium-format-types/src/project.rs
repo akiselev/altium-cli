@@ -644,7 +644,10 @@ mod tests {
 
     #[test]
     fn error_level_matrix_chars() {
-        assert_eq!(ErrorLevel::from_matrix_char('N'), Some(ErrorLevel::NoReport));
+        assert_eq!(
+            ErrorLevel::from_matrix_char('N'),
+            Some(ErrorLevel::NoReport)
+        );
         assert_eq!(ErrorLevel::from_matrix_char('W'), Some(ErrorLevel::Warning));
         assert_eq!(ErrorLevel::from_matrix_char('E'), Some(ErrorLevel::Error));
         assert_eq!(ErrorLevel::from_matrix_char('F'), Some(ErrorLevel::Fatal));
@@ -682,9 +685,14 @@ mod tests {
 
     #[test]
     fn doc_annotation_scope_from_str_display() {
-        assert_eq!("All".parse::<DocAnnotationScope>().unwrap(), DocAnnotationScope::All);
         assert_eq!(
-            "Ignore Selected Parts".parse::<DocAnnotationScope>().unwrap(),
+            "All".parse::<DocAnnotationScope>().unwrap(),
+            DocAnnotationScope::All
+        );
+        assert_eq!(
+            "Ignore Selected Parts"
+                .parse::<DocAnnotationScope>()
+                .unwrap(),
             DocAnnotationScope::IgnoreSelected
         );
         assert_eq!(
@@ -694,13 +702,22 @@ mod tests {
         assert!("unknown".parse::<DocAnnotationScope>().is_err());
 
         assert_eq!(DocAnnotationScope::All.to_string(), "All");
-        assert_eq!(DocAnnotationScope::IgnoreSelected.to_string(), "Ignore Selected Parts");
-        assert_eq!(DocAnnotationScope::OnlySelected.to_string(), "Only Selected Parts");
+        assert_eq!(
+            DocAnnotationScope::IgnoreSelected.to_string(),
+            "Ignore Selected Parts"
+        );
+        assert_eq!(
+            DocAnnotationScope::OnlySelected.to_string(),
+            "Only Selected Parts"
+        );
     }
 
     #[test]
     fn doc_auto_net_class_scope_from_str_display() {
-        assert_eq!("None".parse::<DocAutoNetClassScope>().unwrap(), DocAutoNetClassScope::None);
+        assert_eq!(
+            "None".parse::<DocAutoNetClassScope>().unwrap(),
+            DocAutoNetClassScope::None
+        );
         assert_eq!(
             "Local Nets Only".parse::<DocAutoNetClassScope>().unwrap(),
             DocAutoNetClassScope::LocalOnly
@@ -712,7 +729,10 @@ mod tests {
         assert!("unknown".parse::<DocAutoNetClassScope>().is_err());
 
         assert_eq!(DocAutoNetClassScope::None.to_string(), "None");
-        assert_eq!(DocAutoNetClassScope::LocalOnly.to_string(), "Local Nets Only");
+        assert_eq!(
+            DocAutoNetClassScope::LocalOnly.to_string(),
+            "Local Nets Only"
+        );
         assert_eq!(DocAutoNetClassScope::All.to_string(), "All Nets");
     }
 

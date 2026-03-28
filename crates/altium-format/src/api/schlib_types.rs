@@ -8,8 +8,8 @@ use altium_format_types::color::Color;
 use altium_format_types::common::{ComponentKind, RotationBy90};
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::sch::{
-    HorizontalAlign, IeeeSymbol, LineShape, LineStyle, ParameterReadOnlyState,
-    ParameterType, PenWidth, PinElectricalType, StdLogicState, TextJustification,
+    HorizontalAlign, IeeeSymbol, LineShape, LineStyle, ParameterReadOnlyState, ParameterType,
+    PenWidth, PinElectricalType, StdLogicState, TextJustification,
 };
 
 use crate::param_value::SchAngle;

@@ -5,12 +5,10 @@
 
 use altium_format_types::{Coord, PcbObjectId, ViaStructureType};
 
-use crate::binary_io::BinaryWriter;
-use crate::pcblib::{
-    PcbComponentBody, PcbPad, PcbPrimitiveCommon, PcbRegion, PcbVia, PolySegment,
-};
-use crate::pcblib::primitives::component_body::{encode_identifier, format_scientific_float};
 use crate::Result;
+use crate::binary_io::BinaryWriter;
+use crate::pcblib::primitives::component_body::{encode_identifier, format_scientific_float};
+use crate::pcblib::{PcbComponentBody, PcbPad, PcbPrimitiveCommon, PcbRegion, PcbVia, PolySegment};
 
 /// Converts a `ParameterCollection` to bytes without a leading `|` pipe.
 ///
@@ -112,7 +110,11 @@ pub(crate) fn serialize_via(p: &PcbVia) -> Vec<u8> {
     w.write_u8(p.solder_mask_expansion_from_hole_edge as u8);
     w.write_bytes(&[0u8; 22]); // reserved_218_239
     w.write_u8(p.paste_mask_override as u8);
-    let linked_byte = if p.solder_mask_expansion_linked { 0x01u8 } else { 0x00u8 };
+    let linked_byte = if p.solder_mask_expansion_linked {
+        0x01u8
+    } else {
+        0x00u8
+    };
     w.write_u8(linked_byte);
     w.write_coord(p.solder_mask_expansion_back);
 
@@ -353,11 +355,21 @@ pub(crate) fn serialize_pad(p: &PcbPad) -> Result<Vec<Vec<u8>>> {
         }
     }
 
-    Ok(vec![sub0.finish(), sub1.finish(), sub2.finish(), sub3.finish(), sub4.finish(), sub5.finish()])
+    Ok(vec![
+        sub0.finish(),
+        sub1.finish(),
+        sub2.finish(),
+        sub3.finish(),
+        sub4.finish(),
+        sub5.finish(),
+    ])
 }
 
 /// Write a legacy contour (f64 coordinate pairs).
-pub(crate) fn write_legacy_contour(w: &mut BinaryWriter, points: &[altium_format_types::CoordPoint]) {
+pub(crate) fn write_legacy_contour(
+    w: &mut BinaryWriter,
+    points: &[altium_format_types::CoordPoint],
+) {
     w.write_i32_le(points.len() as i32);
     for v in points {
         w.write_f64_le(v.x.to_internal() as f64);
@@ -430,8 +442,14 @@ fn write_shape_contour_params(
             params.insert(&format!("{prefix}VY{i}"), format_mil(seg.vertex.y));
             params.insert(&format!("{prefix}CX{i}"), format_mil(seg.center.x));
             params.insert(&format!("{prefix}CY{i}"), format_mil(seg.center.y));
-            params.insert(&format!("{prefix}SA{i}"), format_scientific_float(seg.angle1));
-            params.insert(&format!("{prefix}EA{i}"), format_scientific_float(seg.angle2));
+            params.insert(
+                &format!("{prefix}SA{i}"),
+                format_scientific_float(seg.angle1),
+            );
+            params.insert(
+                &format!("{prefix}EA{i}"),
+                format_scientific_float(seg.angle2),
+            );
             params.insert(&format!("{prefix}R{i}"), format_mil(seg.radius));
         }
     }
@@ -450,7 +468,14 @@ pub(crate) fn serialize_region(p: &PcbRegion) -> Vec<u8> {
     params.insert("SUBPOLYINDEX", p.subpoly_index.to_string());
     params.insert("UNIONINDEX", p.union_index.to_string());
     params.insert("ARCRESOLUTION", format_mil(p.arc_resolution));
-    params.insert("ISSHAPEBASED", if p.is_shape_based { "TRUE".to_owned() } else { "FALSE".to_owned() });
+    params.insert(
+        "ISSHAPEBASED",
+        if p.is_shape_based {
+            "TRUE".to_owned()
+        } else {
+            "FALSE".to_owned()
+        },
+    );
     params.insert("CAVITYHEIGHT", format_mil(p.cavity_height));
     if p.keepout_restrictions != 0 {
         params.insert("KEEPOUTRESTRICTIONS", p.keepout_restrictions.to_string());
@@ -459,10 +484,24 @@ pub(crate) fn serialize_region(p: &PcbRegion) -> Vec<u8> {
         params.insert("LAYER", p.layer.clone());
     }
     if p.keepout || !p.object_kind.is_empty() {
-        params.insert("KEEPOUT", if p.keepout { "TRUE".to_owned() } else { "FALSE".to_owned() });
+        params.insert(
+            "KEEPOUT",
+            if p.keepout {
+                "TRUE".to_owned()
+            } else {
+                "FALSE".to_owned()
+            },
+        );
     }
     if p.is_board_cutout || !p.object_kind.is_empty() {
-        params.insert("ISBOARDCUTOUT", if p.is_board_cutout { "TRUE".to_owned() } else { "FALSE".to_owned() });
+        params.insert(
+            "ISBOARDCUTOUT",
+            if p.is_board_cutout {
+                "TRUE".to_owned()
+            } else {
+                "FALSE".to_owned()
+            },
+        );
     }
     if p.pad_index != -1 {
         params.insert("PADINDEX", p.pad_index.to_string());
@@ -474,7 +513,14 @@ pub(crate) fn serialize_region(p: &PcbRegion) -> Vec<u8> {
         params.insert("BENDINGLINECOUNT", p.bending_line_count.to_string());
     }
     if p.locked_3d || !p.object_kind.is_empty() {
-        params.insert("LOCKED3D", if p.locked_3d { "TRUE".to_owned() } else { "FALSE".to_owned() });
+        params.insert(
+            "LOCKED3D",
+            if p.locked_3d {
+                "TRUE".to_owned()
+            } else {
+                "FALSE".to_owned()
+            },
+        );
     }
     if !p.layer_stack_id.is_empty() {
         params.insert("LAYERSTACKID", p.layer_stack_id.clone());
@@ -507,7 +553,14 @@ pub(crate) fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
     params.insert("SUBPOLYINDEX", p.subpoly_index.to_string());
     params.insert("UNIONINDEX", p.union_index.to_string());
     params.insert("ARCRESOLUTION", format_mil(p.arc_resolution));
-    params.insert("ISSHAPEBASED", if p.is_shape_based { "TRUE".to_owned() } else { "FALSE".to_owned() });
+    params.insert(
+        "ISSHAPEBASED",
+        if p.is_shape_based {
+            "TRUE".to_owned()
+        } else {
+            "FALSE".to_owned()
+        },
+    );
     params.insert("CAVITYHEIGHT", format_mil(p.cavity_height));
     params.insert("STANDOFFHEIGHT", format_mil(p.standoff_height));
     params.insert("OVERALLHEIGHT", format_mil(p.overall_height));
@@ -520,13 +573,23 @@ pub(crate) fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
     params.insert("TEXTURECENTERY", format_mil(p.texture_center_y));
     params.insert("TEXTURESIZEX", format_mil(p.texture_size_x));
     params.insert("TEXTURESIZEY", format_mil(p.texture_size_y));
-    params.insert("TEXTUREROTATION", format_scientific_float(p.texture_rotation));
+    params.insert(
+        "TEXTUREROTATION",
+        format_scientific_float(p.texture_rotation),
+    );
     if p.body_override_color {
         params.insert("BODYOVERRIDECOLOR", "TRUE".to_owned());
     }
     params.insert("MODELID", p.model_guid.clone());
     params.insert("MODEL.CHECKSUM", p.model_checksum.clone());
-    params.insert("MODEL.EMBED", if p.model_embed { "TRUE".to_owned() } else { "FALSE".to_owned() });
+    params.insert(
+        "MODEL.EMBED",
+        if p.model_embed {
+            "TRUE".to_owned()
+        } else {
+            "FALSE".to_owned()
+        },
+    );
     params.insert("MODEL.NAME", p.model_name.clone());
     params.insert("MODEL.2D.X", format_mil(p.model_2d_x));
     params.insert("MODEL.2D.Y", format_mil(p.model_2d_y));
@@ -585,7 +648,10 @@ pub(crate) fn serialize_component_body(p: &PcbComponentBody) -> Vec<u8> {
 /// Dispatch shared primitive serialization by object ID.
 /// Returns (object_id, list_of_subrecord_bytes).
 /// Only handles shared types (Via, Pad, Region, ComponentBody).
-pub(crate) fn serialize_shared_primitive(obj: PcbObjectId, prim: &crate::pcblib::PcbPrimitive) -> Result<Vec<Vec<u8>>> {
+pub(crate) fn serialize_shared_primitive(
+    obj: PcbObjectId,
+    prim: &crate::pcblib::PcbPrimitive,
+) -> Result<Vec<Vec<u8>>> {
     match prim {
         crate::pcblib::PcbPrimitive::Via(p) => Ok(vec![serialize_via(p)]),
         crate::pcblib::PcbPrimitive::Pad(p) => serialize_pad(p),

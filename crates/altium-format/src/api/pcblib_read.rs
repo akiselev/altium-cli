@@ -3,8 +3,8 @@
 use crate::api::pcb_common::{contour_to_pcb_contour, extract_pad_stack};
 use crate::api::pcblib_types::*;
 use crate::pcblib::{
-    PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPrimitive, PcbRegion,
-    PcbText, PcbTrack, PcbVia,
+    PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPrimitive, PcbRegion, PcbText,
+    PcbTrack, PcbVia,
 };
 use altium_format_types::color::Color;
 use altium_format_types::pcb::{LayerRef, V7Layer};
@@ -119,8 +119,7 @@ fn fill_from_internal(f: &PcbFill) -> FillGraphic {
 
 fn region_from_internal(r: &PcbRegion) -> RegionGraphic {
     let layer = if !r.v7_layer.is_empty() {
-        LayerRef::from_string_name(&r.v7_layer)
-            .unwrap_or_else(|| LayerRef::from_v6(r.common.layer))
+        LayerRef::from_string_name(&r.v7_layer).unwrap_or_else(|| LayerRef::from_v6(r.common.layer))
     } else {
         LayerRef::from_v6(r.common.layer)
     };
@@ -173,8 +172,7 @@ fn via_from_internal(v: &PcbVia) -> ViaGraphic {
 
 fn body_from_internal(b: &PcbComponentBody) -> ComponentBodyGraphic {
     let layer = if !b.v7_layer.is_empty() {
-        LayerRef::from_string_name(&b.v7_layer)
-            .unwrap_or_else(|| LayerRef::from_v6(b.common.layer))
+        LayerRef::from_string_name(&b.v7_layer).unwrap_or_else(|| LayerRef::from_v6(b.common.layer))
     } else {
         LayerRef::from_v6(b.common.layer)
     };

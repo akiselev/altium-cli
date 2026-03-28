@@ -13,33 +13,31 @@
 
 use std::collections::HashMap;
 
+use crate::Result;
 use crate::api::sch_common::{
-    default_base, pin_to_internal, parameter_to_internal, graphic_to_record,
+    default_base, graphic_to_record, parameter_to_internal, pin_to_internal,
 };
 use crate::api::schdoc_types::*;
 use crate::sch_records::{
-    SchRecord, SchPrimitiveBase,
-    SchWire as InternalWire, SchBus as InternalBus,
-    SchNetLabel as InternalNetLabel, SchPowerObject as InternalPowerObject,
-    SchPort as InternalPort, SchJunction as InternalJunction,
-    SchNoConnect as InternalNoConnect, SchBusEntry as InternalBusEntry,
-    SchSheetSymbol as InternalSheetSymbol, SchSheetEntry as InternalSheetEntry,
-    SchSheetName as InternalSheetName, SchSheetFileName as InternalSheetFileName,
-    SchParameterSet as InternalParameterSet, SchNote as InternalNote,
-    SchProbe as InternalProbe, SchCompileMask as InternalCompileMask,
-    SchBlanket as InternalBlanket, SchHarnessConnector as InternalHarnessConnector,
-    SchComponent, SchDesignator, SchTemplate,
-    SchImplementationList, SchImplementation, SchImplementationMap, SchMapDefiner,
+    SchBlanket as InternalBlanket, SchBus as InternalBus, SchBusEntry as InternalBusEntry,
+    SchCompileMask as InternalCompileMask, SchComponent, SchDesignator,
+    SchHarnessConnector as InternalHarnessConnector, SchImplementation, SchImplementationList,
+    SchImplementationMap, SchJunction as InternalJunction, SchMapDefiner,
+    SchNetLabel as InternalNetLabel, SchNoConnect as InternalNoConnect, SchNote as InternalNote,
+    SchParameterSet as InternalParameterSet, SchPort as InternalPort,
+    SchPowerObject as InternalPowerObject, SchPrimitiveBase, SchProbe as InternalProbe, SchRecord,
+    SchSheetEntry as InternalSheetEntry, SchSheetFileName as InternalSheetFileName,
+    SchSheetName as InternalSheetName, SchSheetSymbol as InternalSheetSymbol, SchTemplate,
+    SchWire as InternalWire,
 };
 use crate::util::generate_unique_id;
-use crate::Result;
 
 use altium_format_types::color::Color;
 use altium_format_types::common::RotationBy90;
 use altium_format_types::coord::CoordPoint;
 use altium_format_types::sch::{
-    LeftRightSide, ParameterReadOnlyState, ParameterType,
-    PenWidth, TextHorzAnchor, TextJustification, TextVertAnchor,
+    LeftRightSide, ParameterReadOnlyState, ParameterType, PenWidth, TextHorzAnchor,
+    TextJustification, TextVertAnchor,
 };
 
 // ── UniqueId index ───────────────────────────────────────────────────────────
@@ -263,9 +261,7 @@ fn emit_sheet_object(
 // `locked`, `symbol_type`, etc. would be reset to defaults on every save.
 
 fn preserve_wire_fields(rec: &mut SchRecord, uid: &str, index: &HashMap<&str, &SchRecord>) {
-    if let (SchRecord::Wire(new), Some(SchRecord::Wire(old))) =
-        (rec, index.get(uid).copied())
-    {
+    if let (SchRecord::Wire(new), Some(SchRecord::Wire(old))) = (rec, index.get(uid).copied()) {
         new.underline_color = old.underline_color;
         new.assigned_interface = old.assigned_interface.clone();
         new.assigned_interface_signal = old.assigned_interface_signal.clone();
@@ -273,9 +269,7 @@ fn preserve_wire_fields(rec: &mut SchRecord, uid: &str, index: &HashMap<&str, &S
 }
 
 fn preserve_bus_fields(rec: &mut SchRecord, uid: &str, index: &HashMap<&str, &SchRecord>) {
-    if let (SchRecord::Bus(new), Some(SchRecord::Bus(old))) =
-        (rec, index.get(uid).copied())
-    {
+    if let (SchRecord::Bus(new), Some(SchRecord::Bus(old))) = (rec, index.get(uid).copied()) {
         new.underline_color = old.underline_color;
         new.assigned_interface = old.assigned_interface.clone();
         new.assigned_interface_signal = old.assigned_interface_signal.clone();
@@ -291,9 +285,7 @@ fn preserve_power_object_fields(rec: &mut SchRecord, uid: &str, index: &HashMap<
 }
 
 fn preserve_port_fields(rec: &mut SchRecord, uid: &str, index: &HashMap<&str, &SchRecord>) {
-    if let (SchRecord::Port(new), Some(SchRecord::Port(old))) =
-        (rec, index.get(uid).copied())
-    {
+    if let (SchRecord::Port(new), Some(SchRecord::Port(old))) = (rec, index.get(uid).copied()) {
         new.object_definition_id = old.object_definition_id.clone();
     }
 }
@@ -317,14 +309,16 @@ fn preserve_no_connect_fields(rec: &mut SchRecord, uid: &str, index: &HashMap<&s
 }
 
 fn preserve_note_fields(rec: &mut SchRecord, uid: &str, index: &HashMap<&str, &SchRecord>) {
-    if let (SchRecord::Note(new), Some(SchRecord::Note(old))) =
-        (rec, index.get(uid).copied())
-    {
+    if let (SchRecord::Note(new), Some(SchRecord::Note(old))) = (rec, index.get(uid).copied()) {
         new.line_width = old.line_width;
     }
 }
 
-fn preserve_signal_harness_fields(rec: &mut SchRecord, uid: &str, index: &HashMap<&str, &SchRecord>) {
+fn preserve_signal_harness_fields(
+    rec: &mut SchRecord,
+    uid: &str,
+    index: &HashMap<&str, &SchRecord>,
+) {
     if let (SchRecord::SignalHarness(new), Some(SchRecord::SignalHarness(old))) =
         (rec, index.get(uid).copied())
     {
@@ -404,7 +398,11 @@ fn emit_component(
         symbol_revision_guid: String::new(),
         generic_component_template_guid: String::new(),
         has_only_current_part_info: false,
-        all_pin_count: comp.children.iter().filter(|c| matches!(c, ComponentChild::Pin(_))).count() as i32,
+        all_pin_count: comp
+            .children
+            .iter()
+            .filter(|c| matches!(c, ComponentChild::Pin(_)))
+            .count() as i32,
         key_component_unique_id: String::new(),
         component_kind: comp.component_kind,
         component_kind_version2: comp.component_kind,
@@ -664,9 +662,7 @@ fn emit_sheet_symbol(
     for child in &ss.children {
         match child {
             SheetSymbolChild::Entry(e) => {
-                let mut rec = SchRecord::SheetEntry(
-                    sheet_entry_to_internal(e, sym_final_idx),
-                );
+                let mut rec = SchRecord::SheetEntry(sheet_entry_to_internal(e, sym_final_idx));
                 try_preserve_base(&mut rec, &e.unique_id, uid_index);
                 records.push(rec);
             }
@@ -755,9 +751,7 @@ fn emit_harness_connector(
     for child in &hc.children {
         match child {
             HarnessChild::Entry(e) => {
-                let mut rec = SchRecord::HarnessEntry(
-                    sheet_entry_to_internal(e, hc_final_idx),
-                );
+                let mut rec = SchRecord::HarnessEntry(sheet_entry_to_internal(e, hc_final_idx));
                 try_preserve_base(&mut rec, &e.unique_id, uid_index);
                 records.push(rec);
             }
@@ -807,7 +801,11 @@ fn wire_to_internal(w: &Wire) -> SchRecord {
         line_width: w.line_width,
         line_style: w.line_style,
         vertices: w.vertices.clone(),
-        unique_id: if w.unique_id.is_empty() { generate_unique_id() } else { w.unique_id.clone() },
+        unique_id: if w.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            w.unique_id.clone()
+        },
         underline_color: Color::BLACK,
         assigned_interface: String::new(),
         assigned_interface_signal: String::new(),
@@ -823,7 +821,11 @@ fn bus_to_internal(b: &Bus) -> SchRecord {
         color: b.color,
         line_width: b.line_width,
         vertices: b.vertices.clone(),
-        unique_id: if b.unique_id.is_empty() { generate_unique_id() } else { b.unique_id.clone() },
+        unique_id: if b.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            b.unique_id.clone()
+        },
         underline_color: Color::BLACK,
         assigned_interface: String::new(),
         assigned_interface_signal: String::new(),
@@ -843,7 +845,11 @@ fn net_label_to_internal(n: &NetLabel) -> SchRecord {
         font_id: n.font_id,
         text: n.text.clone(),
         is_mirrored: n.is_mirrored,
-        unique_id: if n.unique_id.is_empty() { generate_unique_id() } else { n.unique_id.clone() },
+        unique_id: if n.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            n.unique_id.clone()
+        },
     })
 }
 
@@ -862,7 +868,11 @@ fn power_object_to_internal(p: &PowerObject) -> SchRecord {
         orientation: p.orientation,
         font_id: p.font_id,
         is_cross_sheet_connector: p.is_cross_sheet_connector,
-        unique_id: if p.unique_id.is_empty() { generate_unique_id() } else { p.unique_id.clone() },
+        unique_id: if p.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            p.unique_id.clone()
+        },
     })
 }
 
@@ -883,7 +893,11 @@ fn port_to_internal(p: &Port) -> SchRecord {
         text_color: p.text_color,
         font_id: p.font_id,
         alignment: p.alignment,
-        unique_id: if p.unique_id.is_empty() { generate_unique_id() } else { p.unique_id.clone() },
+        unique_id: if p.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            p.unique_id.clone()
+        },
         harness_type: p.harness_type.clone(),
         border_width: p.border_width,
         auto_size: p.auto_size,
@@ -902,7 +916,11 @@ fn junction_to_internal(j: &Junction) -> SchRecord {
         size: PenWidth::Zero,
         color: j.color,
         locked: true,
-        unique_id: if j.unique_id.is_empty() { generate_unique_id() } else { j.unique_id.clone() },
+        unique_id: if j.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            j.unique_id.clone()
+        },
     })
 }
 
@@ -920,7 +938,11 @@ fn no_connect_to_internal(n: &NoConnect) -> SchRecord {
         suppress_all: n.suppress_all,
         error_kind_set_to_suppress: String::new(),
         connection_pairs_to_suppress: String::new(),
-        unique_id: if n.unique_id.is_empty() { generate_unique_id() } else { n.unique_id.clone() },
+        unique_id: if n.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            n.unique_id.clone()
+        },
     })
 }
 
@@ -930,7 +952,11 @@ fn bus_entry_to_internal(b: &BusEntry) -> SchRecord {
             owner_index: 0,
             ..default_base()
         },
-        unique_id: if b.unique_id.is_empty() { generate_unique_id() } else { b.unique_id.clone() },
+        unique_id: if b.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            b.unique_id.clone()
+        },
         location: b.location,
         corner: b.corner,
         line_width: b.line_width,
@@ -960,7 +986,11 @@ fn note_to_internal(n: &Note) -> SchRecord {
         text_margin: n.text_margin,
         collapsed: n.collapsed,
         author: n.author.clone(),
-        unique_id: if n.unique_id.is_empty() { generate_unique_id() } else { n.unique_id.clone() },
+        unique_id: if n.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            n.unique_id.clone()
+        },
     })
 }
 
@@ -974,7 +1004,11 @@ fn probe_to_internal(p: &Probe) -> SchRecord {
         color: p.color,
         orientation: p.orientation,
         name: p.name.clone(),
-        unique_id: if p.unique_id.is_empty() { generate_unique_id() } else { p.unique_id.clone() },
+        unique_id: if p.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            p.unique_id.clone()
+        },
     })
 }
 
@@ -984,7 +1018,11 @@ fn compile_mask_to_internal(c: &CompileMask) -> SchRecord {
             owner_index: 0,
             ..default_base()
         },
-        unique_id: if c.unique_id.is_empty() { generate_unique_id() } else { c.unique_id.clone() },
+        unique_id: if c.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            c.unique_id.clone()
+        },
         location: c.location,
         corner: c.corner,
         color: c.color,
@@ -1009,7 +1047,11 @@ fn blanket_to_internal(b: &Blanket) -> SchRecord {
         line_width: b.line_width,
         vertices: b.vertices.clone(),
         collapsed: b.collapsed,
-        unique_id: if b.unique_id.is_empty() { generate_unique_id() } else { b.unique_id.clone() },
+        unique_id: if b.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            b.unique_id.clone()
+        },
     })
 }
 
@@ -1022,7 +1064,11 @@ fn signal_harness_to_internal(sh: &SignalHarness) -> SchRecord {
         color: sh.color,
         line_width: sh.line_width,
         vertices: sh.vertices.clone(),
-        unique_id: if sh.unique_id.is_empty() { generate_unique_id() } else { sh.unique_id.clone() },
+        unique_id: if sh.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            sh.unique_id.clone()
+        },
         underline_color: Color::BLACK,
         assigned_interface: String::new(),
         assigned_interface_signal: String::new(),
@@ -1048,7 +1094,11 @@ fn sheet_entry_to_internal(e: &SheetEntry, owner_index: i32) -> InternalSheetEnt
         io_type: e.io_type,
         style: e.style,
         arrow_kind: String::new(),
-        unique_id: if e.unique_id.is_empty() { generate_unique_id() } else { e.unique_id.clone() },
+        unique_id: if e.unique_id.is_empty() {
+            generate_unique_id()
+        } else {
+            e.unique_id.clone()
+        },
     }
 }
 

@@ -329,12 +329,18 @@ pub fn draw_calls_to_svg_with_padding(calls: &[DrawCall], padding_mils: f64) -> 
                     );
                 match font.h_align {
                     TextHAlign::Left => {} // SVG default
-                    TextHAlign::Center => { elem = elem.set("text-anchor", "middle"); }
-                    TextHAlign::Right => { elem = elem.set("text-anchor", "end"); }
+                    TextHAlign::Center => {
+                        elem = elem.set("text-anchor", "middle");
+                    }
+                    TextHAlign::Right => {
+                        elem = elem.set("text-anchor", "end");
+                    }
                 }
                 match font.v_align {
                     TextVAlign::Baseline => {} // SVG default
-                    TextVAlign::Middle => { elem = elem.set("dominant-baseline", "central"); }
+                    TextVAlign::Middle => {
+                        elem = elem.set("dominant-baseline", "central");
+                    }
                 }
                 write!(body, "{elem}").unwrap();
             }

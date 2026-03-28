@@ -281,7 +281,8 @@ impl WidthRuleData {
         for prefix in &signal_layer_prefixes() {
             let min_w: Option<MilCoord> = params.remove_optional(&format!("{prefix}_MINWIDTH"))?;
             let max_w: Option<MilCoord> = params.remove_optional(&format!("{prefix}_MAXWIDTH"))?;
-            let pref_w: Option<MilCoord> = params.remove_optional(&format!("{prefix}_PREFWIDTH"))?;
+            let pref_w: Option<MilCoord> =
+                params.remove_optional(&format!("{prefix}_PREFWIDTH"))?;
             if min_w.is_some() || max_w.is_some() || pref_w.is_some() {
                 per_layer.push(WidthLayerOverride {
                     prefix: prefix.to_string(),
@@ -292,16 +293,19 @@ impl WidthRuleData {
             }
         }
 
-        let check_connected_copper: bool = params.remove_with_default("CHECKCONNECTEDCOPPER", false)?;
+        let check_connected_copper: bool =
+            params.remove_with_default("CHECKCONNECTEDCOPPER", false)?;
 
         // Impedance fields.
         let impedance_driven: Option<bool> = params.remove_optional("IMPEDANCEDRIVEN")?;
         let min_imp: Option<f64> = params.remove_optional("MINIMP")?;
         let max_imp: Option<f64> = params.remove_optional("MAXIMP")?;
         let fav_imp: Option<f64> = params.remove_optional("FAVIMP")?;
-        let impedance_profile_driven: Option<bool> = params.remove_optional("IMPEDANCEPROFILEDRIVEN")?;
+        let impedance_profile_driven: Option<bool> =
+            params.remove_optional("IMPEDANCEPROFILEDRIVEN")?;
         let impedance_profile_id: Option<String> = params.remove_optional("IMPEDANCEPROFILEID")?;
-        let impedance_profile_value: Option<f64> = params.remove_optional("IMPEDANCEPROFILEVALUE")?;
+        let impedance_profile_value: Option<f64> =
+            params.remove_optional("IMPEDANCEPROFILEVALUE")?;
 
         // Per-substack overrides: SUBSTACK{n} holds a GUID; consume GUID-keyed layer overrides.
         let mut substack_overrides = Vec::new();
@@ -309,7 +313,9 @@ impl WidthRuleData {
         loop {
             let substack_key = format!("SUBSTACK{n}");
             let substack_id: Option<String> = params.remove_optional(&substack_key)?;
-            let Some(substack_id) = substack_id else { break };
+            let Some(substack_id) = substack_id else {
+                break;
+            };
 
             // Consume all {LAYER}_{GUID}_MINWIDTH/MAXWIDTH/PREFWIDTH for this GUID.
             let guid_upper = substack_id.to_ascii_uppercase();
@@ -367,7 +373,10 @@ impl WidthRuleData {
             }
         }
 
-        params.insert("CHECKCONNECTEDCOPPER", self.check_connected_copper.to_param_value());
+        params.insert(
+            "CHECKCONNECTEDCOPPER",
+            self.check_connected_copper.to_param_value(),
+        );
 
         if let Some(v) = self.impedance_driven {
             params.insert("IMPEDANCEDRIVEN", v.to_param_value());
@@ -397,13 +406,22 @@ impl WidthRuleData {
             let guid_upper = ss.substack_id.to_ascii_uppercase();
             for (prefix, min_w, max_w, pref_w) in &ss.layer_overrides {
                 if let Some(v) = min_w {
-                    params.insert(&format!("{prefix}_{guid_upper}_MINWIDTH"), v.to_param_value());
+                    params.insert(
+                        &format!("{prefix}_{guid_upper}_MINWIDTH"),
+                        v.to_param_value(),
+                    );
                 }
                 if let Some(v) = max_w {
-                    params.insert(&format!("{prefix}_{guid_upper}_MAXWIDTH"), v.to_param_value());
+                    params.insert(
+                        &format!("{prefix}_{guid_upper}_MAXWIDTH"),
+                        v.to_param_value(),
+                    );
                 }
                 if let Some(v) = pref_w {
-                    params.insert(&format!("{prefix}_{guid_upper}_PREFWIDTH"), v.to_param_value());
+                    params.insert(
+                        &format!("{prefix}_{guid_upper}_PREFWIDTH"),
+                        v.to_param_value(),
+                    );
                 }
             }
         }
@@ -496,10 +514,12 @@ pub(crate) struct PowerPlaneConnectStyleRuleData {
 impl PowerPlaneConnectStyleRuleData {
     fn from_params(params: &mut ParameterCollection) -> Result<Self> {
         // Simple top-level fields (may be absent when per-type overrides are used).
-        let connect_style: Option<PlaneConnectionStyle> = params.remove_optional("PLANECONNECTSTYLE")?;
+        let connect_style: Option<PlaneConnectionStyle> =
+            params.remove_optional("PLANECONNECTSTYLE")?;
         let relief_expansion: Option<MilCoord> = params.remove_optional("RELIEFEXPANSION")?;
         let relief_entries: Option<i32> = params.remove_optional("RELIEFENTRIES")?;
-        let relief_conductor_width: Option<MilCoord> = params.remove_optional("RELIEFCONDUCTORWIDTH")?;
+        let relief_conductor_width: Option<MilCoord> =
+            params.remove_optional("RELIEFCONDUCTORWIDTH")?;
         let relief_air_gap: Option<MilCoord> = params.remove_optional("RELIEFAIRGAP")?;
 
         // Per-type overrides: PAD.* and VIA.*
@@ -516,7 +536,8 @@ impl PowerPlaneConnectStyleRuleData {
                     connect_style: cs,
                     relief_expansion: params.remove_with_default(&exp_key, MilCoord::default())?,
                     relief_entries: params.remove_with_default(&ent_key, 4)?,
-                    relief_conductor_width: params.remove_with_default(&cw_key, MilCoord::default())?,
+                    relief_conductor_width: params
+                        .remove_with_default(&cw_key, MilCoord::default())?,
                     relief_air_gap: params.remove_with_default(&ag_key, MilCoord::default())?,
                 });
             }
@@ -549,11 +570,26 @@ impl PowerPlaneConnectStyleRuleData {
             params.insert("RELIEFAIRGAP", v.to_param_value());
         }
         for ov in &self.type_overrides {
-            params.insert(&format!("{}.PLANECONNECTSTYLE", ov.prefix), ov.connect_style.to_param_value());
-            params.insert(&format!("{}.RELIEFEXPANSION", ov.prefix), ov.relief_expansion.to_param_value());
-            params.insert(&format!("{}.RELIEFENTRIES", ov.prefix), ov.relief_entries.to_param_value());
-            params.insert(&format!("{}.RELIEFCONDUCTORWIDTH", ov.prefix), ov.relief_conductor_width.to_param_value());
-            params.insert(&format!("{}.RELIEFAIRGAP", ov.prefix), ov.relief_air_gap.to_param_value());
+            params.insert(
+                &format!("{}.PLANECONNECTSTYLE", ov.prefix),
+                ov.connect_style.to_param_value(),
+            );
+            params.insert(
+                &format!("{}.RELIEFEXPANSION", ov.prefix),
+                ov.relief_expansion.to_param_value(),
+            );
+            params.insert(
+                &format!("{}.RELIEFENTRIES", ov.prefix),
+                ov.relief_entries.to_param_value(),
+            );
+            params.insert(
+                &format!("{}.RELIEFCONDUCTORWIDTH", ov.prefix),
+                ov.relief_conductor_width.to_param_value(),
+            );
+            params.insert(
+                &format!("{}.RELIEFAIRGAP", ov.prefix),
+                ov.relief_air_gap.to_param_value(),
+            );
         }
     }
 }
@@ -790,18 +826,15 @@ pub(crate) struct PadTypePolygonConnect {
 impl PolygonConnectStyleRuleData {
     fn from_params(params: &mut ParameterCollection) -> Result<Self> {
         // Try simple top-level fields first.
-        let connect_style: Option<PlaneConnectionStyle> =
-            params.remove_optional("CONNECTSTYLE")?;
+        let connect_style: Option<PlaneConnectionStyle> = params.remove_optional("CONNECTSTYLE")?;
         let relief_conductor_width: Option<MilCoord> =
             params.remove_optional("RELIEFCONDUCTORWIDTH")?;
         let relief_entries: Option<i32> = params.remove_optional("RELIEFENTRIES")?;
         let polygon_relief_angle: Option<PolygonReliefAngle> =
             params.remove_optional("POLYGONRELIEFANGLE")?;
         let air_gap_width: Option<MilCoord> = params.remove_optional("AIRGAPWIDTH")?;
-        let conductor_by_pad_edge: Option<bool> =
-            params.remove_optional("CONDUCTORBYPADEDGE")?;
-        let enable_min_distance: Option<bool> =
-            params.remove_optional("ENABLEMINDISTANCE")?;
+        let conductor_by_pad_edge: Option<bool> = params.remove_optional("CONDUCTORBYPADEDGE")?;
+        let enable_min_distance: Option<bool> = params.remove_optional("ENABLEMINDISTANCE")?;
         let min_distance: Option<MilCoord> = params.remove_optional("MINDISTANCE")?;
 
         // Try per-pad-type prefixed fields (THPAD., SMDPAD., VIA.).
@@ -824,8 +857,7 @@ impl PolygonConnectStyleRuleData {
                     relief_entries: params.remove_with_default(&re_key, 4)?,
                     polygon_relief_angle: params
                         .remove_with_default(&ra_key, PolygonReliefAngle::Angle90)?,
-                    air_gap_width: params
-                        .remove_with_default(&ag_key, MilCoord::default())?,
+                    air_gap_width: params.remove_with_default(&ag_key, MilCoord::default())?,
                     conductor_by_pad_edge: params.remove_with_default(&cb_key, false)?,
                     enable_min_distance: params.remove_with_default(&em_key, false)?,
                     min_distance: params.remove_with_default(
@@ -875,14 +907,38 @@ impl PolygonConnectStyleRuleData {
             params.insert("MINDISTANCE", v.to_param_value());
         }
         for ov in &self.pad_type_overrides {
-            params.insert(&format!("{}.CONNECTSTYLE", ov.prefix), ov.connect_style.to_param_value());
-            params.insert(&format!("{}.RELIEFCONDUCTORWIDTH", ov.prefix), ov.relief_conductor_width.to_param_value());
-            params.insert(&format!("{}.RELIEFENTRIES", ov.prefix), ov.relief_entries.to_param_value());
-            params.insert(&format!("{}.POLYGONRELIEFANGLE", ov.prefix), ov.polygon_relief_angle.to_param_value());
-            params.insert(&format!("{}.AIRGAPWIDTH", ov.prefix), ov.air_gap_width.to_param_value());
-            params.insert(&format!("{}.CONDUCTORBYPADEDGE", ov.prefix), ov.conductor_by_pad_edge.to_param_value());
-            params.insert(&format!("{}.ENABLEMINDISTANCE", ov.prefix), ov.enable_min_distance.to_param_value());
-            params.insert(&format!("{}.MINDISTANCE", ov.prefix), ov.min_distance.to_param_value());
+            params.insert(
+                &format!("{}.CONNECTSTYLE", ov.prefix),
+                ov.connect_style.to_param_value(),
+            );
+            params.insert(
+                &format!("{}.RELIEFCONDUCTORWIDTH", ov.prefix),
+                ov.relief_conductor_width.to_param_value(),
+            );
+            params.insert(
+                &format!("{}.RELIEFENTRIES", ov.prefix),
+                ov.relief_entries.to_param_value(),
+            );
+            params.insert(
+                &format!("{}.POLYGONRELIEFANGLE", ov.prefix),
+                ov.polygon_relief_angle.to_param_value(),
+            );
+            params.insert(
+                &format!("{}.AIRGAPWIDTH", ov.prefix),
+                ov.air_gap_width.to_param_value(),
+            );
+            params.insert(
+                &format!("{}.CONDUCTORBYPADEDGE", ov.prefix),
+                ov.conductor_by_pad_edge.to_param_value(),
+            );
+            params.insert(
+                &format!("{}.ENABLEMINDISTANCE", ov.prefix),
+                ov.enable_min_distance.to_param_value(),
+            );
+            params.insert(
+                &format!("{}.MINDISTANCE", ov.prefix),
+                ov.min_distance.to_param_value(),
+            );
         }
     }
 }
@@ -931,8 +987,10 @@ pub(crate) struct ConfinementConstraintRuleData {
 
 impl ConfinementConstraintRuleData {
     fn from_params(params: &mut ParameterCollection) -> Result<Self> {
-        let confinement_style: altium_format_types::ConfinementStyle =
-            params.remove_with_default("CONFINEMENTSTYLE", altium_format_types::ConfinementStyle::ConfineIn)?;
+        let confinement_style: altium_format_types::ConfinementStyle = params.remove_with_default(
+            "CONFINEMENTSTYLE",
+            altium_format_types::ConfinementStyle::ConfineIn,
+        )?;
         let lock_components: bool = params.remove_with_default("LOCKCOMPONENTS", false)?;
         let format_copy: bool = params.remove_with_default("FORMATCOPY", false)?;
 
@@ -943,15 +1001,28 @@ impl ConfinementConstraintRuleData {
             let kind: Option<u32> = params.remove_optional(&kind_key)?;
             let Some(kind) = kind else { break };
 
-            let vx: MilCoord = params.remove_with_default(&format!("VX{n}"), MilCoord::default())?;
-            let vy: MilCoord = params.remove_with_default(&format!("VY{n}"), MilCoord::default())?;
-            let cx: MilCoord = params.remove_with_default(&format!("CX{n}"), MilCoord::default())?;
-            let cy: MilCoord = params.remove_with_default(&format!("CY{n}"), MilCoord::default())?;
+            let vx: MilCoord =
+                params.remove_with_default(&format!("VX{n}"), MilCoord::default())?;
+            let vy: MilCoord =
+                params.remove_with_default(&format!("VY{n}"), MilCoord::default())?;
+            let cx: MilCoord =
+                params.remove_with_default(&format!("CX{n}"), MilCoord::default())?;
+            let cy: MilCoord =
+                params.remove_with_default(&format!("CY{n}"), MilCoord::default())?;
             let sa: String = params.remove_with_default(&format!("SA{n}"), String::new())?;
             let ea: String = params.remove_with_default(&format!("EA{n}"), String::new())?;
             let r: MilCoord = params.remove_with_default(&format!("R{n}"), MilCoord::default())?;
 
-            vertices.push(ConfinementVertex { kind, vx, vy, cx, cy, sa, ea, r });
+            vertices.push(ConfinementVertex {
+                kind,
+                vx,
+                vy,
+                cx,
+                cy,
+                sa,
+                ea,
+                r,
+            });
             n += 1;
         }
 
@@ -1205,7 +1276,15 @@ pub(crate) struct DiffPairsRoutingRuleData {
 #[derive(Debug)]
 pub(crate) struct DiffPairsSubstackOverride {
     pub substack_id: String,
-    pub layer_overrides: Vec<(String, Option<MilCoord>, Option<MilCoord>, Option<MilCoord>, Option<MilCoord>, Option<MilCoord>, Option<MilCoord>)>,
+    pub layer_overrides: Vec<(
+        String,
+        Option<MilCoord>,
+        Option<MilCoord>,
+        Option<MilCoord>,
+        Option<MilCoord>,
+        Option<MilCoord>,
+        Option<MilCoord>,
+    )>,
 }
 
 #[derive(Debug)]
@@ -1223,7 +1302,8 @@ impl DiffPairsRoutingRuleData {
     fn from_params(params: &mut ParameterCollection) -> Result<Self> {
         let min_limit: MilCoord = params.remove_required("MINLIMIT")?;
         let max_limit: MilCoord = params.remove_required("MAXLIMIT")?;
-        let most_freq_gap: MilCoord = params.remove_with_default("MOSTFREQGAP", MilCoord::default())?;
+        let most_freq_gap: MilCoord =
+            params.remove_with_default("MOSTFREQGAP", MilCoord::default())?;
         let max_uncoupled_length: MilCoord =
             params.remove_with_default("MAXUNCOUPLEDLENGTH", MilCoord::default())?;
 
@@ -1264,9 +1344,11 @@ impl DiffPairsRoutingRuleData {
             }
         }
 
-        let impedance_profile_driven: Option<bool> = params.remove_optional("IMPEDANCEPROFILEDRIVEN")?;
+        let impedance_profile_driven: Option<bool> =
+            params.remove_optional("IMPEDANCEPROFILEDRIVEN")?;
         let impedance_profile_id: Option<String> = params.remove_optional("IMPEDANCEPROFILEID")?;
-        let impedance_profile_value: Option<f64> = params.remove_optional("IMPEDANCEPROFILEVALUE")?;
+        let impedance_profile_value: Option<f64> =
+            params.remove_optional("IMPEDANCEPROFILEVALUE")?;
 
         // Impedance-driven fields (non-profile).
         // From IPCB_DifferentialPairsRoutingRule3: GetState_ImpedanceDriven/Min/Max/Favored.
@@ -1283,7 +1365,9 @@ impl DiffPairsRoutingRuleData {
         loop {
             let substack_key = format!("SUBSTACK{n}");
             let substack_id: Option<String> = params.remove_optional(&substack_key)?;
-            let Some(substack_id) = substack_id else { break };
+            let Some(substack_id) = substack_id else {
+                break;
+            };
 
             let guid_upper = substack_id.to_ascii_uppercase();
             let mut layer_overrides = Vec::new();
@@ -1300,14 +1384,29 @@ impl DiffPairsRoutingRuleData {
                 let min_g: Option<MilCoord> = params.remove_optional(&min_g_key)?;
                 let max_g: Option<MilCoord> = params.remove_optional(&max_g_key)?;
                 let pref_g: Option<MilCoord> = params.remove_optional(&pref_g_key)?;
-                if min_w.is_some() || max_w.is_some() || pref_w.is_some()
-                    || min_g.is_some() || max_g.is_some() || pref_g.is_some()
+                if min_w.is_some()
+                    || max_w.is_some()
+                    || pref_w.is_some()
+                    || min_g.is_some()
+                    || max_g.is_some()
+                    || pref_g.is_some()
                 {
-                    layer_overrides.push((prefix.to_string(), min_w, max_w, pref_w, min_g, max_g, pref_g));
+                    layer_overrides.push((
+                        prefix.to_string(),
+                        min_w,
+                        max_w,
+                        pref_w,
+                        min_g,
+                        max_g,
+                        pref_g,
+                    ));
                 }
             }
 
-            substack_overrides.push(DiffPairsSubstackOverride { substack_id, layer_overrides });
+            substack_overrides.push(DiffPairsSubstackOverride {
+                substack_id,
+                layer_overrides,
+            });
             n += 1;
         }
 
@@ -1334,7 +1433,10 @@ impl DiffPairsRoutingRuleData {
         params.insert("MINLIMIT", self.min_limit.to_param_value());
         params.insert("MAXLIMIT", self.max_limit.to_param_value());
         params.insert("MOSTFREQGAP", self.most_freq_gap.to_param_value());
-        params.insert("MAXUNCOUPLEDLENGTH", self.max_uncoupled_length.to_param_value());
+        params.insert(
+            "MAXUNCOUPLEDLENGTH",
+            self.max_uncoupled_length.to_param_value(),
+        );
 
         for ov in &self.per_layer {
             if let Some(v) = &ov.min_width {
@@ -1391,13 +1493,22 @@ impl DiffPairsRoutingRuleData {
             let guid_upper = ss.substack_id.to_ascii_uppercase();
             for (prefix, min_w, max_w, pref_w, min_g, max_g, pref_g) in &ss.layer_overrides {
                 if let Some(v) = min_w {
-                    params.insert(&format!("{prefix}_{guid_upper}_MINWIDTH"), v.to_param_value());
+                    params.insert(
+                        &format!("{prefix}_{guid_upper}_MINWIDTH"),
+                        v.to_param_value(),
+                    );
                 }
                 if let Some(v) = max_w {
-                    params.insert(&format!("{prefix}_{guid_upper}_MAXWIDTH"), v.to_param_value());
+                    params.insert(
+                        &format!("{prefix}_{guid_upper}_MAXWIDTH"),
+                        v.to_param_value(),
+                    );
                 }
                 if let Some(v) = pref_w {
-                    params.insert(&format!("{prefix}_{guid_upper}_PREFWIDTH"), v.to_param_value());
+                    params.insert(
+                        &format!("{prefix}_{guid_upper}_PREFWIDTH"),
+                        v.to_param_value(),
+                    );
                 }
                 if let Some(v) = min_g {
                     params.insert(&format!("{prefix}_{guid_upper}_MINGAP"), v.to_param_value());
@@ -1406,7 +1517,10 @@ impl DiffPairsRoutingRuleData {
                     params.insert(&format!("{prefix}_{guid_upper}_MAXGAP"), v.to_param_value());
                 }
                 if let Some(v) = pref_g {
-                    params.insert(&format!("{prefix}_{guid_upper}_PREFGAP"), v.to_param_value());
+                    params.insert(
+                        &format!("{prefix}_{guid_upper}_PREFGAP"),
+                        v.to_param_value(),
+                    );
                 }
             }
         }
@@ -1514,8 +1628,7 @@ pub(crate) struct RoutingNeckDownRuleData {
 
 impl RoutingNeckDownRuleData {
     fn from_params(params: &mut ParameterCollection) -> Result<Self> {
-        let neck_down_percentage: f64 =
-            params.remove_with_default("NECKDOWNPERCENTAGE", 0f64)?;
+        let neck_down_percentage: f64 = params.remove_with_default("NECKDOWNPERCENTAGE", 0f64)?;
 
         let mut per_layer_max_length = Vec::new();
         for prefix in &signal_layer_prefixes() {
@@ -1536,7 +1649,10 @@ impl RoutingNeckDownRuleData {
     }
 
     pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
-        params.insert("NECKDOWNPERCENTAGE", self.neck_down_percentage.to_param_value());
+        params.insert(
+            "NECKDOWNPERCENTAGE",
+            self.neck_down_percentage.to_param_value(),
+        );
         for entry in &self.per_layer_max_length {
             if let Some(v) = &entry.max_length {
                 params.insert(&format!("{}_MAXLENGTH", entry.prefix), v.to_param_value());
@@ -1574,75 +1690,199 @@ pub(crate) fn parse_rule(prefix: u16, params: &mut ParameterCollection) -> Resul
     let base = PcbRuleBase::from_params(params)?;
     let kind_data = match base.rule_kind {
         RuleKind::Clearance => PcbRuleKindData::Clearance(ClearanceRuleData::from_params(params)?),
-        RuleKind::ParallelSegment => PcbRuleKindData::ParallelSegment(ParallelSegmentRuleData::from_params(params)?),
+        RuleKind::ParallelSegment => {
+            PcbRuleKindData::ParallelSegment(ParallelSegmentRuleData::from_params(params)?)
+        }
         RuleKind::Width => PcbRuleKindData::Width(WidthRuleData::from_params(params)?),
         RuleKind::Length => PcbRuleKindData::Length(LengthRuleData::from_params(params)?),
-        RuleKind::MatchedLengths => PcbRuleKindData::MatchedLengths(MatchedLengthsRuleData::from_params(params)?),
-        RuleKind::DaisyChainStubLength => PcbRuleKindData::DaisyChainStubLength(DaisyChainStubLengthRuleData::from_params(params)?),
-        RuleKind::PowerPlaneConnectStyle => PcbRuleKindData::PowerPlaneConnectStyle(PowerPlaneConnectStyleRuleData::from_params(params)?),
-        RuleKind::RoutingTopology => PcbRuleKindData::RoutingTopology(RoutingTopologyRuleData::from_params(params)?),
-        RuleKind::RoutingPriority => PcbRuleKindData::RoutingPriority(RoutingPriorityRuleData::from_params(params)?),
-        RuleKind::RoutingLayers => PcbRuleKindData::RoutingLayers(RoutingLayersRuleData::from_params(params)?),
-        RuleKind::RoutingCornerStyle => PcbRuleKindData::RoutingCornerStyle(RoutingCornerStyleRuleData::from_params(params)?),
-        RuleKind::RoutingViaStyle => PcbRuleKindData::RoutingViaStyle(RoutingViaStyleRuleData::from_params(params)?),
-        RuleKind::PowerPlaneClearance => PcbRuleKindData::PowerPlaneClearance(PowerPlaneClearanceRuleData::from_params(params)?),
-        RuleKind::SolderMaskExpansion => PcbRuleKindData::SolderMaskExpansion(SolderMaskExpansionRuleData::from_params(params)?),
-        RuleKind::PasteMaskExpansion => PcbRuleKindData::PasteMaskExpansion(PasteMaskExpansionRuleData::from_params(params)?),
-        RuleKind::ShortCircuit => PcbRuleKindData::ShortCircuit(ShortCircuitRuleData::from_params(params)?),
-        RuleKind::BrokenNets => PcbRuleKindData::BrokenNets(BrokenNetsRuleData::from_params(params)?),
-        RuleKind::ViasUnderSmd => PcbRuleKindData::ViasUnderSmd(ViasUnderSmdRuleData::from_params(params)?),
-        RuleKind::MaximumViaCount => PcbRuleKindData::MaximumViaCount(MaximumViaCountRuleData::from_params(params)?),
-        RuleKind::MinimumAnnularRing => PcbRuleKindData::MinimumAnnularRing(MinimumAnnularRingRuleData::from_params(params)?),
-        RuleKind::PolygonConnectStyle => PcbRuleKindData::PolygonConnectStyle(PolygonConnectStyleRuleData::from_params(params)?),
-        RuleKind::AcuteAngle => PcbRuleKindData::AcuteAngle(AcuteAngleRuleData::from_params(params)?),
-        RuleKind::ConfinementConstraint => PcbRuleKindData::ConfinementConstraint(ConfinementConstraintRuleData::from_params(params)?),
-        RuleKind::SmdToCorner => PcbRuleKindData::SmdToCorner(SmdToCornerRuleData::from_params(params)?),
-        RuleKind::ComponentClearance => PcbRuleKindData::ComponentClearance(ComponentClearanceRuleData::from_params(params)?),
-        RuleKind::ComponentRotations => PcbRuleKindData::ComponentRotations(ComponentRotationsRuleData::from_params(params)?),
-        RuleKind::PermittedLayers => PcbRuleKindData::PermittedLayers(PermittedLayersRuleData::from_params(params)?),
-        RuleKind::NetsToIgnore => PcbRuleKindData::NetsToIgnore(EmptyRuleData::from_params(params)?),
-        RuleKind::SignalStimulus => PcbRuleKindData::SignalStimulus(SignalStimulusRuleData::from_params(params)?),
-        RuleKind::OvershootFallingEdge => PcbRuleKindData::OvershootFallingEdge(OvershootUndershootRuleData::from_params(params)?),
-        RuleKind::OvershootRisingEdge => PcbRuleKindData::OvershootRisingEdge(OvershootUndershootRuleData::from_params(params)?),
-        RuleKind::UndershootFallingEdge => PcbRuleKindData::UndershootFallingEdge(OvershootUndershootRuleData::from_params(params)?),
-        RuleKind::UndershootRisingEdge => PcbRuleKindData::UndershootRisingEdge(OvershootUndershootRuleData::from_params(params)?),
-        RuleKind::MaxMinImpedance => PcbRuleKindData::MaxMinImpedance(MaxMinImpedanceRuleData::from_params(params)?),
-        RuleKind::SignalTopValue => PcbRuleKindData::SignalTopValue(SignalValueRuleData::from_params(params)?),
-        RuleKind::SignalBaseValue => PcbRuleKindData::SignalBaseValue(SignalValueRuleData::from_params(params)?),
-        RuleKind::FlightTimeRisingEdge => PcbRuleKindData::FlightTimeRisingEdge(FlightTimeRuleData::from_params(params)?),
-        RuleKind::FlightTimeFallingEdge => PcbRuleKindData::FlightTimeFallingEdge(FlightTimeRuleData::from_params(params)?),
+        RuleKind::MatchedLengths => {
+            PcbRuleKindData::MatchedLengths(MatchedLengthsRuleData::from_params(params)?)
+        }
+        RuleKind::DaisyChainStubLength => PcbRuleKindData::DaisyChainStubLength(
+            DaisyChainStubLengthRuleData::from_params(params)?,
+        ),
+        RuleKind::PowerPlaneConnectStyle => PcbRuleKindData::PowerPlaneConnectStyle(
+            PowerPlaneConnectStyleRuleData::from_params(params)?,
+        ),
+        RuleKind::RoutingTopology => {
+            PcbRuleKindData::RoutingTopology(RoutingTopologyRuleData::from_params(params)?)
+        }
+        RuleKind::RoutingPriority => {
+            PcbRuleKindData::RoutingPriority(RoutingPriorityRuleData::from_params(params)?)
+        }
+        RuleKind::RoutingLayers => {
+            PcbRuleKindData::RoutingLayers(RoutingLayersRuleData::from_params(params)?)
+        }
+        RuleKind::RoutingCornerStyle => {
+            PcbRuleKindData::RoutingCornerStyle(RoutingCornerStyleRuleData::from_params(params)?)
+        }
+        RuleKind::RoutingViaStyle => {
+            PcbRuleKindData::RoutingViaStyle(RoutingViaStyleRuleData::from_params(params)?)
+        }
+        RuleKind::PowerPlaneClearance => {
+            PcbRuleKindData::PowerPlaneClearance(PowerPlaneClearanceRuleData::from_params(params)?)
+        }
+        RuleKind::SolderMaskExpansion => {
+            PcbRuleKindData::SolderMaskExpansion(SolderMaskExpansionRuleData::from_params(params)?)
+        }
+        RuleKind::PasteMaskExpansion => {
+            PcbRuleKindData::PasteMaskExpansion(PasteMaskExpansionRuleData::from_params(params)?)
+        }
+        RuleKind::ShortCircuit => {
+            PcbRuleKindData::ShortCircuit(ShortCircuitRuleData::from_params(params)?)
+        }
+        RuleKind::BrokenNets => {
+            PcbRuleKindData::BrokenNets(BrokenNetsRuleData::from_params(params)?)
+        }
+        RuleKind::ViasUnderSmd => {
+            PcbRuleKindData::ViasUnderSmd(ViasUnderSmdRuleData::from_params(params)?)
+        }
+        RuleKind::MaximumViaCount => {
+            PcbRuleKindData::MaximumViaCount(MaximumViaCountRuleData::from_params(params)?)
+        }
+        RuleKind::MinimumAnnularRing => {
+            PcbRuleKindData::MinimumAnnularRing(MinimumAnnularRingRuleData::from_params(params)?)
+        }
+        RuleKind::PolygonConnectStyle => {
+            PcbRuleKindData::PolygonConnectStyle(PolygonConnectStyleRuleData::from_params(params)?)
+        }
+        RuleKind::AcuteAngle => {
+            PcbRuleKindData::AcuteAngle(AcuteAngleRuleData::from_params(params)?)
+        }
+        RuleKind::ConfinementConstraint => PcbRuleKindData::ConfinementConstraint(
+            ConfinementConstraintRuleData::from_params(params)?,
+        ),
+        RuleKind::SmdToCorner => {
+            PcbRuleKindData::SmdToCorner(SmdToCornerRuleData::from_params(params)?)
+        }
+        RuleKind::ComponentClearance => {
+            PcbRuleKindData::ComponentClearance(ComponentClearanceRuleData::from_params(params)?)
+        }
+        RuleKind::ComponentRotations => {
+            PcbRuleKindData::ComponentRotations(ComponentRotationsRuleData::from_params(params)?)
+        }
+        RuleKind::PermittedLayers => {
+            PcbRuleKindData::PermittedLayers(PermittedLayersRuleData::from_params(params)?)
+        }
+        RuleKind::NetsToIgnore => {
+            PcbRuleKindData::NetsToIgnore(EmptyRuleData::from_params(params)?)
+        }
+        RuleKind::SignalStimulus => {
+            PcbRuleKindData::SignalStimulus(SignalStimulusRuleData::from_params(params)?)
+        }
+        RuleKind::OvershootFallingEdge => {
+            PcbRuleKindData::OvershootFallingEdge(OvershootUndershootRuleData::from_params(params)?)
+        }
+        RuleKind::OvershootRisingEdge => {
+            PcbRuleKindData::OvershootRisingEdge(OvershootUndershootRuleData::from_params(params)?)
+        }
+        RuleKind::UndershootFallingEdge => PcbRuleKindData::UndershootFallingEdge(
+            OvershootUndershootRuleData::from_params(params)?,
+        ),
+        RuleKind::UndershootRisingEdge => {
+            PcbRuleKindData::UndershootRisingEdge(OvershootUndershootRuleData::from_params(params)?)
+        }
+        RuleKind::MaxMinImpedance => {
+            PcbRuleKindData::MaxMinImpedance(MaxMinImpedanceRuleData::from_params(params)?)
+        }
+        RuleKind::SignalTopValue => {
+            PcbRuleKindData::SignalTopValue(SignalValueRuleData::from_params(params)?)
+        }
+        RuleKind::SignalBaseValue => {
+            PcbRuleKindData::SignalBaseValue(SignalValueRuleData::from_params(params)?)
+        }
+        RuleKind::FlightTimeRisingEdge => {
+            PcbRuleKindData::FlightTimeRisingEdge(FlightTimeRuleData::from_params(params)?)
+        }
+        RuleKind::FlightTimeFallingEdge => {
+            PcbRuleKindData::FlightTimeFallingEdge(FlightTimeRuleData::from_params(params)?)
+        }
         RuleKind::LayerStack => PcbRuleKindData::LayerStack(EmptyRuleData::from_params(params)?),
-        RuleKind::MaxSlopeRisingEdge => PcbRuleKindData::MaxSlopeRisingEdge(SlopeRuleData::from_params(params)?),
-        RuleKind::MaxSlopeFallingEdge => PcbRuleKindData::MaxSlopeFallingEdge(SlopeRuleData::from_params(params)?),
-        RuleKind::SupplyNets => PcbRuleKindData::SupplyNets(SupplyNetsRuleData::from_params(params)?),
-        RuleKind::MaxMinHoleSize => PcbRuleKindData::MaxMinHoleSize(MaxMinHoleSizeRuleData::from_params(params)?),
-        RuleKind::FabricationTestpointStyle => PcbRuleKindData::FabricationTestpointStyle(TestpointStyleRuleData::from_params(params)?),
-        RuleKind::FabricationTestpointUsage => PcbRuleKindData::FabricationTestpointUsage(TestpointUsageRuleData::from_params(params)?),
-        RuleKind::UnconnectedPin => PcbRuleKindData::UnconnectedPin(EmptyRuleData::from_params(params)?),
-        RuleKind::SmdToPlane => PcbRuleKindData::SmdToPlane(SmdToPlaneRuleData::from_params(params)?),
-        RuleKind::SmdNeckDown => PcbRuleKindData::SmdNeckDown(SmdNeckDownRuleData::from_params(params)?),
+        RuleKind::MaxSlopeRisingEdge => {
+            PcbRuleKindData::MaxSlopeRisingEdge(SlopeRuleData::from_params(params)?)
+        }
+        RuleKind::MaxSlopeFallingEdge => {
+            PcbRuleKindData::MaxSlopeFallingEdge(SlopeRuleData::from_params(params)?)
+        }
+        RuleKind::SupplyNets => {
+            PcbRuleKindData::SupplyNets(SupplyNetsRuleData::from_params(params)?)
+        }
+        RuleKind::MaxMinHoleSize => {
+            PcbRuleKindData::MaxMinHoleSize(MaxMinHoleSizeRuleData::from_params(params)?)
+        }
+        RuleKind::FabricationTestpointStyle => {
+            PcbRuleKindData::FabricationTestpointStyle(TestpointStyleRuleData::from_params(params)?)
+        }
+        RuleKind::FabricationTestpointUsage => {
+            PcbRuleKindData::FabricationTestpointUsage(TestpointUsageRuleData::from_params(params)?)
+        }
+        RuleKind::UnconnectedPin => {
+            PcbRuleKindData::UnconnectedPin(EmptyRuleData::from_params(params)?)
+        }
+        RuleKind::SmdToPlane => {
+            PcbRuleKindData::SmdToPlane(SmdToPlaneRuleData::from_params(params)?)
+        }
+        RuleKind::SmdNeckDown => {
+            PcbRuleKindData::SmdNeckDown(SmdNeckDownRuleData::from_params(params)?)
+        }
         RuleKind::LayerPair => PcbRuleKindData::LayerPair(LayerPairRuleData::from_params(params)?),
-        RuleKind::FanoutControl => PcbRuleKindData::FanoutControl(FanoutControlRuleData::from_params(params)?),
-        RuleKind::MaxMinHeight => PcbRuleKindData::MaxMinHeight(MaxMinHeightRuleData::from_params(params)?),
-        RuleKind::DifferentialPairsRouting => PcbRuleKindData::DifferentialPairsRouting(DiffPairsRoutingRuleData::from_params(params)?),
-        RuleKind::HoleToHoleClearance => PcbRuleKindData::HoleToHoleClearance(HoleToHoleClearanceRuleData::from_params(params)?),
-        RuleKind::MinimumSolderMaskSliver => PcbRuleKindData::MinimumSolderMaskSliver(MinimumSolderMaskSliverRuleData::from_params(params)?),
-        RuleKind::SilkToSolderMaskClearance => PcbRuleKindData::SilkToSolderMaskClearance(SilkToSolderMaskClearanceRuleData::from_params(params)?),
-        RuleKind::SilkToSilkClearance => PcbRuleKindData::SilkToSilkClearance(SilkToSilkClearanceRuleData::from_params(params)?),
-        RuleKind::NetAntennae => PcbRuleKindData::NetAntennae(NetAntennaeRuleData::from_params(params)?),
-        RuleKind::AssyTestPointStyle => PcbRuleKindData::AssyTestPointStyle(TestpointStyleRuleData::from_params(params)?),
-        RuleKind::AssyTestPointUsage => PcbRuleKindData::AssyTestPointUsage(TestpointUsageRuleData::from_params(params)?),
-        RuleKind::SilkToBoardRegionClearance => PcbRuleKindData::SilkToBoardRegionClearance(EmptyRuleData::from_params(params)?),
+        RuleKind::FanoutControl => {
+            PcbRuleKindData::FanoutControl(FanoutControlRuleData::from_params(params)?)
+        }
+        RuleKind::MaxMinHeight => {
+            PcbRuleKindData::MaxMinHeight(MaxMinHeightRuleData::from_params(params)?)
+        }
+        RuleKind::DifferentialPairsRouting => PcbRuleKindData::DifferentialPairsRouting(
+            DiffPairsRoutingRuleData::from_params(params)?,
+        ),
+        RuleKind::HoleToHoleClearance => {
+            PcbRuleKindData::HoleToHoleClearance(HoleToHoleClearanceRuleData::from_params(params)?)
+        }
+        RuleKind::MinimumSolderMaskSliver => PcbRuleKindData::MinimumSolderMaskSliver(
+            MinimumSolderMaskSliverRuleData::from_params(params)?,
+        ),
+        RuleKind::SilkToSolderMaskClearance => PcbRuleKindData::SilkToSolderMaskClearance(
+            SilkToSolderMaskClearanceRuleData::from_params(params)?,
+        ),
+        RuleKind::SilkToSilkClearance => {
+            PcbRuleKindData::SilkToSilkClearance(SilkToSilkClearanceRuleData::from_params(params)?)
+        }
+        RuleKind::NetAntennae => {
+            PcbRuleKindData::NetAntennae(NetAntennaeRuleData::from_params(params)?)
+        }
+        RuleKind::AssyTestPointStyle => {
+            PcbRuleKindData::AssyTestPointStyle(TestpointStyleRuleData::from_params(params)?)
+        }
+        RuleKind::AssyTestPointUsage => {
+            PcbRuleKindData::AssyTestPointUsage(TestpointUsageRuleData::from_params(params)?)
+        }
+        RuleKind::SilkToBoardRegionClearance => {
+            PcbRuleKindData::SilkToBoardRegionClearance(EmptyRuleData::from_params(params)?)
+        }
         RuleKind::SmdEntry => PcbRuleKindData::SmdEntry(SmdEntryRuleData::from_params(params)?),
         RuleKind::None => PcbRuleKindData::None(EmptyRuleData::from_params(params)?),
-        RuleKind::UnpouredPolygon => PcbRuleKindData::UnpouredPolygon(UnpouredPolygonRuleData::from_params(params)?),
-        RuleKind::BoardOutlineClearance => PcbRuleKindData::BoardOutlineClearance(BoardOutlineClearanceRuleData::from_params(params)?),
-        RuleKind::BackDrilling => PcbRuleKindData::BackDrilling(BackDrillingRuleData::from_params(params)?),
+        RuleKind::UnpouredPolygon => {
+            PcbRuleKindData::UnpouredPolygon(UnpouredPolygonRuleData::from_params(params)?)
+        }
+        RuleKind::BoardOutlineClearance => PcbRuleKindData::BoardOutlineClearance(
+            BoardOutlineClearanceRuleData::from_params(params)?,
+        ),
+        RuleKind::BackDrilling => {
+            PcbRuleKindData::BackDrilling(BackDrillingRuleData::from_params(params)?)
+        }
         RuleKind::Creepage => PcbRuleKindData::Creepage(CreepageRuleData::from_params(params)?),
-        RuleKind::ReturnPath => PcbRuleKindData::ReturnPath(ReturnPathRuleData::from_params(params)?),
-        RuleKind::RoutingNeckDown => PcbRuleKindData::RoutingNeckDown(RoutingNeckDownRuleData::from_params(params)?),
-        RuleKind::WireBonding => PcbRuleKindData::WireBonding(WireBondingRuleData::from_params(params)?),
-        RuleKind::ZAxisClearance => PcbRuleKindData::ZAxisClearance(ZAxisClearanceRuleData::from_params(params)?),
+        RuleKind::ReturnPath => {
+            PcbRuleKindData::ReturnPath(ReturnPathRuleData::from_params(params)?)
+        }
+        RuleKind::RoutingNeckDown => {
+            PcbRuleKindData::RoutingNeckDown(RoutingNeckDownRuleData::from_params(params)?)
+        }
+        RuleKind::WireBonding => {
+            PcbRuleKindData::WireBonding(WireBondingRuleData::from_params(params)?)
+        }
+        RuleKind::ZAxisClearance => {
+            PcbRuleKindData::ZAxisClearance(ZAxisClearanceRuleData::from_params(params)?)
+        }
         // #[non_exhaustive] requires wildcard
         _ => {
             return Err(AltiumFormatError::InvalidParamValue {
@@ -1810,18 +2050,15 @@ impl DiffPairsViolationData {
         let mut layers = Vec::with_capacity(layer_count);
         for n in 1..=layer_count {
             let layer_name: String = params.remove_required(&format!("LAYER{n}"))?;
-            let contour_count: usize =
-                params.remove_required(&format!("POLY{n}.CONTOURCOUNT"))?;
+            let contour_count: usize = params.remove_required(&format!("POLY{n}.CONTOURCOUNT"))?;
             let mut contours = Vec::with_capacity(contour_count);
             for c in 0..contour_count {
                 let vtx_count: usize =
                     params.remove_required(&format!("POLY{n}.CONTOUR{c}.VTXCOUNT"))?;
                 let mut vertices = Vec::with_capacity(vtx_count);
                 for v in 0..vtx_count {
-                    let vx: f64 =
-                        params.remove_required(&format!("POLY{n}.CONTOUR{c}.VX{v}"))?;
-                    let vy: f64 =
-                        params.remove_required(&format!("POLY{n}.CONTOUR{c}.VY{v}"))?;
+                    let vx: f64 = params.remove_required(&format!("POLY{n}.CONTOUR{c}.VX{v}"))?;
+                    let vy: f64 = params.remove_required(&format!("POLY{n}.CONTOUR{c}.VY{v}"))?;
                     vertices.push((vx, vy));
                 }
                 contours.push(DiffPairsViolationContour { vertices });
@@ -1839,7 +2076,10 @@ impl DiffPairsViolationData {
         for (n, layer) in self.layers.iter().enumerate() {
             let n1 = n + 1;
             params.insert(&format!("LAYER{n1}"), layer.layer_name.to_param_value());
-            params.insert(&format!("POLY{n1}.CONTOURCOUNT"), layer.contours.len().to_param_value());
+            params.insert(
+                &format!("POLY{n1}.CONTOURCOUNT"),
+                layer.contours.len().to_param_value(),
+            );
             for (c, contour) in layer.contours.iter().enumerate() {
                 params.insert(
                     &format!("POLY{n1}.CONTOUR{c}.VTXCOUNT"),
@@ -1857,44 +2097,158 @@ impl DiffPairsViolationData {
 /// A typed violation record. The variant is determined by the CFB storage name.
 #[derive(Debug)]
 pub(crate) enum PcbViolation {
-    AcuteAngle { base: PcbViolationBase, data: TwoPointViolationData },
-    BackDrill { base: PcbViolationBase, data: TwoPointViolationData },
-    BoardOutlineClearance { base: PcbViolationBase, data: BoardOutlineClearanceViolationData },
-    Clearance { base: PcbViolationBase, data: TwoPointViolationData },
-    ComponentClearance { base: PcbViolationBase, data: TwoPointViolationData },
-    Creepage { base: PcbViolationBase, data: TwoPointViolationData },
-    DiffPairs { base: PcbViolationBase, data: DiffPairsViolationData },
-    DisconnectedSubnets { base: PcbViolationBase, data: DisconnectedSubnetsViolationData },
-    HoleToHole { base: PcbViolationBase, data: TwoPointViolationData },
-    MatchedNetLengths { base: PcbViolationBase, data: MatchedNetLengthsViolationData },
-    MaximumViaCount { base: PcbViolationBase, data: TwoPointViolationData },
-    MaxMinComponentHeight { base: PcbViolationBase, data: TwoPointViolationData },
-    MaxMinLength { base: PcbViolationBase, data: TwoPointViolationData },
-    MaxMinPadSlotWidth { base: PcbViolationBase, data: TwoPointViolationData },
-    MaxMinViaHoleSize { base: PcbViolationBase, data: TwoPointViolationData },
-    MinimumAnnularRing { base: PcbViolationBase, data: TwoPointViolationData },
-    MinSolderMaskSliver { base: PcbViolationBase, data: TwoPointViolationData },
-    MinWidth { base: PcbViolationBase, data: TwoPointViolationData },
-    ModifiedPolygon { base: PcbViolationBase, data: TwoPointViolationData },
-    NetAntennae { base: PcbViolationBase, data: NetAntennaeViolationData },
-    PadUnderSmd { base: PcbViolationBase, data: TwoPointViolationData },
-    ParallelSegment { base: PcbViolationBase, data: TwoPointViolationData },
-    ReturnPath { base: PcbViolationBase, data: TwoPointViolationData },
-    RoutingNeckDown { base: PcbViolationBase, data: TwoPointViolationData },
-    RoutingViaStyle { base: PcbViolationBase, data: TwoPointViolationData },
-    ShortCircuit { base: PcbViolationBase, data: TwoPointViolationData },
-    SilkToBoardRegionClearance { base: PcbViolationBase, data: TwoPointViolationData },
-    SilkToSilkClearance { base: PcbViolationBase, data: TwoPointViolationData },
-    SilkToSolderMaskClearance { base: PcbViolationBase, data: TwoPointViolationData },
-    SmdNeckDown { base: PcbViolationBase, data: TwoPointViolationData },
-    SmdPadEntry { base: PcbViolationBase, data: TwoPointViolationData },
-    SmdToCorner { base: PcbViolationBase, data: TwoPointViolationData },
-    TestPoint { base: PcbViolationBase, data: TwoPointViolationData },
-    UnconnectedPin { base: PcbViolationBase, data: TwoPointViolationData },
-    ViaUnderSmd { base: PcbViolationBase, data: TwoPointViolationData },
-    WirebondLength { base: PcbViolationBase, data: TwoPointViolationData },
-    WirebondWireToWire { base: PcbViolationBase, data: TwoPointViolationData },
-    ZAxisClearance { base: PcbViolationBase, data: TwoPointViolationData },
+    AcuteAngle {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    BackDrill {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    BoardOutlineClearance {
+        base: PcbViolationBase,
+        data: BoardOutlineClearanceViolationData,
+    },
+    Clearance {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    ComponentClearance {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    Creepage {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    DiffPairs {
+        base: PcbViolationBase,
+        data: DiffPairsViolationData,
+    },
+    DisconnectedSubnets {
+        base: PcbViolationBase,
+        data: DisconnectedSubnetsViolationData,
+    },
+    HoleToHole {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    MatchedNetLengths {
+        base: PcbViolationBase,
+        data: MatchedNetLengthsViolationData,
+    },
+    MaximumViaCount {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    MaxMinComponentHeight {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    MaxMinLength {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    MaxMinPadSlotWidth {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    MaxMinViaHoleSize {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    MinimumAnnularRing {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    MinSolderMaskSliver {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    MinWidth {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    ModifiedPolygon {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    NetAntennae {
+        base: PcbViolationBase,
+        data: NetAntennaeViolationData,
+    },
+    PadUnderSmd {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    ParallelSegment {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    ReturnPath {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    RoutingNeckDown {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    RoutingViaStyle {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    ShortCircuit {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    SilkToBoardRegionClearance {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    SilkToSilkClearance {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    SilkToSolderMaskClearance {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    SmdNeckDown {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    SmdPadEntry {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    SmdToCorner {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    TestPoint {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    UnconnectedPin {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    ViaUnderSmd {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    WirebondLength {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    WirebondWireToWire {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
+    ZAxisClearance {
+        base: PcbViolationBase,
+        data: TwoPointViolationData,
+    },
 }
 
 pub(crate) fn parse_violation(
@@ -2058,7 +2412,7 @@ pub(crate) fn parse_violation(
         _ => {
             return Err(AltiumFormatError::NotImplemented(format!(
                 "unexpected violation kind: {kind:?}"
-            )))
+            )));
         }
     };
     params.assert_exhausted()?;
@@ -2394,7 +2748,9 @@ pub(crate) fn serialize_violation(violation: &PcbViolation) -> super::records::S
 }
 
 /// Serialize a `WaivedViolation` back to a `StandardParamRecord`.
-pub(crate) fn serialize_waived_violation(wv: &WaivedViolation) -> super::records::StandardParamRecord {
+pub(crate) fn serialize_waived_violation(
+    wv: &WaivedViolation,
+) -> super::records::StandardParamRecord {
     let mut params = ParameterCollection::new();
     wv.to_params(&mut params);
     super::records::StandardParamRecord { params }
@@ -2604,11 +2960,8 @@ mod tests {
                   |DESCRIPTION=|INVOLVEDPRIMCOUNT=0\
                   |FX1=3550.5807mil|FY1=1520mil|FX2=3550.5807mil|FY2=1713.307mil";
         let mut params = params_from_str(s);
-        let v = parse_violation(
-            ParamSectionKind::TDisconnectedSubnetsViolation,
-            &mut params,
-        )
-        .unwrap();
+        let v =
+            parse_violation(ParamSectionKind::TDisconnectedSubnetsViolation, &mut params).unwrap();
         match &v {
             PcbViolation::DisconnectedSubnets { base, data } => {
                 assert_eq!(base.prim1_id, "Pad");
@@ -2725,27 +3078,81 @@ mod tests {
 
         // Compare base fields
         let (base1, base2) = match (&v1, &v2) {
-            (PcbViolation::Clearance { base: b1, .. }, PcbViolation::Clearance { base: b2, .. })
-            | (PcbViolation::NetAntennae { base: b1, .. }, PcbViolation::NetAntennae { base: b2, .. })
-            | (PcbViolation::BoardOutlineClearance { base: b1, .. }, PcbViolation::BoardOutlineClearance { base: b2, .. })
-            | (PcbViolation::DisconnectedSubnets { base: b1, .. }, PcbViolation::DisconnectedSubnets { base: b2, .. })
-            | (PcbViolation::MatchedNetLengths { base: b1, .. }, PcbViolation::MatchedNetLengths { base: b2, .. })
-            | (PcbViolation::UnconnectedPin { base: b1, .. }, PcbViolation::UnconnectedPin { base: b2, .. })
-            | (PcbViolation::ModifiedPolygon { base: b1, .. }, PcbViolation::ModifiedPolygon { base: b2, .. })
-            | (PcbViolation::MaxMinComponentHeight { base: b1, .. }, PcbViolation::MaxMinComponentHeight { base: b2, .. })
-            | (PcbViolation::SilkToSilkClearance { base: b1, .. }, PcbViolation::SilkToSilkClearance { base: b2, .. })
-            | (PcbViolation::SilkToSolderMaskClearance { base: b1, .. }, PcbViolation::SilkToSolderMaskClearance { base: b2, .. })
-            | (PcbViolation::MinSolderMaskSliver { base: b1, .. }, PcbViolation::MinSolderMaskSliver { base: b2, .. })
-            | (PcbViolation::MinimumAnnularRing { base: b1, .. }, PcbViolation::MinimumAnnularRing { base: b2, .. })
-            | (PcbViolation::HoleToHole { base: b1, .. }, PcbViolation::HoleToHole { base: b2, .. })
+            (
+                PcbViolation::Clearance { base: b1, .. },
+                PcbViolation::Clearance { base: b2, .. },
+            )
+            | (
+                PcbViolation::NetAntennae { base: b1, .. },
+                PcbViolation::NetAntennae { base: b2, .. },
+            )
+            | (
+                PcbViolation::BoardOutlineClearance { base: b1, .. },
+                PcbViolation::BoardOutlineClearance { base: b2, .. },
+            )
+            | (
+                PcbViolation::DisconnectedSubnets { base: b1, .. },
+                PcbViolation::DisconnectedSubnets { base: b2, .. },
+            )
+            | (
+                PcbViolation::MatchedNetLengths { base: b1, .. },
+                PcbViolation::MatchedNetLengths { base: b2, .. },
+            )
+            | (
+                PcbViolation::UnconnectedPin { base: b1, .. },
+                PcbViolation::UnconnectedPin { base: b2, .. },
+            )
+            | (
+                PcbViolation::ModifiedPolygon { base: b1, .. },
+                PcbViolation::ModifiedPolygon { base: b2, .. },
+            )
+            | (
+                PcbViolation::MaxMinComponentHeight { base: b1, .. },
+                PcbViolation::MaxMinComponentHeight { base: b2, .. },
+            )
+            | (
+                PcbViolation::SilkToSilkClearance { base: b1, .. },
+                PcbViolation::SilkToSilkClearance { base: b2, .. },
+            )
+            | (
+                PcbViolation::SilkToSolderMaskClearance { base: b1, .. },
+                PcbViolation::SilkToSolderMaskClearance { base: b2, .. },
+            )
+            | (
+                PcbViolation::MinSolderMaskSliver { base: b1, .. },
+                PcbViolation::MinSolderMaskSliver { base: b2, .. },
+            )
+            | (
+                PcbViolation::MinimumAnnularRing { base: b1, .. },
+                PcbViolation::MinimumAnnularRing { base: b2, .. },
+            )
+            | (
+                PcbViolation::HoleToHole { base: b1, .. },
+                PcbViolation::HoleToHole { base: b2, .. },
+            )
             | (PcbViolation::MinWidth { base: b1, .. }, PcbViolation::MinWidth { base: b2, .. })
-            | (PcbViolation::ShortCircuit { base: b1, .. }, PcbViolation::ShortCircuit { base: b2, .. }) => (b1, b2),
+            | (
+                PcbViolation::ShortCircuit { base: b1, .. },
+                PcbViolation::ShortCircuit { base: b2, .. },
+            ) => (b1, b2),
             _ => return,
         };
-        assert_eq!(base1.rule_index, base2.rule_index, "rule_index mismatch in roundtrip");
-        assert_eq!(base1.prim1_id, base2.prim1_id, "prim1_id mismatch in roundtrip");
-        assert_eq!(base1.prim1_index, base2.prim1_index, "prim1_index mismatch in roundtrip");
-        assert_eq!(base1.description, base2.description, "description mismatch in roundtrip");
+        assert_eq!(
+            base1.rule_index, base2.rule_index,
+            "rule_index mismatch in roundtrip"
+        );
+        assert_eq!(
+            base1.prim1_id, base2.prim1_id,
+            "prim1_id mismatch in roundtrip"
+        );
+        assert_eq!(
+            base1.prim1_index, base2.prim1_index,
+            "prim1_index mismatch in roundtrip"
+        );
+        assert_eq!(
+            base1.description, base2.description,
+            "description mismatch in roundtrip"
+        );
     }
 
     #[test]
@@ -2925,7 +3332,10 @@ mod tests {
 
         assert_eq!(opts1.max_violation_count, opts2.max_violation_count);
         assert_eq!(opts1.rule_set_to_check, opts2.rule_set_to_check);
-        assert_eq!(opts1.online_rule_set_to_check, opts2.online_rule_set_to_check);
+        assert_eq!(
+            opts1.online_rule_set_to_check,
+            opts2.online_rule_set_to_check
+        );
         assert_eq!(opts1.do_make_drc_file, opts2.do_make_drc_file);
         assert_eq!(opts1.report_straddling_holes, opts2.report_straddling_holes);
         assert_eq!(opts1.dead_copper_min_area, opts2.dead_copper_min_area);

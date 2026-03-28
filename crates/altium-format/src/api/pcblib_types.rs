@@ -4,12 +4,12 @@
 //! PCB library footprints. The read/write paths in `pcblib_read.rs` and
 //! `pcblib_write.rs` handle conversion to/from internal `PcbFootprint` types.
 
+use super::pcb_common::{PadStack, PcbContour};
+use altium_format_types::color::Color;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
     LayerRef, PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle, RegionKind,
 };
-use altium_format_types::color::Color;
-use super::pcb_common::{PadStack, PcbContour};
 
 // ── Footprint ────────────────────────────────────────────────────────────────
 

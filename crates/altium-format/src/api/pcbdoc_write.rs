@@ -15,25 +15,25 @@ use altium_format_types::pcb::{
 };
 use altium_format_types::{BarcodeKind, PcbObjectId};
 
+use crate::Result;
 use crate::api::pcbdoc_types::*;
 use crate::param_collection::ParameterCollection;
 use crate::param_value::{MilCoord, ToParamValue};
 use crate::pcbdoc::primitives::{
     ParsedPrimitiveRecord, PcbArc, PcbFill, PcbPrimitive, PcbText, PcbTrack,
 };
+use crate::pcbdoc::records::PrimitiveParameterGroup;
 use crate::pcbdoc::records::{
     BinaryLenRecord, BinaryLenSectionKind, ConnectionCommonHeader, ParamSectionKind,
     PrimitiveSectionKind, StandardParamRecord, WideString6Record,
 };
 use crate::pcbdoc::{
-    BinarySectionData, ParamSectionData, PcbDoc, PcbDocSection, PrimitiveSectionData,
-    PrimitiveParametersSectionData, WideStringsSectionData,
+    BinarySectionData, ParamSectionData, PcbDoc, PcbDocSection, PrimitiveParametersSectionData,
+    PrimitiveSectionData, WideStringsSectionData,
 };
-use crate::pcbdoc::records::PrimitiveParameterGroup;
 use crate::pcblib::{
     Contour, PcbComponentBody, PcbPad, PcbPadCache, PcbPrimitiveCommon, PcbRegion, PcbVia,
 };
-use crate::Result;
 
 // ── Write context ──────────────────────────────────────────────────────────
 
@@ -65,7 +65,11 @@ impl WriteContext {
 
     fn resolve_net_index(&self, net: &Option<String>) -> u16 {
         match net {
-            Some(name) => self.net_indices.get(name.as_str()).copied().unwrap_or(0xFFFF),
+            Some(name) => self
+                .net_indices
+                .get(name.as_str())
+                .copied()
+                .unwrap_or(0xFFFF),
             None => 0xFFFF,
         }
     }
@@ -303,16 +307,13 @@ fn build_component_records(components: &[PcbDocComponent]) -> Vec<StandardParamR
             params.insert("CHANNELOFFSET", "0".to_string());
             params.insert("SOURCEDESIGNATOR", comp.designator.clone());
             params.insert("SOURCEUNIQUEID", comp.source_unique_id.clone());
-            params.insert("SOURCEHIERARCHICALPATH", comp.source_hierarchical_path.clone());
+            params.insert(
+                "SOURCEHIERARCHICALPATH",
+                comp.source_hierarchical_path.clone(),
+            );
             params.insert("SOURCEFOOTPRINTLIBRARY", String::new());
-            params.insert(
-                "SOURCECOMPONENTLIBRARY",
-                comp.source_library.clone(),
-            );
-            params.insert(
-                "SOURCELIBREFERENCE",
-                comp.source_lib_reference.clone(),
-            );
+            params.insert("SOURCECOMPONENTLIBRARY", comp.source_library.clone());
+            params.insert("SOURCELIBREFERENCE", comp.source_lib_reference.clone());
             params.insert("SOURCEDESCRIPTION", String::new());
             params.insert("FOOTPRINTDESCRIPTION", String::new());
             params.insert("COMMENT", comp.comment.clone());
@@ -349,7 +350,10 @@ fn build_polygon_records(polygons: &[Polygon], ctx: &WriteContext) -> Vec<Standa
         .map(|poly| {
             let mut params = ParameterCollection::new();
             params.insert("NAME", poly.name.clone());
-            params.insert("NET", ctx.resolve_net_param_index(&poly.net).to_param_value());
+            params.insert(
+                "NET",
+                ctx.resolve_net_param_index(&poly.net).to_param_value(),
+            );
             let layer_v6 = poly.layer.to_v6().unwrap_or(V6Layer::TopLayer);
             params.insert("LAYER", (layer_v6 as u8).to_param_value());
             params.insert("CONNECTSTYLE", (poly.connect_style as u8).to_param_value());
@@ -378,7 +382,9 @@ fn ensure_standard_classes(board: &PcbDocBoard) -> Vec<NetClass> {
     let mut classes = board.classes.clone();
 
     if !classes.iter().any(|c| c.name == "All Components") {
-        let members: Vec<String> = board.components.iter()
+        let members: Vec<String> = board
+            .components
+            .iter()
             .map(|c| c.designator.clone())
             .collect();
         classes.push(NetClass {
@@ -390,9 +396,7 @@ fn ensure_standard_classes(board: &PcbDocBoard) -> Vec<NetClass> {
     }
 
     if !classes.iter().any(|c| c.name == "All Nets") {
-        let members: Vec<String> = board.nets.iter()
-            .map(|n| n.name.clone())
-            .collect();
+        let members: Vec<String> = board.nets.iter().map(|n| n.name.clone()).collect();
         classes.push(NetClass {
             id: "all-nets".to_string(),
             name: "All Nets".to_string(),
@@ -444,7 +448,10 @@ fn build_board_record(settings: &BoardSettings) -> Vec<StandardParamRecord> {
         "VISIBLEGRIDSIZE",
         settings.visible_grid_size.to_param_value(),
     );
-    params.insert("DISPLAYUNIT", (settings.display_unit as u8).to_param_value());
+    params.insert(
+        "DISPLAYUNIT",
+        (settings.display_unit as u8).to_param_value(),
+    );
     vec![StandardParamRecord { params }]
 }
 
@@ -495,11 +502,11 @@ fn build_arc_records(arcs: &[Arc], ctx: &WriteContext) -> Vec<ParsedPrimitiveRec
 fn build_via_records(vias: &[Via], ctx: &WriteContext) -> Vec<ParsedPrimitiveRecord> {
     vias.iter()
         .map(|v| {
-            let (solder_mask_override, solder_mask_expansion_front) =
-                match v.solder_mask_expansion {
-                    Some(exp) => (true, exp),
-                    None => (false, Coord::ZERO),
-                };
+            let (solder_mask_override, solder_mask_expansion_front) = match v.solder_mask_expansion
+            {
+                Some(exp) => (true, exp),
+                None => (false, Coord::ZERO),
+            };
             ParsedPrimitiveRecord {
                 object_id: PcbObjectId::Via,
                 primitive: PcbPrimitive::Via(PcbVia {
@@ -573,70 +580,68 @@ fn build_via_records(vias: &[Via], ctx: &WriteContext) -> Vec<ParsedPrimitiveRec
 
 fn build_pad_records(pads: &[Pad], ctx: &WriteContext) -> Vec<ParsedPrimitiveRecord> {
     pads.iter()
-        .map(|p| {
-            ParsedPrimitiveRecord {
-                object_id: PcbObjectId::Pad,
-                primitive: PcbPrimitive::Pad(PcbPad {
-                    common: primitive_common_for_board(&p.layer, &p.net, &p.component, ctx),
-                    pad_name: p.pad_name.clone(),
-                    unknown_sub1: String::new(),
-                    unknown_sub2: String::new(),
-                    unknown_sub3: String::new(),
-                    location: p.location,
-                    size_top: CoordPoint::new(p.stack.top.x_size, p.stack.top.y_size),
-                    size_mid: CoordPoint::new(p.stack.mid.x_size, p.stack.mid.y_size),
-                    size_bot: CoordPoint::new(p.stack.bot.x_size, p.stack.bot.y_size),
-                    hole_size: p.hole_size,
-                    shape_top: p.stack.top.shape,
-                    shape_mid: p.stack.mid.shape,
-                    shape_bot: p.stack.bot.shape,
-                    rotation: p.rotation,
-                    is_plated: p.is_plated,
-                    daisy_chain_style: DaisyChainStyle::default(),
-                    pad_mode: p.pad_mode,
-                    unknown_63: 0,
-                    cache: PcbPadCache {
-                        plane_connection_style: p.plane_connection,
-                        relief_conductor_width: p.relief_conductor_width,
-                        relief_entries: p.relief_entries as i16,
-                        relief_air_gap: p.relief_air_gap,
-                        power_plane_relief_expansion: Coord::ZERO,
-                        power_plane_clearance: Coord::ZERO,
-                        paste_mask_expansion: p.paste_mask_expansion,
-                        solder_mask_expansion: p.solder_mask_expansion,
-                        planes: 0,
-                        plane_connection_style_valid: TCacheState::Valid,
-                        relief_conductor_width_valid: TCacheState::Valid,
-                        relief_entries_valid: TCacheState::Valid,
-                        relief_air_gap_valid: TCacheState::Valid,
-                        power_plane_relief_expansion_valid: TCacheState::default(),
-                        paste_mask_expansion_valid: TCacheState::Valid,
-                        solder_mask_expansion_valid: TCacheState::Valid,
-                        power_plane_clearance_valid: TCacheState::default(),
-                        planes_valid: TCacheState::default(),
-                    },
-                    selection_memory_flags: 0,
-                    union_index: 0,
-                    jumper_id: 0,
-                    v7_layer_override: 0,
-                    is_assy_testpoint_top: false,
-                    is_assy_testpoint_bottom: false,
-                    use_separate_expansions: false,
-                    solder_mask_bottom_expansion: 0,
-                    solder_mask_expansion_from_hole_edge: false,
-                    template_link_library_id: [0u8; 16],
-                    template_link_template_id: [0u8; 16],
-                    pin_package_length: Coord::ZERO,
-                    hole_positive_tolerance: 0,
-                    hole_negative_tolerance: 0,
-                    reserved_170: 0,
-                    has_sub4_extension: false,
-                    sub4_extension: None,
-                    thermal_reliefs: Vec::new(),
-                    stack_data: None,
-                    unique_id: None,
-                }),
-            }
+        .map(|p| ParsedPrimitiveRecord {
+            object_id: PcbObjectId::Pad,
+            primitive: PcbPrimitive::Pad(PcbPad {
+                common: primitive_common_for_board(&p.layer, &p.net, &p.component, ctx),
+                pad_name: p.pad_name.clone(),
+                unknown_sub1: String::new(),
+                unknown_sub2: String::new(),
+                unknown_sub3: String::new(),
+                location: p.location,
+                size_top: CoordPoint::new(p.stack.top.x_size, p.stack.top.y_size),
+                size_mid: CoordPoint::new(p.stack.mid.x_size, p.stack.mid.y_size),
+                size_bot: CoordPoint::new(p.stack.bot.x_size, p.stack.bot.y_size),
+                hole_size: p.hole_size,
+                shape_top: p.stack.top.shape,
+                shape_mid: p.stack.mid.shape,
+                shape_bot: p.stack.bot.shape,
+                rotation: p.rotation,
+                is_plated: p.is_plated,
+                daisy_chain_style: DaisyChainStyle::default(),
+                pad_mode: p.pad_mode,
+                unknown_63: 0,
+                cache: PcbPadCache {
+                    plane_connection_style: p.plane_connection,
+                    relief_conductor_width: p.relief_conductor_width,
+                    relief_entries: p.relief_entries as i16,
+                    relief_air_gap: p.relief_air_gap,
+                    power_plane_relief_expansion: Coord::ZERO,
+                    power_plane_clearance: Coord::ZERO,
+                    paste_mask_expansion: p.paste_mask_expansion,
+                    solder_mask_expansion: p.solder_mask_expansion,
+                    planes: 0,
+                    plane_connection_style_valid: TCacheState::Valid,
+                    relief_conductor_width_valid: TCacheState::Valid,
+                    relief_entries_valid: TCacheState::Valid,
+                    relief_air_gap_valid: TCacheState::Valid,
+                    power_plane_relief_expansion_valid: TCacheState::default(),
+                    paste_mask_expansion_valid: TCacheState::Valid,
+                    solder_mask_expansion_valid: TCacheState::Valid,
+                    power_plane_clearance_valid: TCacheState::default(),
+                    planes_valid: TCacheState::default(),
+                },
+                selection_memory_flags: 0,
+                union_index: 0,
+                jumper_id: 0,
+                v7_layer_override: 0,
+                is_assy_testpoint_top: false,
+                is_assy_testpoint_bottom: false,
+                use_separate_expansions: false,
+                solder_mask_bottom_expansion: 0,
+                solder_mask_expansion_from_hole_edge: false,
+                template_link_library_id: [0u8; 16],
+                template_link_template_id: [0u8; 16],
+                pin_package_length: Coord::ZERO,
+                hole_positive_tolerance: 0,
+                hole_negative_tolerance: 0,
+                reserved_170: 0,
+                has_sub4_extension: false,
+                sub4_extension: None,
+                thermal_reliefs: Vec::new(),
+                stack_data: None,
+                unique_id: None,
+            }),
         })
         .collect()
 }
@@ -736,11 +741,7 @@ fn build_region_records(regions: &[Region], ctx: &WriteContext) -> Vec<ParsedPri
             primitive: PcbPrimitive::Region(PcbRegion {
                 common: primitive_common_for_board(&r.layer, &r.net, &r.component, ctx),
                 kind: r.kind,
-                v7_layer: r
-                    .layer
-                    .display_name()
-                    .unwrap_or("")
-                    .to_owned(),
+                v7_layer: r.layer.display_name().unwrap_or("").to_owned(),
                 name: String::new(),
                 param_kind: 0,
                 subpoly_index: 0,
@@ -767,21 +768,14 @@ fn build_region_records(regions: &[Region], ctx: &WriteContext) -> Vec<ParsedPri
         .collect()
 }
 
-fn build_body_records(
-    bodies: &[ComponentBody],
-    ctx: &WriteContext,
-) -> Vec<ParsedPrimitiveRecord> {
+fn build_body_records(bodies: &[ComponentBody], ctx: &WriteContext) -> Vec<ParsedPrimitiveRecord> {
     bodies
         .iter()
         .map(|b| ParsedPrimitiveRecord {
             object_id: PcbObjectId::ComponentBody,
             primitive: PcbPrimitive::ComponentBody(PcbComponentBody {
                 common: primitive_common_for_board(&b.layer, &None, &b.component, ctx),
-                v7_layer: b
-                    .layer
-                    .display_name()
-                    .unwrap_or("")
-                    .to_owned(),
+                v7_layer: b.layer.display_name().unwrap_or("").to_owned(),
                 name: String::new(),
                 kind: 0,
                 subpoly_index: -1,
@@ -1162,10 +1156,10 @@ fn compute_ratsnest(board: &PcbDocBoard, ctx: &WriteContext) -> Vec<BinaryLenRec
         let net_index = ctx.net_indices.get(*net_name).copied().unwrap_or(0xFFFF) as i16;
 
         // Compute geometric centroid of all pad locations in the net.
-        let centroid_x: i64 = pads.iter().map(|p| p.location.x.raw() as i64).sum::<i64>()
-            / pads.len() as i64;
-        let centroid_y: i64 = pads.iter().map(|p| p.location.y.raw() as i64).sum::<i64>()
-            / pads.len() as i64;
+        let centroid_x: i64 =
+            pads.iter().map(|p| p.location.x.raw() as i64).sum::<i64>() / pads.len() as i64;
+        let centroid_y: i64 =
+            pads.iter().map(|p| p.location.y.raw() as i64).sum::<i64>() / pads.len() as i64;
 
         // Pick the pad closest to the centroid as the hub.
         let hub_idx = pads
@@ -1247,19 +1241,16 @@ fn build_primitive_parameters(components: &[PcbDocComponent]) -> Vec<PrimitivePa
 }
 
 /// Replace the PrimitiveParameters section in `doc`, or append if not found.
-fn replace_primitive_parameters_section(
-    doc: &mut PcbDoc,
-    groups: Vec<PrimitiveParameterGroup>,
-) {
+fn replace_primitive_parameters_section(doc: &mut PcbDoc, groups: Vec<PrimitiveParameterGroup>) {
     for section in &mut doc.sections {
         if let PcbDocSection::PrimitiveParameters(pp) = section {
             pp.groups = groups;
             return;
         }
     }
-    doc.sections.push(PcbDocSection::PrimitiveParameters(PrimitiveParametersSectionData {
-        groups,
-    }));
+    doc.sections.push(PcbDocSection::PrimitiveParameters(
+        PrimitiveParametersSectionData { groups },
+    ));
 }
 
 // ── UniqueIDPrimitiveInformation rebuild ───────────────────────────────────
@@ -1311,7 +1302,11 @@ fn assign_and_rebuild_unique_id_section(doc: &mut PcbDoc) {
         }
     }
 
-    replace_param_section(doc, ParamSectionKind::UniqueIdPrimitiveInformation, uid_records);
+    replace_param_section(
+        doc,
+        ParamSectionKind::UniqueIdPrimitiveInformation,
+        uid_records,
+    );
 }
 
 // ── Section replacement helpers ────────────────────────────────────────────
@@ -1332,10 +1327,7 @@ fn replace_param_section(
     }
     // Not found — append.
     doc.sections
-        .push(PcbDocSection::Parameter(ParamSectionData {
-            kind,
-            records,
-        }));
+        .push(PcbDocSection::Parameter(ParamSectionData { kind, records }));
 }
 
 /// Merge new records into a parameter section, preserving all fields from old records
@@ -1375,7 +1367,9 @@ fn merge_param_section(
                 for (k, v) in new_rec.params.iter() {
                     merged_params.set(k, v.to_owned());
                 }
-                StandardParamRecord { params: merged_params }
+                StandardParamRecord {
+                    params: merged_params,
+                }
             } else {
                 // No old record — use new as-is.
                 new_rec
@@ -1471,7 +1465,8 @@ fn replace_binary_section(
             }
         }
     }
-    doc.sections.push(PcbDocSection::Binary(BinarySectionData { kind, records }));
+    doc.sections
+        .push(PcbDocSection::Binary(BinarySectionData { kind, records }));
 }
 
 /// Detect which section kind to write: prefer `modern` if it contains records, else `legacy`.
@@ -1480,9 +1475,9 @@ fn detect_section_kind(
     modern: PrimitiveSectionKind,
     legacy: PrimitiveSectionKind,
 ) -> PrimitiveSectionKind {
-    let has_modern_with_records = doc.sections.iter().any(|s| {
-        matches!(s, PcbDocSection::Primitive(p) if p.kind == modern && !p.records.is_empty())
-    });
+    let has_modern_with_records = doc.sections.iter().any(
+        |s| matches!(s, PcbDocSection::Primitive(p) if p.kind == modern && !p.records.is_empty()),
+    );
     if has_modern_with_records {
         modern
     } else {
