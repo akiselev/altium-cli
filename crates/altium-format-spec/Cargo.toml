@@ -1,0 +1,32 @@
+[package]
+name = "altium-format-spec"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+
+description = "Spec language for declarative Altium Designer design definitions."
+license = "Apache-2.0"
+repository = "https://github.com/akiselev/altium-cli"
+homepage = "https://github.com/akiselev/altium-cli"
+authors = ["Alexander Kiselev <alex@akiselev.com>"]
+
+[lints]
+workspace = true
+
+[dependencies]
+altium-format = { version = "0.2.0", path = "../altium-format", optional = true }
+altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
+indexmap = { version = "2", features = ["serde"] }
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+
+[features]
+altium-apply = ["dep:altium-format"]
+test-fixtures = []
+proptest = ["test-fixtures"]
+
+[dev-dependencies]
+tempfile = "3"
+proptest = "1"

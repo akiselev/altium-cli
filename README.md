@@ -23,6 +23,7 @@ This software is provided as-is without warranty. YOU area responsible for anyth
 - `altium-format-types`: domain types, enums, constants
 - `altium-format-derive`: proc-macro derives
 - `altium-format`: core parsers/serializers for Altium formats
+- `altium-format-spec`: declarative spec language for Altium files
 - `altium-cli`: command-line interface
 
 ## Current CLI commands
@@ -36,10 +37,10 @@ This software is provided as-is without warranty. YOU area responsible for anyth
 - `dump <document>` — reverse-generate spec from Altium file
 - `info <path>` — document summary
 - `query <path> "<AQL>"` — query with Altium Query Language
-- `inspect <pcbdoc> {summary,components,nets,board-outline,rules}`
 - `cfb ls|dump|blocks|diff|cat ...` — CFB/OLE container inspection
 
-> **Note:** Placement and routing commands have moved to `autopcb-cli` in `~/cadatomic/autopcb/`.
+Spec files use explicit document extensions: `.schlib-spec`, `.pcblib-spec`,
+`.schdoc-spec`, `.pcbdoc-spec`, and `.prjpcb-spec`.
 
 ### IntLib support
 
@@ -48,7 +49,7 @@ schematic symbols and PCB footprints:
 
 ```bash
 altium-cli validate vendor.IntLib    # reports SchLib/PcbLib counts
-altium-cli dump vendor.IntLib        # produces vendor.sym + vendor.sym
+altium-cli dump vendor.IntLib        # produces vendor.schlib-spec + vendor.pcblib-spec
 ```
 
 ## Roadmap

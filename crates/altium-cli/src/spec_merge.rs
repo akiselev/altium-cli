@@ -9,11 +9,11 @@
 
 use std::collections::HashMap;
 
-use autopcb_spec::ast::{BlockAnnotation, EntityName, SpecItem};
-use autopcb_spec::diagnostic::Spanned;
-use autopcb_spec::extract_top_level_trivia;
-use autopcb_spec::parser::parse_spec;
-use autopcb_spec::trivia::{ItemTrivia, TriviaLine};
+use altium_format_spec::ast::{BlockAnnotation, EntityName, SpecItem};
+use altium_format_spec::diagnostic::Spanned;
+use altium_format_spec::extract_top_level_trivia;
+use altium_format_spec::parser::parse_spec;
+use altium_format_spec::trivia::{ItemTrivia, TriviaLine};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 

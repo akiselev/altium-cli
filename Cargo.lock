@@ -31,14 +31,9 @@ dependencies = [
  "altium-format-query",
  "altium-format-render-png",
  "altium-format-render-svg",
+ "altium-format-spec",
  "altium-format-types",
  "anyhow",
- "autopcb-graph",
- "autopcb-graph-import-altium",
- "autopcb-graph-spec",
- "autopcb-ir",
- "autopcb-routes",
- "autopcb-spec",
  "cfb",
  "clap",
  "clap_complete",
@@ -119,6 +114,21 @@ dependencies = [
  "altium-format",
  "altium-format-types",
  "svg",
+]
+
+[[package]]
+name = "altium-format-spec"
+version = "0.2.0"
+dependencies = [
+ "altium-format",
+ "altium-format-types",
+ "indexmap",
+ "proptest",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -212,79 +222,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "autopcb-graph"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "autopcb-graph-import-altium"
-version = "0.1.0"
-dependencies = [
- "altium-format",
- "autopcb-graph",
-]
-
-[[package]]
-name = "autopcb-graph-spec"
-version = "0.1.0"
-dependencies = [
- "autopcb-graph",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "autopcb-ir"
-version = "0.2.0"
-dependencies = [
- "altium-format",
- "altium-format-types",
- "autopcb-routes",
- "autopcb-spec",
- "indexmap",
- "serde",
- "thiserror",
-]
-
-[[package]]
-name = "autopcb-routes"
-version = "0.2.0"
-dependencies = [
- "bincode",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "autopcb-spec"
-version = "0.1.0"
-dependencies = [
- "altium-format",
- "altium-format-types",
- "indexmap",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
-
-[[package]]
-name = "bincode"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "bit-set"

@@ -1,8 +1,6 @@
 # Codebase Status
 
-Updated: 2026-03-24
-
-> **Note:** autopcb-* crates have been moved to ~/cadatomic/autopcb/
+Updated: 2026-05-25
 
 ## Workspace Overview
 
@@ -15,7 +13,8 @@ altium-format          (core: parsing, serialization, high-level API, rendering 
   ├→ altium-format-query       (AQL query language engine)
   ├→ altium-format-render-svg  (SVG rendering backend)
   └→ altium-format-render-png  (PNG rasterization via resvg)
-altium-cli             (CLI binary — depends on autopcb-spec via cross-repo path dep)
+altium-format-spec     (declarative spec language for Altium documents)
+altium-cli             (CLI binary)
 ```
 
 ## Document Type Support
@@ -45,6 +44,7 @@ altium-cli             (CLI binary — depends on autopcb-spec via cross-repo pa
 | `cfb *`       | ✅     | ✅     | ✅     | ✅     | n/a    | ✅     |
 
 Additional commands: `spec sync` (forward/diff/dry-run), `cfb ls/dump/blocks/diff/cat`.
+Spec files use `.schlib-spec`, `.pcblib-spec`, `.schdoc-spec`, `.pcbdoc-spec`, and `.prjpcb-spec`.
 
 ## Per-Document Notes
 
@@ -64,7 +64,7 @@ All 40+ record types parsed. Flat OWNERINDEX → nested tree conversion. UniqueI
 INI-style format with indexed sections. Complete roundtrip. Read-only high-level API (internal write exists but not surfaced).
 
 ### IntLib
-Read-only. Decompresses embedded SchLib/PcbLib from CFB. Dump produces `.sym` files.
+Read-only. Decompresses embedded SchLib/PcbLib from CFB. Dump produces separate `.schlib-spec` and `.pcblib-spec` files.
 
 ## Known Issues
 

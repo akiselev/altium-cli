@@ -12,7 +12,7 @@ is essential before designing the PrjPcb equivalent.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  autopcb-spec (executor / reconciler)                         │
+│  altium-format-spec (executor / reconciler)                   │
 │                                                                     │
 │  apply_spec_schlib(spec, doc)                                       │
 │    → doc.component("R")        // query via high-level API          │
@@ -505,7 +505,7 @@ crates/altium-format/src/api/
 
 ## Spec Model Types
 
-In `crates/autopcb-spec/src/model.rs`:
+In `crates/altium-format-spec/src/model.rs`:
 
 ```rust
 // Add to SpecModel enum:
@@ -655,6 +655,6 @@ for each ProjectSpec in spec.projects:
 | **P2** | `AltiumProject::save()` | Write back to disk |
 | **P2** | `altium validate` for `.PrjPcb` | Red/green development loop |
 | **P2** | `altium dump` for `.PrjPcb` | Reverse-generate spec from existing |
-| **P3** | Spec language extension (parser + compiler) | `.proj` support |
+| **P3** | Spec language extension (parser + compiler) | `.prjpcb-spec` support |
 | **P3** | Reconciler + ECO | `altium plan` for project specs |
 | **P3** | Executor | `altium apply` for project specs |
