@@ -75,6 +75,7 @@ Read-only. Decompresses embedded SchLib/PcbLib from CFB. Dump produces separate 
 **Minor:**
 - PcbDoc: 2/96 V6 files failing (EmbeddedFonts, WideStrings edge cases — see PCBDOC-next.md)
 - PcbDoc V5 format not supported (2 test files deferred)
+- PcbDoc spec dumps currently omit layer stack and board geometry blocks until the spec compiler supports applying them.
 - SVG clip regions not applied
 - `get version` only works for SchLib/PcbLib
 - `apply --report-json` flag accepted but unused

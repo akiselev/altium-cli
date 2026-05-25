@@ -5,8 +5,8 @@
 //! `orientation:`). No anchors, rows, grids, or template bindings are emitted.
 
 use altium_format::api::{
-    BoardGeometry, ContourSegment, Footprint, LayerStack, Pad as PcbLibPad, PadStack, PcbContour,
-    PcbDocBoard, PcbGraphic, RuleParams, StackLayer,
+    ContourSegment, Footprint, Pad as PcbLibPad, PadStack, PcbContour, PcbDocBoard, PcbGraphic,
+    RuleParams,
 };
 use altium_format::api::{
     Component, ComponentChild, FootprintMap, Graphic, Parameter, Pin, SheetObject, SheetSymbolChild,
@@ -22,7 +22,6 @@ use altium_format_types::project::{
     ChannelRoomNamingStyle, CrossRefLocationStyle, CrossRefPorts, CrossRefSheetStyle, ErrorLevel,
     FlattenMode,
 };
-use altium_format_types::{DielectricType, LayerStackStyle};
 use std::collections::HashSet;
 
 use crate::annotation::generate_short_id;
@@ -454,11 +453,9 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
     ));
     out.push_str("}\n\n");
 
-    // Layer stack
-    dump_layer_stack(out, &board.settings.layer_stack);
-
-    // Board geometry
-    dump_board_geometry(out, &board.settings.geometry);
+    // Keep generated PcbDoc specs parseable by the current compiler. Layer stack
+    // and board geometry dump blocks are useful diagnostics, but apply/plan do
+    // not accept them yet.
 
     // Nets
     for net in &board.nets {
@@ -717,110 +714,6 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
     }
 }
 
-// ── Layer stack dump ─────────────────────────────────────────────────────────
-
-fn dump_layer_stack(out: &mut String, stack: &LayerStack) {
-    if stack.layers.is_empty() {
-        return;
-    }
-
-    out.push_str(&format!(
-        "layer_stack {{ style: \"{}\", is_flex: {}, copper_layers: {} }}\n",
-        layer_stack_style_to_spec_string(stack.style),
-        stack.is_flex,
-        stack.copper_layer_count,
-    ));
-    for layer in &stack.layers {
-        dump_stack_layer(out, layer);
-    }
-    out.push('\n');
-}
-
-fn dump_stack_layer(out: &mut String, layer: &StackLayer) {
-    out.push_str(&format!("    layer {} {{", quote_entity_name(&layer.name)));
-    out.push_str(&format!(" copper_thickness: {},", layer.copper_thickness));
-    out.push_str(&format!(
-        " dielectric: \"{}\" {} {} er={:.3}",
-        dielectric_type_to_spec_string(layer.dielectric_type),
-        layer.dielectric_height,
-        quote_string(&layer.dielectric_material),
-        layer.dielectric_constant,
-    ));
-    if layer.is_plane {
-        out.push_str(", plane: true");
-    }
-    out.push_str(" }\n");
-}
-
-fn layer_stack_style_to_spec_string(s: LayerStackStyle) -> &'static str {
-    match s {
-        LayerStackStyle::Pairs => "layer_pairs",
-        LayerStackStyle::InsidePairs => "inside_pairs",
-        LayerStackStyle::Buildup => "buildup",
-        LayerStackStyle::Custom => "custom",
-        _ => "layer_pairs",
-    }
-}
-
-fn dielectric_type_to_spec_string(d: DielectricType) -> &'static str {
-    match d {
-        DielectricType::NoDielectric => "none",
-        DielectricType::Core => "core",
-        DielectricType::PrePreg => "prepreg",
-        DielectricType::SurfaceMaterial => "surface_material",
-        DielectricType::Film => "film",
-        _ => "none",
-    }
-}
-
-// ── Board geometry dump ──────────────────────────────────────────────────────
-
-fn dump_board_geometry(out: &mut String, geom: &BoardGeometry) {
-    if geom.outline.is_none() && geom.cutouts.is_empty() && geom.keepouts.is_empty() {
-        return;
-    }
-
-    out.push_str("geometry {\n");
-    if let Some(outline) = &geom.outline {
-        out.push_str("    outline {\n");
-        for seg in &outline.segments {
-            match seg {
-                ContourSegment::Line { endpoint } => {
-                    out.push_str(&format!("        line {endpoint}\n"));
-                }
-                ContourSegment::Arc {
-                    endpoint,
-                    center,
-                    radius,
-                    start_angle,
-                    end_angle,
-                } => {
-                    out.push_str(&format!(
-                        "        arc {endpoint} center: {center}, radius: {radius}, angles: {start_angle}..{end_angle}\n"
-                    ));
-                }
-            }
-        }
-        out.push_str("    }\n");
-    }
-    for (i, cutout) in geom.cutouts.iter().enumerate() {
-        out.push_str(&format!(
-            "    cutout #{} {{ {} segments }}\n",
-            i,
-            cutout.segments.len()
-        ));
-    }
-    for (i, keepout) in geom.keepouts.iter().enumerate() {
-        out.push_str(&format!(
-            "    keepout #{} {{ layer: {}, {} segments }}\n",
-            i,
-            keepout.layer,
-            keepout.outline.segments.len()
-        ));
-    }
-    out.push_str("}\n\n");
-}
-
 // ── Rule params dump ─────────────────────────────────────────────────────────
 
 fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
@@ -939,7 +832,9 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
             preferred_hole_width,
             ..
         } => {
-            props.push(format!("width: {min_width}..{max_width} (pref {preferred_width}), hole: {min_hole_width}..{max_hole_width} (pref {preferred_hole_width})"));
+            props.push(format!(
+                "min_width: {min_width}, max_width: {max_width}, preferred_width: {preferred_width}, min_hole_width: {min_hole_width}, max_hole_width: {max_hole_width}, preferred_hole_width: {preferred_hole_width}"
+            ));
         }
         RuleParams::ComponentClearance { gap, .. } => {
             props.push(format!("gap: {gap}"));
@@ -950,7 +845,9 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
             preferred_gap,
             max_uncoupled_length,
         } => {
-            props.push(format!("gap: {min_gap}..{max_gap} (pref {preferred_gap}), max_uncoupled: {max_uncoupled_length}"));
+            props.push(format!(
+                "min_gap: {min_gap}, max_gap: {max_gap}, preferred_gap: {preferred_gap}, max_uncoupled: {max_uncoupled_length}"
+            ));
         }
         RuleParams::MaxMinHeight {
             min_height,
