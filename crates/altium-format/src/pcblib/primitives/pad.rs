@@ -23,6 +23,8 @@ const MAIN_DATA_SUBRECORD: usize = 4;
 
 /// Minimum size for per-layer stack data (subrecord 5).
 /// From Ghidra FUN_018a2840: initialization copies 596 bytes from template.
+/// Some older PcbLib files stop there and omit the later per-layer override
+/// byte array.
 const MIN_STACK_DATA_SIZE: usize = 596;
 
 /// Parses a Pad primitive from its 6 PcbLib subrecords.
@@ -128,7 +130,7 @@ pub(crate) fn parse_pad(subrecords: &[&[u8]]) -> Result<PcbPad> {
 
     // Tolerances (offsets 158-169, 12 bytes)
     // In older format variants (170-byte sub4), these are the last fields —
-    // reserved_170 and has_sub4_extension don't exist.
+    // unknown_170 and has_sub4_extension don't exist.
     let (pin_package_length, hole_positive_tolerance, hole_negative_tolerance) =
         if reader.remaining() >= 12 {
             let ppl = reader.read_coord()?;
@@ -139,28 +141,14 @@ pub(crate) fn parse_pad(subrecords: &[&[u8]]) -> Result<PcbPad> {
             (Coord::from_internal(0), 0x7FFFFFFF, 0x7FFFFFFF)
         };
 
-    // reserved_170 (offset 170, 1 byte)
+    // unknown_170 (offset 170, 1 byte)
     // Present in 171+ byte sub4 variants. Absent in 170-byte variant.
-    let reserved_170 = if reader.remaining() >= 2 {
-        // At least 2 bytes remain: reserved_170 + has_sub4_extension (or more).
-        let reserved = reader.read_u8()?;
-        if reserved != 0 {
-            return Err(AltiumFormatError::InvalidParamValue {
-                key: "reserved byte 170".to_owned(),
-                detail: format!("expected 0, got {reserved:#04X}"),
-            });
-        }
-        reserved
+    let unknown_170 = if reader.remaining() >= 2 {
+        // At least 2 bytes remain: unknown_170 + has_sub4_extension (or more).
+        reader.read_u8()?
     } else if reader.remaining() == 1 {
-        // Exactly 1 byte: reserved_170 only (171-byte variant, no sub4 extension).
-        let reserved = reader.read_u8()?;
-        if reserved != 0 {
-            return Err(AltiumFormatError::InvalidParamValue {
-                key: "reserved byte 170".to_owned(),
-                detail: format!("expected 0, got {reserved:#04X}"),
-            });
-        }
-        reserved
+        // Exactly 1 byte: unknown_170 only (171-byte variant, no sub4 extension).
+        reader.read_u8()?
     } else {
         0u8
     };
@@ -212,7 +200,7 @@ pub(crate) fn parse_pad(subrecords: &[&[u8]]) -> Result<PcbPad> {
         pin_package_length,
         hole_positive_tolerance,
         hole_negative_tolerance,
-        reserved_170,
+        unknown_170,
         has_sub4_extension,
         sub4_extension,
         thermal_reliefs,
@@ -584,7 +572,9 @@ fn parse_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
     corner_radius_pct.copy_from_slice(reader.read_bytes(32)?);
 
     let mut per_layer_overrides = [0u8; 32];
-    per_layer_overrides.copy_from_slice(reader.read_bytes(32)?);
+    if reader.remaining() >= 32 {
+        per_layer_overrides.copy_from_slice(reader.read_bytes(32)?);
+    }
 
     // Extended per-layer CR entries (offset 628+).
     // Format: u32 count + u32 entry_size (must be 15) + count * 15 bytes.
@@ -743,7 +733,7 @@ mod tests {
         w.write_i32_le(0); // pin_package_length
         w.write_i32_le(0x7FFFFFFF); // hole_positive_tolerance
         w.write_i32_le(0x7FFFFFFF); // hole_negative_tolerance
-        w.write_u8(0); // reserved_170
+        w.write_u8(0); // unknown_170
         w.write_u8(0); // has_sub4_extension
     }
 

@@ -226,6 +226,8 @@ pub(crate) struct PcbVia {
     // Related C# interfaces: IHoleSizeInfo, IPCB_ViaStructureSupport, IPCB_CounterHoleParams.
     pub(crate) counter_hole_angle: Option<f64>,
     pub(crate) via_structure_type: Option<ViaStructureType>,
+    /// Legacy trailing bytes present in older Via records when Section 5 is absent.
+    pub(crate) legacy_tail: Vec<u8>,
     pub(crate) layer_diameter_overrides: Vec<PcbViaSection2Entry>,
     pub(crate) unique_id: Option<String>,
 }
@@ -290,6 +292,7 @@ pub(crate) struct PcbText {
     pub(crate) stroke_width: Coord,
     pub(crate) is_italic: bool,
     pub(crate) is_bold: bool,
+    pub(crate) unknown_45: u8,
     pub(crate) font_name: String,
     pub(crate) inverted: bool,
     pub(crate) inverted_tt_text_border: Coord,
@@ -313,11 +316,11 @@ pub(crate) struct PcbText {
     // Confirmed by C# IPCB_Text3 and IPCB_Text_SaveLoadParameters interfaces.
     pub(crate) ttf_inverted_justify: Option<TextAutoposition>,
     pub(crate) ttf_offset_from_inverted_rect: Option<u8>,
-    pub(crate) tail_reserved_227: Option<u8>,
+    pub(crate) tail_unknown_227: Option<u8>,
     pub(crate) multiline_auto_position: Option<TextAutoposition>,
     pub(crate) is_advance_justification_valid: Option<bool>,
     pub(crate) advance_snapping: Option<u8>,
-    pub(crate) tail_reserved_231: Option<u8>,
+    pub(crate) tail_unknown_231: Option<u8>,
     pub(crate) advance_justification_x: Option<i32>,
     pub(crate) advance_justification_y: Option<i32>,
     pub(crate) use_text_alignment_by_snap: Option<i32>,
@@ -470,7 +473,9 @@ pub(crate) struct PcbPad {
     pub(crate) pin_package_length: Coord,
     pub(crate) hole_positive_tolerance: i32,
     pub(crate) hole_negative_tolerance: i32,
-    pub(crate) reserved_170: u8,
+    /// Unknown byte at subrecord-4 offset 170. AD26 loaders do not consume this
+    /// in the known pad load paths, but fixtures show non-zero values.
+    pub(crate) unknown_170: u8,
     pub(crate) has_sub4_extension: bool,
     pub(crate) sub4_extension: Option<PcbPadSub4Extension>,
     pub(crate) thermal_reliefs: Vec<PcbPadThermalReliefEntry>,
@@ -1560,7 +1565,7 @@ fn serialize_text(p: &PcbText) -> Result<Vec<Vec<u8>>> {
     w0.write_coord_point(p.location);
     w0.write_coord(p.height);
     w0.write_u8(p.text_kind as u8);
-    w0.write_u8(0);
+    w0.write_u8(p.unknown_45);
     w0.write_f64_le(p.rotation);
     w0.write_u8(p.is_mirrored as u8);
     w0.write_coord(p.stroke_width);
@@ -1592,11 +1597,11 @@ fn serialize_text(p: &PcbText) -> Result<Vec<Vec<u8>>> {
     // (upgrade to latest on save). Use 0/default for any None fields.
     w0.write_u8(p.ttf_inverted_justify.map_or(0, |v| v as u8));
     w0.write_u8(p.ttf_offset_from_inverted_rect.unwrap_or(0));
-    w0.write_u8(p.tail_reserved_227.unwrap_or(0));
+    w0.write_u8(p.tail_unknown_227.unwrap_or(0));
     w0.write_u8(p.multiline_auto_position.map_or(0, |v| v as u8));
     w0.write_u8(p.is_advance_justification_valid.map_or(0, |v| v as u8));
     w0.write_u8(p.advance_snapping.unwrap_or(0));
-    w0.write_u8(p.tail_reserved_231.unwrap_or(0));
+    w0.write_u8(p.tail_unknown_231.unwrap_or(0));
     w0.write_i32_le(p.advance_justification_x.unwrap_or(0));
     w0.write_i32_le(p.advance_justification_y.unwrap_or(0));
     w0.write_i32_le(p.use_text_alignment_by_snap.unwrap_or(0));
@@ -1931,7 +1936,10 @@ fn validate_pcblib_invariants(lib: &PcbLib) -> Result<()> {
         });
     }
 
-    if !lib.header.version.is_finite() || lib.header.version <= 0.0 {
+    // Some real-world PcbLib headers carry only the version string with no
+    // trailing f64 version number. The parser represents that absent field as
+    // 0.0; accept it as a legacy/short header sentinel.
+    if !lib.header.version.is_finite() || lib.header.version < 0.0 {
         return Err(AltiumFormatError::InvalidParamValue {
             key: "FileHeader.version".to_owned(),
             detail: format!("invalid version number {}", lib.header.version),

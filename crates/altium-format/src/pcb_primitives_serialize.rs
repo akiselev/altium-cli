@@ -206,8 +206,10 @@ pub(crate) fn serialize_via(p: &PcbVia) -> Vec<u8> {
         }
     }
 
-    // Section 5: IPC-4761 / via structure (always written in latest format).
-    if let Some(angle) = p.counter_hole_angle {
+    // Section 5: IPC-4761 / via structure, or legacy footer for older records.
+    if !p.legacy_tail.is_empty() {
+        w.write_bytes(&p.legacy_tail);
+    } else if let Some(angle) = p.counter_hole_angle {
         w.write_u32_le(9); // section5_size
         w.write_f64_le(angle);
         w.write_u8(p.via_structure_type.unwrap_or(ViaStructureType::None) as u8);
@@ -281,7 +283,7 @@ pub(crate) fn serialize_pad(p: &PcbPad) -> Result<Vec<Vec<u8>>> {
     sub4.write_coord(p.pin_package_length);
     sub4.write_i32_le(p.hole_positive_tolerance);
     sub4.write_i32_le(p.hole_negative_tolerance);
-    sub4.write_u8(p.reserved_170);
+    sub4.write_u8(p.unknown_170);
     sub4.write_u8(p.has_sub4_extension as u8);
     if let Some(ext) = &p.sub4_extension {
         sub4.write_u32_le(ext.header_len);

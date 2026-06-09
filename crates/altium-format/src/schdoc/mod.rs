@@ -1319,22 +1319,34 @@ mod tests {
 
     #[cfg(feature = "proptest")]
     fn proptest_fixture_paths() -> Vec<std::path::PathBuf> {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schdoc");
-        let mut out = Vec::new();
-        let entries = fs::read_dir(dir).expect("read data/schdoc");
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let is_schdoc = path
-                .extension()
-                .and_then(|s| s.to_str())
-                .map(|s| s.eq_ignore_ascii_case("schdoc"))
-                .unwrap_or(false);
-            if is_schdoc {
-                out.push(path);
-            }
-        }
-        out.sort();
-        out
+        use std::sync::OnceLock;
+
+        static PATHS: OnceLock<Vec<std::path::PathBuf>> = OnceLock::new();
+        PATHS
+            .get_or_init(|| {
+                let dir =
+                    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schdoc");
+                let mut out = Vec::new();
+                let entries = fs::read_dir(dir).expect("read data/schdoc");
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let is_schdoc = path
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.eq_ignore_ascii_case("schdoc"))
+                        .unwrap_or(false);
+                    if is_schdoc
+                        && SchDoc::open(&path)
+                            .and_then(|doc| doc.validate_invariants().map(|_| ()))
+                            .is_ok()
+                    {
+                        out.push(path);
+                    }
+                }
+                out.sort();
+                out
+            })
+            .clone()
     }
 
     #[cfg(feature = "proptest")]

@@ -1152,7 +1152,7 @@ impl TryFrom<u8> for DrillLayerPairType {
     }
 }
 
-/// PCB text kind (0-2).
+/// PCB text kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 #[repr(u8)]
@@ -1161,6 +1161,9 @@ pub enum TextKind {
     StrokeFont = 0,
     TrueTypeFont = 1,
     Barcode = 2,
+    /// Observed in real PcbLib files. The AD-facing meaning is not yet known,
+    /// so preserve the raw enum value rather than rejecting the record.
+    Unknown3 = 3,
 }
 
 impl TryFrom<u8> for TextKind {
@@ -1170,6 +1173,7 @@ impl TryFrom<u8> for TextKind {
             0 => Ok(Self::StrokeFont),
             1 => Ok(Self::TrueTypeFont),
             2 => Ok(Self::Barcode),
+            3 => Ok(Self::Unknown3),
             _ => Err(InvalidEnumValue {
                 type_name: "TextKind",
                 value: v as i64,

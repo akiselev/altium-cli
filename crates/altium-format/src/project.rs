@@ -677,7 +677,10 @@ mod tests {
     #[cfg(feature = "test-fixtures")]
     #[test]
     fn test_open_blank_project() {
-        let project = AltiumProject::open("data/BlankProject.PrjPcb").unwrap();
+        let project = AltiumProject::open(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/BlankProject.PrjPcb"),
+        )
+        .unwrap();
         assert_eq!(project.name(), "BlankProject");
         assert_eq!(
             project.design().get("Version").map(|s| s.as_str()),

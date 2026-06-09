@@ -41,7 +41,11 @@ pub(crate) fn load_footprint(
     let (data_pattern, primitives_vec) =
         parse_pcblib_data_stream(&data_raw).with_context(|| format!("parsing {data_path}"))?;
 
-    if data_pattern != pattern {
+    // The Data stream repeats the footprint pattern as a raw single-byte
+    // string. Real libraries with Unicode footprint names can store bytes that
+    // do not round-trip through the Parameters stream's Unicode sidecars, so
+    // treat Parameters/PATTERN as authoritative for non-ASCII names.
+    if data_pattern != pattern && pattern.is_ascii() {
         return Err(AltiumFormatError::InvalidParamValue {
             key: "PATTERN".to_owned(),
             detail: format!(

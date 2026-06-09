@@ -172,6 +172,7 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
     let mut pad_layer_stride: u32 = 0;
     let mut counter_hole_angle: Option<f64> = None;
     let mut via_structure_type: Option<ViaStructureType> = None;
+    let mut legacy_tail = Vec::new();
 
     if reader.remaining() > 0 {
         via_properties_version = reader.read_u8()?;
@@ -355,7 +356,11 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
         // Section 5: IPC-4761 / via structure.
         // Framed as u32 size + payload. Payload is 9 bytes (f64 angle + u8 via_structure_type)
         // or 4 bytes in older files (all zeros, no structure type defined).
-        if reader.remaining() >= 4 {
+        if reader.remaining() == 6 {
+            // Older PcbLib Via records can end with a 6-byte legacy footer
+            // instead of a size-prefixed Section 5 block.
+            legacy_tail.extend_from_slice(reader.read_bytes(6)?);
+        } else if reader.remaining() >= 4 {
             let section5_size = reader.read_u32_le()? as usize;
             if reader.remaining() < section5_size {
                 return Err(crate::AltiumFormatError::InvalidParamValue {
@@ -459,6 +464,7 @@ pub(crate) fn parse_via(data: &[u8]) -> Result<PcbVia> {
         pad_layer_stride,
         counter_hole_angle,
         via_structure_type,
+        legacy_tail,
         layer_diameter_overrides,
         unique_id: None,
     })

@@ -4,9 +4,8 @@
 //! Empty stream (single 0x00 byte or completely empty) means no wide strings.
 //!
 //! Keys are ENCODEDTEXT{N} where N is the text-primitive index.
-//! Values are comma-separated decimal byte values (ASCII code points).
-//! Example: "39,46,68,101,115" decodes as the byte string "'.Des".
-//! The decoded bytes are validated as UTF-8 (strict).
+//! Values are comma-separated decimal UTF-16 code units.
+//! Example: "39,46,68,101,115" decodes as the string "'.Des".
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -86,36 +85,38 @@ pub(crate) fn parse_pcblib_wide_strings(data: &[u8]) -> Result<HashMap<usize, St
     Ok(result)
 }
 
-/// Decodes a comma-separated decimal byte list to a UTF-8 string.
+/// Decodes a comma-separated decimal UTF-16 code-unit list to a string.
 ///
 /// An empty value or a value with only empty tokens represents an empty string.
 fn decode_encoded_text(key: &str, value: &str) -> Result<String> {
-    let bytes: Vec<u8> = value
+    let code_units: Vec<u16> = value
         .split(',')
         .filter(|token| !token.trim().is_empty())
         .map(|token| {
             token
                 .trim()
-                .parse::<u8>()
+                .parse::<u16>()
                 .map_err(|_| AltiumFormatError::InvalidParamValue {
                     key: key.to_owned(),
-                    detail: format!("invalid decimal byte token: '{}'", token.trim()),
+                    detail: format!("invalid decimal UTF-16 code unit token: '{}'", token.trim()),
                 })
         })
-        .collect::<Result<Vec<u8>>>()?;
-    std::str::from_utf8(&bytes)
-        .map(|s| s.to_owned())
-        .map_err(|e| AltiumFormatError::InvalidParamValue {
+        .collect::<Result<Vec<u16>>>()?;
+
+    let mut decoded = String::new();
+    for item in char::decode_utf16(code_units) {
+        decoded.push(item.map_err(|e| AltiumFormatError::InvalidParamValue {
             key: key.to_owned(),
-            detail: format!("decoded bytes are not valid UTF-8: {e}"),
-        })
+            detail: format!("invalid UTF-16 code unit 0x{:04X}", e.unpaired_surrogate()),
+        })?);
+    }
+    Ok(decoded)
 }
 
-/// Encodes a UTF-8 string as comma-separated decimal byte values.
+/// Encodes a UTF-8 string as comma-separated decimal UTF-16 code units.
 fn encode_text_for_wide_strings(text: &str) -> String {
-    text.as_bytes()
-        .iter()
-        .map(|b| b.to_string())
+    text.encode_utf16()
+        .map(|code_unit| code_unit.to_string())
         .collect::<Vec<_>>()
         .join(",")
 }
@@ -176,6 +177,41 @@ mod tests {
         let result = parse_pcblib_wide_strings(&stream).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[&0], "Foo");
+    }
+
+    #[test]
+    fn decode_encodedtext_non_ascii_code_units() {
+        let param_str = "|ENCODEDTEXT0=67,97,102,233\x00";
+        let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(param_str);
+        let len = encoded.len() as u32;
+        let mut stream = len.to_le_bytes().to_vec();
+        stream.extend_from_slice(&encoded);
+
+        let result = parse_pcblib_wide_strings(&stream).unwrap();
+        assert_eq!(result[&0], "Café");
+    }
+
+    #[test]
+    fn decode_encodedtext_code_unit_above_byte_range() {
+        // Real PcbLib files store Unicode code units such as U+03A9 OHM SIGN,
+        // proving this field is not a byte list.
+        let param_str = "|ENCODEDTEXT0=52,45,56,937,32,51,87\x00";
+        let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(param_str);
+        let len = encoded.len() as u32;
+        let mut stream = len.to_le_bytes().to_vec();
+        stream.extend_from_slice(&encoded);
+
+        let result = parse_pcblib_wide_strings(&stream).unwrap();
+        assert_eq!(result[&0], "4-8Ω 3W");
+    }
+
+    #[test]
+    fn encode_text_uses_utf16_code_units() {
+        assert_eq!(
+            encode_text_for_wide_strings("4-8Ω 3W"),
+            "52,45,56,937,32,51,87"
+        );
+        assert_eq!(encode_text_for_wide_strings("😀"), "55357,56832");
     }
 
     #[test]

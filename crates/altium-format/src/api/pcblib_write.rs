@@ -132,7 +132,7 @@ pub(crate) fn update_footprint_internal(fp: &Footprint, existing: &PcbFootprint)
                 new_pad.pin_package_length = ep.pin_package_length;
                 new_pad.hole_positive_tolerance = ep.hole_positive_tolerance;
                 new_pad.hole_negative_tolerance = ep.hole_negative_tolerance;
-                new_pad.reserved_170 = ep.reserved_170;
+                new_pad.unknown_170 = ep.unknown_170;
                 new_pad.has_sub4_extension = ep.has_sub4_extension;
                 new_pad.sub4_extension = ep.sub4_extension.clone();
                 new_pad.thermal_reliefs = ep.thermal_reliefs.clone();
@@ -260,7 +260,7 @@ fn pad_to_internal(pad: &Pad) -> PcbPad {
         pin_package_length: Coord::ZERO,
         hole_positive_tolerance: 0,
         hole_negative_tolerance: 0,
-        reserved_170: 0,
+        unknown_170: 0,
         has_sub4_extension: false,
         sub4_extension: None,
         thermal_reliefs: Vec::new(),
@@ -358,6 +358,7 @@ fn text_to_internal(g: &TextGraphic) -> PcbText {
         stroke_width: g.width,
         is_italic: false,
         is_bold: false,
+        unknown_45: 0,
         font_name: g.font_name.clone(),
         inverted: false,
         inverted_tt_text_border: Coord::ZERO,
@@ -379,11 +380,11 @@ fn text_to_internal(g: &TextGraphic) -> PcbText {
         barcode_font_name: String::new(),
         ttf_inverted_justify: None,
         ttf_offset_from_inverted_rect: None,
-        tail_reserved_227: None,
+        tail_unknown_227: None,
         multiline_auto_position: None,
         is_advance_justification_valid: None,
         advance_snapping: None,
-        tail_reserved_231: None,
+        tail_unknown_231: None,
         advance_justification_x: None,
         advance_justification_y: None,
         use_text_alignment_by_snap: None,
@@ -451,6 +452,7 @@ fn via_to_internal(g: &ViaGraphic) -> PcbVia {
         pad_layer_stride: 0,
         counter_hole_angle: None,
         via_structure_type: None,
+        legacy_tail: Vec::new(),
         layer_diameter_overrides: Vec::new(),
         unique_id: g.unique_id.clone(),
     }

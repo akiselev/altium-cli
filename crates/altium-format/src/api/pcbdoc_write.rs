@@ -570,6 +570,7 @@ fn build_via_records(vias: &[Via], ctx: &WriteContext) -> Vec<ParsedPrimitiveRec
                     pad_layer_stride: 0,
                     counter_hole_angle: None,
                     via_structure_type: None,
+                    legacy_tail: Vec::new(),
                     layer_diameter_overrides: Vec::new(),
                     unique_id: None,
                 }),
@@ -635,7 +636,7 @@ fn build_pad_records(pads: &[Pad], ctx: &WriteContext) -> Vec<ParsedPrimitiveRec
                 pin_package_length: Coord::ZERO,
                 hole_positive_tolerance: 0,
                 hole_negative_tolerance: 0,
-                reserved_170: 0,
+                unknown_170: 0,
                 has_sub4_extension: false,
                 sub4_extension: None,
                 thermal_reliefs: Vec::new(),
@@ -940,6 +941,7 @@ fn preserve_via_fields(new: &mut PcbVia, old: &PcbVia) {
     // Structure
     new.counter_hole_angle = old.counter_hole_angle;
     new.via_structure_type = old.via_structure_type;
+    new.legacy_tail = old.legacy_tail.clone();
     new.unique_id = old.unique_id.clone();
 }
 
@@ -973,7 +975,7 @@ fn preserve_pad_fields(new: &mut PcbPad, old: &PcbPad) {
     new.pin_package_length = old.pin_package_length;
     new.hole_positive_tolerance = old.hole_positive_tolerance;
     new.hole_negative_tolerance = old.hole_negative_tolerance;
-    new.reserved_170 = old.reserved_170;
+    new.unknown_170 = old.unknown_170;
     new.has_sub4_extension = old.has_sub4_extension;
     new.sub4_extension = old.sub4_extension.clone();
     new.thermal_reliefs = old.thermal_reliefs.clone();
