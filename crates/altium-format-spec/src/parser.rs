@@ -1032,22 +1032,42 @@ impl<'a> SpecParser<'a> {
 
         // If no '{', this is an implicit 1:1 mapping
         if !self.at(&TokenKind::LBrace) {
-            return Ok(FootprintMapDecl { name, maps: None });
+            return Ok(FootprintMapDecl {
+                name,
+                maps: None,
+                description: None,
+            });
         }
 
-        // Explicit pin:pad remapping: { $pin: $ref.pad, ... }
+        // Explicit body: optional `description:` plus pin:pad remapping pairs.
         self.bump(); // consume '{'
         let mut pairs = Vec::new();
+        let mut description = None;
         self.skip_newlines();
         while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            if let TokenKind::Ident(id) = self.current_kind() {
+                if id == "description" {
+                    self.bump();
+                    self.expect(&TokenKind::Colon, "expected ':' after 'description'")?;
+                    self.skip_newlines();
+                    let span = self.current_span();
+                    let TokenKind::String(text) = self.current_kind().clone() else {
+                        return Err(self.err("expected string literal after 'description:'"));
+                    };
+                    self.bump();
+                    description = Some(Spanned::new(text, span));
+                    self.skip_separators();
+                    continue;
+                }
+            }
             let pair_start = self.current_span();
-            let pin = self.parse_dollar_path_reference()?;
+            let pin = self.parse_pin_pad_ref(&TokenKind::Pin)?;
             self.expect(
                 &TokenKind::Colon,
                 "expected ':' after pin reference in footprint mapping",
             )?;
             self.skip_newlines();
-            let pad = self.parse_dollar_path_reference()?;
+            let pad = self.parse_pin_pad_ref(&TokenKind::Pad)?;
             let pair_end = self.prev_span();
             pairs.push(Spanned::new(
                 PinPadPair { pin, pad },
@@ -1059,7 +1079,30 @@ impl<'a> SpecParser<'a> {
         Ok(FootprintMapDecl {
             name,
             maps: Some(pairs),
+            description,
         })
+    }
+
+    /// One side of a footprint pin-pad mapping entry. Accepts either
+    /// `pin "1"` / `pad 3` (keyword + literal designator) or a `$name`
+    /// dollar-path reference (legacy form).
+    fn parse_pin_pad_ref(
+        &mut self,
+        keyword: &TokenKind,
+    ) -> Result<super::ast::PinPadRef, ParseError> {
+        use super::ast::PinPadRef;
+        if self.at(keyword) {
+            self.bump();
+            let start = self.current_span();
+            let en = self.parse_entity_name()?;
+            let end = self.prev_span();
+            let name = match en.node {
+                EntityName::Ident(s) | EntityName::String(s) => s,
+                EntityName::Integer(n) => n.to_string(),
+            };
+            return Ok(PinPadRef::Literal(Spanned::new(name, start.merge(end))));
+        }
+        Ok(PinPadRef::Dollar(self.parse_dollar_path_reference()?))
     }
 
     // ── Footprint declaration (top-level) ─────────────────────────────────

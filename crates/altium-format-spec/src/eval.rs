@@ -115,6 +115,7 @@ pub enum SpecErrorCode {
     IndexNotArray,
     DivisionByZero,
     InvalidFieldAccess,
+    UnknownProperty,
     NotAnObject,
     UnaryOnNonNumeric,
     InvalidUnit,
@@ -172,6 +173,16 @@ pub enum Value {
     ImportRef {
         alias: String,
         name: String,
+    },
+    /// A contour arc segment produced by `arc(...)`, used inside `outline:`
+    /// arrays for PCB regions and component bodies. Coordinates are Altium
+    /// internal units.
+    ContourArc {
+        endpoint: (i32, i32),
+        center: (i32, i32),
+        radius: i32,
+        start_angle: f64,
+        end_angle: f64,
     },
     /// A geometric shape value in Altium internal units (10,000 per mil).
     Shape(Shape),
@@ -481,6 +492,12 @@ impl Value {
             Value::ImportObject { alias, .. } => format!("<import:{alias}>"),
             Value::ImportRef { alias, name } => format!("{alias}.{name}"),
             Value::Shape(s) => format!("shape({} vertices)", s.to_vertices().len()),
+            Value::ContourArc {
+                endpoint, center, ..
+            } => format!(
+                "arc(endpoint: ({}, {}), center: ({}, {}))",
+                endpoint.0, endpoint.1, center.0, center.1
+            ),
         }
     }
 
@@ -500,6 +517,7 @@ impl Value {
             Value::ImportObject { .. } => "import_object",
             Value::ImportRef { .. } => "import_ref",
             Value::Shape(_) => "shape",
+            Value::ContourArc { .. } => "contour_arc",
         }
     }
 
@@ -1200,6 +1218,7 @@ fn eval_builtin_call(
         .collect::<EvalResult<_>>()?;
 
     match name {
+        "arc" => builtin_contour_arc(&evaluated, span),
         "rect" => builtin_rect(&evaluated, span),
         "rounded_rect" => builtin_rounded_rect(&evaluated, span),
         "circle" => builtin_circle(&evaluated, span),
@@ -1250,6 +1269,18 @@ fn require_dim(val: &Value, arg_name: &str, fn_name: &str, span: Span) -> EvalRe
     })
 }
 
+fn require_float(val: &Value, arg_name: &str, fn_name: &str, span: Span) -> EvalResult<f64> {
+    match val {
+        Value::Float(f) => Ok(*f),
+        Value::Integer(n) => Ok(*n as f64),
+        _ => Err(SpecError::at(
+            SpecErrorCode::TypeMismatch,
+            format!("{fn_name}(): argument '{arg_name}' must be a number"),
+            span,
+        )),
+    }
+}
+
 fn require_shape<'a>(
     val: &'a Value,
     arg_name: &str,
@@ -1285,6 +1316,60 @@ fn require_coord_point(
 }
 
 // ── Geometry constructors ─────────────────────────────────────────────────────
+
+/// `arc(endpoint: (x, y), center: (x, y), radius: r, start_angle: a, end_angle: b)`
+/// Contour arc segment for `outline:` arrays (PCB regions / component bodies).
+fn builtin_contour_arc(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
+    let endpoint = get_named_arg(args, "endpoint").ok_or_else(|| {
+        SpecError::new(
+            SpecErrorCode::TypeMismatch,
+            "arc() requires endpoint:",
+            Some(span),
+        )
+    })?;
+    let center = get_named_arg(args, "center").ok_or_else(|| {
+        SpecError::new(
+            SpecErrorCode::TypeMismatch,
+            "arc() requires center:",
+            Some(span),
+        )
+    })?;
+    let radius = get_named_arg(args, "radius").ok_or_else(|| {
+        SpecError::new(
+            SpecErrorCode::TypeMismatch,
+            "arc() requires radius:",
+            Some(span),
+        )
+    })?;
+    let start_angle = get_named_arg(args, "start_angle").ok_or_else(|| {
+        SpecError::new(
+            SpecErrorCode::TypeMismatch,
+            "arc() requires start_angle:",
+            Some(span),
+        )
+    })?;
+    let end_angle = get_named_arg(args, "end_angle").ok_or_else(|| {
+        SpecError::new(
+            SpecErrorCode::TypeMismatch,
+            "arc() requires end_angle:",
+            Some(span),
+        )
+    })?;
+
+    let endpoint = require_coord_point(endpoint, "endpoint", "arc", span)?;
+    let center = require_coord_point(center, "center", "arc", span)?;
+    let radius = require_dim(radius, "radius", "arc", span)?;
+    let start_angle = require_float(start_angle, "start_angle", "arc", span)?;
+    let end_angle = require_float(end_angle, "end_angle", "arc", span)?;
+
+    Ok(Value::ContourArc {
+        endpoint,
+        center,
+        radius,
+        start_angle,
+        end_angle,
+    })
+}
 
 fn builtin_rect(args: &[(Option<String>, Value)], span: Span) -> EvalResult<Value> {
     let pos = positional_args(args);

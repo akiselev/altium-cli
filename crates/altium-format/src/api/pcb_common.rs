@@ -7,7 +7,7 @@
 use crate::pcblib::{Contour, PcbPad, PolySegment};
 use altium_format_types::PolySegmentKind;
 use altium_format_types::coord::{Coord, CoordPoint};
-use altium_format_types::pcb::PadShape;
+use altium_format_types::pcb::{HoleType, PadShape};
 
 // ── Contour types ─────────────────────────────────────────────────────────────
 
@@ -61,8 +61,8 @@ pub struct PadStack {
     pub bot: PadLayerShape,
     /// Inner layer shape overrides (only for non-Simple modes with stack data).
     pub inner_layers: Vec<PadInnerLayerOverride>,
-    /// Hole shape (Round for most pads, Rectangular for slotted).
-    pub hole_shape: PadShape,
+    /// Hole shape (Round for most pads, Square or Slot otherwise).
+    pub hole_shape: HoleType,
     /// Slot width for non-round holes.
     pub slot_size: Coord,
     /// Slot rotation for non-round holes.
@@ -101,7 +101,7 @@ impl PadStack {
             mid: layer_shape.clone(),
             bot: layer_shape,
             inner_layers: Vec::new(),
-            hole_shape: PadShape::Round,
+            hole_shape: HoleType::Round,
             slot_size: Coord::ZERO,
             slot_rotation: 0.0,
         }
@@ -143,7 +143,7 @@ pub(crate) fn extract_pad_stack(p: &PcbPad) -> PadStack {
     };
 
     let mut inner_layers = Vec::new();
-    let mut hole_shape = PadShape::Round;
+    let mut hole_shape = HoleType::Round;
     let mut slot_size = Coord::ZERO;
     let mut slot_rotation = 0.0;
 

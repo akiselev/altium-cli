@@ -5,11 +5,11 @@
 //! `orientation:`). No anchors, rows, grids, or template bindings are emitted.
 
 use altium_format::api::{
-    ContourSegment, Footprint, Pad as PcbLibPad, PadStack, PcbContour, PcbDocBoard, PcbGraphic,
-    RuleParams,
+    Component, ComponentChild, FootprintMap, Graphic, Parameter, Pin, SheetObject, SheetSymbolChild,
 };
 use altium_format::api::{
-    Component, ComponentChild, FootprintMap, Graphic, Parameter, Pin, SheetObject, SheetSymbolChild,
+    ContourSegment, Footprint, Pad as PcbLibPad, PadStack, PcbContour, PcbDocBoard, PcbGraphic,
+    RuleParams,
 };
 use altium_format::{AltiumProject, IntLib, PcbDoc, PcbLib, SchDoc, SchLib};
 use altium_format_types::common::Unit;
@@ -42,8 +42,10 @@ fn emit_annotation_line(out: &mut String, indent: &str, source_id: Option<&str>)
     match source_id {
         Some(sid) => {
             out.push_str(&format!(
-                "{}#[annotation(id = \"{}\", source_id = \"{}\")]\n",
-                indent, id, sid
+                "{}#[annotation(id = \"{}\", source_id = {})]\n",
+                indent,
+                id,
+                quote_string(sid)
             ));
         }
         None => {
@@ -380,11 +382,18 @@ pub fn dump_schdoc(doc: &SchDoc) -> Result<String, altium_format::AltiumFormatEr
         out.push_str("    }\n\n");
     }
 
-    // Sheet properties (non-default only)
+    // Sheet size: always emit so apply never falls back to the new-document
+    // template default (a custom 1500x950 sheet).
     if sheet.use_custom_sheet {
         out.push_str(&format!("    custom_width: {}\n", sheet.custom_width));
         out.push_str(&format!("    custom_height: {}\n", sheet.custom_height));
+    } else {
+        out.push_str(&format!(
+            "    style: {}\n",
+            quote_string(sheet_style_to_spec(sheet.sheet_style)?)
+        ));
     }
+    // Sheet properties (non-default only)
     if !sheet.snap_grid_on {
         out.push_str("    snap_grid_on: false\n");
     }
@@ -565,22 +574,28 @@ fn dump_pcbdoc_board(out: &mut String, board: &PcbDocBoard) {
         // Emit stack info for non-simple pads
         if pad.pad_mode != PadStackMode::Simple {
             props.push(format!(
-                "stack_top: \"{}\" {}x{}, stack_mid: \"{}\" {}x{}, stack_bot: \"{}\" {}x{}",
+                "stack_top: {{ shape: \"{}\", x_size: {}, y_size: {} }}",
                 pad_shape_to_spec_string(pad.stack.top.shape),
                 pad.stack.top.x_size,
                 pad.stack.top.y_size,
+            ));
+            props.push(format!(
+                "stack_mid: {{ shape: \"{}\", x_size: {}, y_size: {} }}",
                 pad_shape_to_spec_string(pad.stack.mid.shape),
                 pad.stack.mid.x_size,
                 pad.stack.mid.y_size,
+            ));
+            props.push(format!(
+                "stack_bot: {{ shape: \"{}\", x_size: {}, y_size: {} }}",
                 pad_shape_to_spec_string(pad.stack.bot.shape),
                 pad.stack.bot.x_size,
                 pad.stack.bot.y_size,
             ));
         }
-        if pad.stack.hole_shape != PadShape::Round {
+        if pad.stack.hole_shape != altium_format_types::pcb::HoleType::Round {
             props.push(format!(
                 "hole_shape: \"{}\", slot_size: {}",
-                pad_shape_to_spec_string(pad.stack.hole_shape),
+                hole_type_to_spec_string(pad.stack.hole_shape),
                 pad.stack.slot_size
             ));
         }
@@ -919,6 +934,18 @@ fn unit_to_spec_string(u: Unit) -> &'static str {
     }
 }
 
+fn hole_type_to_spec_string(v: altium_format_types::pcb::HoleType) -> &'static str {
+    use altium_format_types::pcb::HoleType as Ht;
+    match v {
+        Ht::Round => "round",
+        Ht::Square => "square",
+        Ht::Slot => "slot",
+        // HoleType is #[non_exhaustive]; new variants must be named here
+        // before they can be dumped.
+        other => unreachable!("unhandled HoleType variant {other:?}"),
+    }
+}
+
 fn pad_shape_to_spec_string(s: PadShape) -> &'static str {
     match s {
         PadShape::NoShape => "no_shape",
@@ -1225,6 +1252,41 @@ fn channel_room_naming_to_spec(v: ChannelRoomNamingStyle) -> Result<&'static str
     }
 }
 
+fn sheet_style_to_spec(
+    v: altium_format_types::sch::SheetStyle,
+) -> Result<&'static str, altium_format::AltiumFormatError> {
+    use altium_format_types::sch::SheetStyle as Ss;
+    Ok(match v {
+        Ss::A4 => "A4",
+        Ss::A3 => "A3",
+        Ss::A2 => "A2",
+        Ss::A1 => "A1",
+        Ss::A0 => "A0",
+        Ss::A => "A",
+        Ss::B => "B",
+        Ss::C => "C",
+        Ss::D => "D",
+        Ss::E => "E",
+        Ss::Letter => "Letter",
+        Ss::Legal => "Legal",
+        Ss::Tabloid => "Tabloid",
+        Ss::OrcadA => "OrcadA",
+        Ss::OrcadB => "OrcadB",
+        Ss::OrcadC => "OrcadC",
+        Ss::OrcadD => "OrcadD",
+        Ss::OrcadE => "OrcadE",
+        // SheetStyle is #[non_exhaustive]; fail fast on variants this dump
+        // does not know how to name.
+        other => {
+            return Err(altium_format_types::InvalidEnumValue {
+                type_name: "SheetStyle",
+                value: other as i64,
+            }
+            .into());
+        }
+    })
+}
+
 fn cross_ref_sheet_to_spec(v: CrossRefSheetStyle) -> Result<&'static str, SpecError> {
     match v {
         CrossRefSheetStyle::None => Ok("none"),
@@ -1351,12 +1413,10 @@ fn dump_pcb_pad(out: &mut String, pad: &PcbLibPad, indent: usize) {
             format!("{:?}", pad.shape).to_lowercase()
         ));
     }
-    if pad.x_size != Coord::ZERO {
-        parts.push(format!("x_size: {}", coord_to_spec(pad.x_size)));
-    }
-    if pad.y_size != Coord::ZERO {
-        parts.push(format!("y_size: {}", coord_to_spec(pad.y_size)));
-    }
+    // Always emit sizes: omitting them means "default 60mil" on apply, which
+    // would silently grow zero-size NPTH (mounting hole) pads.
+    parts.push(format!("x_size: {}", coord_to_spec(pad.x_size)));
+    parts.push(format!("y_size: {}", coord_to_spec(pad.y_size)));
     if pad.hole_size != Coord::ZERO {
         parts.push(format!("hole_size: {}", coord_to_spec(pad.hole_size)));
     }
@@ -1379,6 +1439,17 @@ fn dump_pcb_pad(out: &mut String, pad: &PcbLibPad, indent: usize) {
             format!("{:?}", pad.pad_mode).to_lowercase()
         ));
         dump_pad_stack_inline(&pad.stack, &mut parts);
+    }
+    // Hole shape/slot are independent of stack mode (slotted NPTH holes occur
+    // on Simple pads too); omitted only at the apply-side defaults.
+    if pad.pad_mode == PadStackMode::Simple
+        && pad.stack.hole_shape != altium_format_types::pcb::HoleType::Round
+    {
+        parts.push(format!(
+            "hole_shape: {}, slot_size: {}",
+            hole_type_to_spec_string(pad.stack.hole_shape),
+            coord_to_spec(pad.stack.slot_size)
+        ));
     }
 
     out.push_str(&format!(
@@ -1412,10 +1483,10 @@ fn dump_pad_stack_inline(stack: &PadStack, parts: &mut Vec<String>) {
             coord_to_spec(bot.y_size),
         ));
     }
-    if stack.hole_shape != PadShape::Round {
+    if stack.hole_shape != altium_format_types::pcb::HoleType::Round {
         parts.push(format!(
             "hole_shape: {}",
-            format!("{:?}", stack.hole_shape).to_lowercase()
+            hole_type_to_spec_string(stack.hole_shape)
         ));
     }
     if stack.slot_size != Coord::ZERO {
@@ -1485,6 +1556,8 @@ fn dump_pcb_graphic(out: &mut String, g: &PcbGraphic, indent: usize) {
                 format!("at: ({}, {})", lx, ly),
                 format!("text: {}", quote_string(&t.text)),
             ];
+            // Always emit height: omission means a 60mil apply-side default.
+            props.push(format!("height: {}", coord_to_spec(t.height)));
             if t.rotation != 0.0 {
                 props.push(format!("rotation: {}", format_float(t.rotation)));
             }
@@ -1493,13 +1566,13 @@ fn dump_pcb_graphic(out: &mut String, g: &PcbGraphic, indent: usize) {
         PcbGraphic::Via(v) => {
             let lx = coord_to_spec(v.location.x);
             let ly = coord_to_spec(v.location.y);
-            let mut props = vec![format!("at: ({}, {})", lx, ly)];
-            if v.diameter != Coord::ZERO {
-                props.push(format!("diameter: {}", coord_to_spec(v.diameter)));
-            }
-            if v.hole_size != Coord::ZERO {
-                props.push(format!("hole_size: {}", coord_to_spec(v.hole_size)));
-            }
+            // Always emit sizes: omission means nonzero apply-side defaults
+            // (50mil/28mil), which would silently resize zero-size vias.
+            let props = vec![
+                format!("at: ({}, {})", lx, ly),
+                format!("diameter: {}", coord_to_spec(v.diameter)),
+                format!("hole_size: {}", coord_to_spec(v.hole_size)),
+            ];
             out.push_str(&format!("{}via {{ {} }}\n", p, props.join(", ")));
         }
         PcbGraphic::Region(r) => {
@@ -1552,7 +1625,7 @@ fn dump_contour_segments(contour: &PcbContour) -> String {
                 end_angle,
             } => {
                 format!(
-                    "arc({}, {}, center: ({}, {}), radius: {}, {}-{})",
+                    "arc(endpoint: ({}, {}), center: ({}, {}), radius: {}, start_angle: {}, end_angle: {})",
                     coord_to_spec(endpoint.x),
                     coord_to_spec(endpoint.y),
                     coord_to_spec(center.x),
@@ -1582,6 +1655,10 @@ fn dump_component(out: &mut String, comp: &Component) {
         }
     }
 
+    if comp.part_count > 1 {
+        out.push_str(&format!("    part_count: {}\n", comp.part_count));
+    }
+
     // Pre-scan: collect all unique swap group strings from all pins.
     // Groups with 2+ members get declared as `swap_group` blocks.
     let declared_swap_groups: HashSet<String> = {
@@ -1599,9 +1676,12 @@ fn dump_component(out: &mut String, comp: &Component) {
         }
         // Deduplicate
         let unique: HashSet<String> = all_ids.into_iter().map(|s| s.to_string()).collect();
-        // Emit swap_group declarations for groups that appear on 2+ pins
+        // Emit swap_group declarations for groups that appear on 2+ pins,
+        // in sorted order so output is deterministic across dumps.
+        let mut sorted: Vec<&String> = unique.iter().collect();
+        sorted.sort();
         let mut declared = HashSet::new();
-        for sg in &unique {
+        for sg in sorted {
             // Only declare swap_group bindings for valid identifiers.
             // Groups with special characters can't be referenced as $name,
             // so they use inline string literals instead.
@@ -1811,24 +1891,21 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
             ));
         }
         Graphic::Rectangle(r) => {
-            let mut props = vec![
-                format!("location: {}", r.location),
-                format!("corner: {}", r.corner),
-            ];
-            if r.is_solid {
-                props.push("is_solid: true".to_owned());
+            let mut props = vec![format!("from: {}", r.location), format!("to: {}", r.corner)];
+            if !r.is_solid {
+                props.push("is_solid: false".to_owned());
             }
             out.push_str(&format!("{}rectangle {{ {} }}\n", pad, props.join(", ")));
         }
         Graphic::RoundRectangle(r) => {
             let mut props = vec![
-                format!("location: {}", r.location),
-                format!("corner: {}", r.corner),
+                format!("from: {}", r.location),
+                format!("to: {}", r.corner),
                 format!("corner_x_radius: {}", r.corner_x_radius),
                 format!("corner_y_radius: {}", r.corner_y_radius),
             ];
-            if r.is_solid {
-                props.push("is_solid: true".to_owned());
+            if !r.is_solid {
+                props.push("is_solid: false".to_owned());
             }
             out.push_str(&format!(
                 "{}round_rectangle {{ {} }}\n",
@@ -1869,8 +1946,8 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
                 format!("radius: {}", e.radius),
                 format!("secondary_radius: {}", e.secondary_radius),
             ];
-            if e.is_solid {
-                props.push("is_solid: true".to_owned());
+            if !e.is_solid {
+                props.push("is_solid: false".to_owned());
             }
             out.push_str(&format!("{}ellipse {{ {} }}\n", pad, props.join(", ")));
         }
@@ -1882,6 +1959,9 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
             props.push(format!("start_angle: {}", p_.start_angle));
             if let Some(ea) = p_.end_angle {
                 props.push(format!("end_angle: {}", ea));
+            }
+            if !p_.is_solid {
+                props.push("is_solid: false".to_owned());
             }
             out.push_str(&format!("{}pie {{ {} }}\n", pad, props.join(", ")));
         }
@@ -1896,8 +1976,8 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
         Graphic::Polygon(pg) => {
             let verts: Vec<String> = pg.vertices.iter().map(|v| format!("{}", v)).collect();
             let mut props = vec![format!("vertices: [{}]", verts.join(", "))];
-            if pg.is_solid {
-                props.push("is_solid: true".to_owned());
+            if !pg.is_solid {
+                props.push("is_solid: false".to_owned());
             }
             out.push_str(&format!("{}polygon {{ {} }}\n", pad, props.join(", ")));
         }
@@ -1919,7 +1999,7 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
         }
         Graphic::TextFrame(tf) => {
             out.push_str(&format!(
-                "{}text_frame {{ location: {}, corner: {}, text: {} }}\n",
+                "{}text_frame {{ from: {}, to: {}, text: {} }}\n",
                 pad,
                 tf.location,
                 tf.corner,
@@ -1928,7 +2008,7 @@ fn dump_graphic(out: &mut String, g: &Graphic, indent: usize) {
         }
         Graphic::Image(img) => {
             out.push_str(&format!(
-                "{}image {{ location: {}, corner: {}, file: {} }}\n",
+                "{}image {{ from: {}, to: {}, file_name: {} }}\n",
                 pad,
                 img.location,
                 img.corner,
@@ -1965,6 +2045,18 @@ fn dump_footprint_map(out: &mut String, fp: &FootprintMap, indent: usize) {
     // Check if all mappings are 1:1 (pin == pad)
     let all_one_to_one = fp.pin_pad_maps.iter().all(|m| m.pin == m.pad);
 
+    if all_one_to_one && !fp.description.is_empty() {
+        // 1:1 mapping that still carries a description: block form, no pairs.
+        out.push_str(&format!(
+            "{}footprint {} {{\n{}    description: {}\n{}}}\n",
+            pad,
+            quote_entity_name(&fp.model_name),
+            pad,
+            quote_string(&fp.description),
+            pad
+        ));
+        return;
+    }
     if all_one_to_one {
         // Emit implicit 1:1 form — just the footprint reference, no body
         out.push_str(&format!(
@@ -1980,7 +2072,11 @@ fn dump_footprint_map(out: &mut String, fp: &FootprintMap, indent: usize) {
             quote_entity_name(&fp.model_name)
         ));
         if !fp.description.is_empty() {
-            out.push_str(&format!("{}    // {}\n", pad, fp.description));
+            out.push_str(&format!(
+                "{}    description: {}\n",
+                pad,
+                quote_string(&fp.description)
+            ));
         }
         for m in &fp.pin_pad_maps {
             out.push_str(&format!(
@@ -1997,16 +2093,13 @@ fn dump_footprint_map(out: &mut String, fp: &FootprintMap, indent: usize) {
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
 /// Format a coordinate in mils as the most natural unit.
-/// Prefers mm if the value is "clean" (exact to 3 decimal places in mm).
-/// Falls back to mils otherwise.
-/// Used by PcbLib dump (which still works with raw f64 mils from DumpView).
+/// Delegates to `Coord`'s Display impl, which guarantees the printed string
+/// re-parses (via the spec-language unit conversions) to the exact same
+/// internal value. Used by PcbLib dump (which still works with raw f64 mils
+/// from DumpView); the f64 always originates from an integer `Coord`, so the
+/// round-trip through `from_mils_f64` is lossless.
 pub fn format_coord_mils(mils: f64) -> String {
-    let mm = mils * 0.0254;
-    if (mm * 1000.0).round() == mm * 1000.0 && mm.abs() >= 0.001 {
-        format!("{}mm", format_float(mm))
-    } else {
-        format!("{}mil", format_float(mils))
-    }
+    Coord::from_mils_f64(mils).to_string()
 }
 
 /// Format a float, removing trailing zeros after the decimal point.
@@ -2020,10 +2113,15 @@ pub fn format_float(v: f64) -> String {
 
 /// Quote an entity name: bare if it's a valid ident or integer, quoted otherwise.
 pub fn quote_entity_name(name: &str) -> String {
-    if name.parse::<i64>().is_ok() {
-        return name.to_string();
+    // Bare integer names are only safe when the lexer (non-negative i32
+    // tokens; a leading '-' lexes as a separate Minus token) reproduces the
+    // exact same string — otherwise (overflow, leading zeros, sign) quote.
+    if let Ok(v) = name.parse::<i32>() {
+        if v >= 0 && v.to_string() == name {
+            return name.to_string();
+        }
     }
-    if is_valid_ident(name) {
+    if is_valid_ident(name) && !crate::lexer::is_keyword(name) {
         return name.to_string();
     }
     format!("\"{}\"", name.replace('\\', "\\\\").replace('"', "\\\""))
@@ -2163,14 +2261,19 @@ mod tests {
 
     #[test]
     fn test_coord_display_mm_clean() {
-        // 100 mils = 2.54 mm (clean value)
-        let c = Coord::from_mils(100).expect("test coord");
+        // A true mm-grid coordinate (Altium stores 2.54mm as 2.54 * 393,701
+        // = 1,000,001 units) displays in mm.
+        let c = Coord::from_mms(2.54);
         assert_eq!(format!("{}", c), "2.54mm");
+        // A mil-grid coordinate must stay in mils even when the mm form looks
+        // clean: "2.54mm" would re-parse to 1,000,001 units, not 1,000,000.
+        let c = Coord::from_mils(100).expect("test coord");
+        assert_eq!(format!("{}", c), "100mil");
     }
 
     #[test]
     fn test_coord_display_mils_fallback() {
-        // 1 mil = 0.0254 mm (not clean to 3 decimal places)
+        // 1 mil = 0.0254 mm (more than 3 decimal places in mm)
         let c = Coord::from_mils(1).expect("test coord");
         assert_eq!(format!("{}", c), "1mil");
     }
@@ -2183,9 +2286,12 @@ mod tests {
 
     #[test]
     fn test_format_coord_mils_mm_clean() {
-        // 100 mils = 2.54 mm (clean value)
-        let s = format_coord_mils(100.0);
+        // A true mm-grid value (2.54mm = 100.0001 mils) displays in mm.
+        let s = format_coord_mils(Coord::from_mms(2.54).to_mils());
         assert_eq!(s, "2.54mm");
+        // A mil-grid value stays in mils.
+        let s = format_coord_mils(100.0);
+        assert_eq!(s, "100mil");
     }
 
     #[test]
@@ -2218,7 +2324,10 @@ mod tests {
     fn test_quote_entity_name_integer() {
         assert_eq!(quote_entity_name("1"), "1");
         assert_eq!(quote_entity_name("42"), "42");
-        assert_eq!(quote_entity_name("-1"), "-1");
+        // Not representable as a single lexer token: must be quoted.
+        assert_eq!(quote_entity_name("-1"), "\"-1\"");
+        assert_eq!(quote_entity_name("007"), "\"007\"");
+        assert_eq!(quote_entity_name("692121030100"), "\"692121030100\"");
     }
 
     #[test]
@@ -2240,12 +2349,19 @@ mod tests {
 
     #[test]
     fn test_format_coord_point_at_clean_mm() {
-        // 100 mils = 2.54 mm (clean), 200 mils = 5.08 mm (clean)
+        // True mm-grid coordinates display in mm.
+        let pt = altium_format_types::CoordPoint {
+            x: Coord::from_mms(2.54),
+            y: Coord::from_mms(5.08),
+        };
+        assert_eq!(format_coord_point_at(pt), "(2.54mm, 5.08mm)");
+        // Mil-grid coordinates stay in mils (the mm form would not re-parse
+        // to the same internal value).
         let pt = altium_format_types::CoordPoint {
             x: Coord::from_mils(100).expect("100 mils"),
             y: Coord::from_mils(200).expect("200 mils"),
         };
-        assert_eq!(format_coord_point_at(pt), "(2.54mm, 5.08mm)");
+        assert_eq!(format_coord_point_at(pt), "(100mil, 200mil)");
     }
 
     #[test]
@@ -2259,12 +2375,16 @@ mod tests {
 
     #[test]
     fn test_format_coord_point_at_negative() {
-        // -100 mils = -2.54 mm
+        let pt = altium_format_types::CoordPoint {
+            x: Coord::from_mms(-2.54),
+            y: Coord::from_mms(-5.08),
+        };
+        assert_eq!(format_coord_point_at(pt), "(-2.54mm, -5.08mm)");
         let pt = altium_format_types::CoordPoint {
             x: Coord::from_mils(-100).expect("-100 mils"),
             y: Coord::from_mils(-200).expect("-200 mils"),
         };
-        assert_eq!(format_coord_point_at(pt), "(-2.54mm, -5.08mm)");
+        assert_eq!(format_coord_point_at(pt), "(-100mil, -200mil)");
     }
 
     /// Build a minimal `PcbDocComponent` for use in tests.
@@ -2318,8 +2438,8 @@ mod tests {
         assert!(pos_c10 < pos_u1, "C10 should precede U1");
         assert!(pos_u1 < pos_u2, "U1 should precede U2");
 
-        // U1: x=100mils=2.54mm, y=200mils=5.08mm.
-        assert!(out.contains("(2.54mm, 5.08mm)"), "U1 coordinates wrong");
+        // U1: x=100mils, y=200mils (mil-grid values stay in mils).
+        assert!(out.contains("(100mil, 200mil)"), "U1 coordinates wrong");
         assert!(out.contains("rotation: 90"), "U1 rotation wrong");
         assert!(out.contains("rotation: 270"), "C10 rotation wrong");
     }
@@ -2370,7 +2490,7 @@ mod tests {
         dump_placement_block_from_parts(&mut out, &components, Some(gap));
 
         assert!(out.contains("clearance {"), "clearance block missing");
-        assert!(out.contains("all: 2.54mm"), "clearance value wrong");
+        assert!(out.contains("all: 100mil"), "clearance value wrong");
     }
 
     #[test]
@@ -2628,6 +2748,404 @@ component C {
             formatted.contains("group = \"power\""),
             "group missing from formatted output:\n{}",
             formatted
+        );
+    }
+}
+
+#[cfg(test)]
+mod graphic_roundtrip_tests {
+    use super::*;
+    use crate::compiler::compile_spec;
+    use crate::model::{GraphicType as SpecGraphicType, SpecDomain, SpecModel};
+    use crate::parser::parse_spec;
+    use altium_format::api::{
+        ImageGraphic, PieGraphic, PolylineGraphic, RectangleGraphic, SchAngle, TextFrameGraphic,
+    };
+    use altium_format_types::CoordPoint;
+
+    fn pt(x_mils: i32, y_mils: i32) -> CoordPoint {
+        CoordPoint {
+            x: Coord::from_mils(x_mils).unwrap(),
+            y: Coord::from_mils(y_mils).unwrap(),
+        }
+    }
+
+    /// Every graphic emitted by `dump_graphic` must compile back through the
+    /// generic graphic property path with its geometry intact. This guards
+    /// against dump/grammar key drift (e.g. `location:` vs `from:`), which the
+    /// compiler previously ignored silently, zeroing the geometry on apply.
+    #[test]
+    fn dumped_graphics_compile_back_with_geometry_intact() {
+        let graphics = vec![
+            Graphic::Rectangle(RectangleGraphic {
+                unique_id: String::new(),
+                owner_part_id: 1,
+                location: pt(10, -20),
+                corner: pt(700, 0),
+                line_width: Default::default(),
+                line_style: Default::default(),
+                color: Default::default(),
+                area_color: Default::default(),
+                is_solid: false, // hollow: must survive the executor's solid default
+                transparent: false,
+            }),
+            Graphic::Polyline(PolylineGraphic {
+                unique_id: String::new(),
+                owner_part_id: 1,
+                vertices: vec![pt(0, 0), pt(100, 0), pt(100, 200)],
+                line_width: Default::default(),
+                line_style: Default::default(),
+                start_line_shape: Default::default(),
+                end_line_shape: Default::default(),
+                line_shape_size: Default::default(),
+                color: Default::default(),
+            }),
+            Graphic::Pie(PieGraphic {
+                owner_part_id: 1,
+                location: pt(50, 50),
+                radius: Coord::from_mils(30).unwrap(),
+                start_angle: SchAngle(0.0),
+                end_angle: Some(SchAngle(90.0)),
+                line_width: Default::default(),
+                color: Default::default(),
+                area_color: Default::default(),
+                is_solid: false,
+            }),
+            Graphic::TextFrame(TextFrameGraphic {
+                unique_id: String::new(),
+                owner_part_id: 1,
+                location: pt(-10, -10),
+                corner: pt(90, 40),
+                line_width: Default::default(),
+                color: Default::default(),
+                area_color: Default::default(),
+                text_color: Default::default(),
+                font_id: 1,
+                is_solid: false,
+                show_border: true,
+                alignment: Default::default(),
+                word_wrap: false,
+                clip_to_rect: false,
+                text: "note".to_string(),
+                text_margin: Coord::ZERO,
+                transparent: false,
+            }),
+            Graphic::Image(ImageGraphic {
+                unique_id: String::new(),
+                owner_part_id: 1,
+                location: pt(0, 0),
+                corner: pt(400, 300),
+                orientation: Default::default(),
+                line_width: Default::default(),
+                color: Default::default(),
+                is_solid: false,
+                keep_aspect: true,
+                embed_image: false,
+                file_name: "logo.png".to_string(),
+            }),
+        ];
+
+        let mut body = String::new();
+        for g in &graphics {
+            dump_graphic(&mut body, g, 8);
+        }
+        let src = format!("component \"RT\" {{\n    part 1 {{\n{body}    }}\n}}\n");
+
+        let file = parse_spec(&src)
+            .unwrap_or_else(|e| panic!("dump output failed to parse: {e:?}\n{src}"));
+        let model = compile_spec(&file, SpecDomain::SchLib)
+            .unwrap_or_else(|e| panic!("dump output failed to compile: {e:?}\n{src}"));
+        let SpecModel::SchLib(lib) = model else {
+            panic!("expected SchLib model");
+        };
+        let part = &lib.components[0].parts[0];
+        assert_eq!(part.graphics.len(), graphics.len(), "graphic count\n{src}");
+
+        let rect = &part.graphics[0];
+        assert!(matches!(rect.graphic_type, SpecGraphicType::Rectangle));
+        assert_eq!(
+            rect.properties.from,
+            Some(pt(10, -20)),
+            "rectangle from\n{src}"
+        );
+        assert_eq!(rect.properties.to, Some(pt(700, 0)), "rectangle to\n{src}");
+        assert_eq!(
+            rect.properties.is_solid,
+            Some(false),
+            "rectangle is_solid\n{src}"
+        );
+
+        let poly = &part.graphics[1];
+        assert!(matches!(poly.graphic_type, SpecGraphicType::Polyline));
+        assert_eq!(
+            poly.properties.points,
+            Some(vec![pt(0, 0), pt(100, 0), pt(100, 200)]),
+            "polyline vertices\n{src}"
+        );
+
+        let pie = &part.graphics[2];
+        assert!(matches!(pie.graphic_type, SpecGraphicType::Pie));
+        assert_eq!(pie.properties.center, Some(pt(50, 50)), "pie center\n{src}");
+        assert_eq!(pie.properties.is_solid, Some(false), "pie is_solid\n{src}");
+
+        let tf = &part.graphics[3];
+        assert!(matches!(tf.graphic_type, SpecGraphicType::TextFrame));
+        assert_eq!(
+            tf.properties.from,
+            Some(pt(-10, -10)),
+            "text_frame from\n{src}"
+        );
+        assert_eq!(tf.properties.to, Some(pt(90, 40)), "text_frame to\n{src}");
+        assert_eq!(
+            tf.properties.text.as_deref(),
+            Some("note"),
+            "text_frame text\n{src}"
+        );
+
+        let img = &part.graphics[4];
+        assert!(matches!(img.graphic_type, SpecGraphicType::Image));
+        assert_eq!(img.properties.from, Some(pt(0, 0)), "image from\n{src}");
+        assert_eq!(img.properties.to, Some(pt(400, 300)), "image to\n{src}");
+        assert_eq!(
+            img.properties.file_name.as_deref(),
+            Some("logo.png"),
+            "image file_name\n{src}"
+        );
+    }
+
+    /// The compiler must reject unknown graphic property keys instead of
+    /// silently dropping the data they carry.
+    #[test]
+    fn unknown_graphic_property_is_rejected() {
+        let src = r#"
+component "RT" {
+    part 1 {
+        rectangle { location: (0mil, 0mil), corner: (10mil, 10mil) }
+    }
+}
+"#;
+        let file = parse_spec(src).expect("parse");
+        let err = match compile_spec(&file, SpecDomain::SchLib) {
+            Ok(_) => panic!("compile must reject unknown graphic key"),
+            Err(e) => e,
+        };
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("location"),
+            "error should name the unknown key: {msg}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod pcb_graphic_roundtrip_tests {
+    use super::*;
+    use crate::compiler::compile_spec;
+    use crate::model::{ContourSegmentSpec, PcbGraphicType, SpecDomain, SpecModel};
+    use crate::parser::parse_spec;
+    use altium_format::api::{
+        ComponentBodyGraphic, ContourSegment, FillGraphic, PcbContour, RegionGraphic, TextGraphic,
+        TrackGraphic, ViaGraphic,
+    };
+    use altium_format_types::CoordPoint;
+    use altium_format_types::pcb::{LayerRef, PcbFlags, V6Layer};
+
+    fn pt(x_mils: i32, y_mils: i32) -> CoordPoint {
+        CoordPoint {
+            x: Coord::from_mils(x_mils).unwrap(),
+            y: Coord::from_mils(y_mils).unwrap(),
+        }
+    }
+
+    /// Every PCB footprint graphic emitted by `dump_pcb_graphic` must compile
+    /// back through `compile_pcb_graphic_properties` with its geometry intact.
+    /// Guards against dump/grammar key drift (`at:` vs `center`, `corner1:` vs
+    /// `from`, unparsed `outline:`/`height:`/`model:`), which previously zeroed
+    /// or dropped geometry on apply.
+    #[test]
+    fn dumped_pcb_graphics_compile_back_with_geometry_intact() {
+        let top = LayerRef::from_v6(V6Layer::TopLayer);
+        let mech = LayerRef::from_v6(V6Layer::Mechanical1);
+        let graphics = vec![
+            PcbGraphic::Track(TrackGraphic {
+                unique_id: None,
+                layer: top.clone(),
+                flags: PcbFlags::default(),
+                start: pt(-50, 0),
+                end: pt(50, 0),
+                width: Coord::from_mils(10).unwrap(),
+            }),
+            PcbGraphic::Fill(FillGraphic {
+                unique_id: None,
+                layer: top.clone(),
+                flags: PcbFlags::default(),
+                corner1: pt(-30, -20),
+                corner2: pt(30, 20),
+                rotation: 45.0,
+            }),
+            PcbGraphic::Via(ViaGraphic {
+                unique_id: None,
+                layer: LayerRef::from_v6(V6Layer::MultiLayer),
+                flags: PcbFlags::default(),
+                location: pt(12, 34),
+                diameter: Coord::from_mils(24).unwrap(),
+                hole_size: Coord::from_mils(12).unwrap(),
+                from_layer: top.clone(),
+                to_layer: LayerRef::from_v6(V6Layer::BottomLayer),
+                is_testpoint_top: false,
+                is_testpoint_bottom: false,
+                is_assy_testpoint_top: false,
+                is_assy_testpoint_bottom: false,
+                solder_mask_override: false,
+                use_separate_solder_mask_expansion: false,
+                solder_mask_expansion_from_hole_edge: false,
+                paste_mask_override: false,
+            }),
+            PcbGraphic::Text(TextGraphic {
+                unique_id: None,
+                layer: top.clone(),
+                flags: PcbFlags::default(),
+                location: pt(5, 6),
+                text: "REF".to_string(),
+                rotation: 90.0,
+                height: Coord::from_mils(40).unwrap(),
+                width: Coord::ZERO,
+                color: Default::default(),
+                font_name: String::new(),
+                is_mirrored: false,
+            }),
+            PcbGraphic::Region(RegionGraphic {
+                unique_id: None,
+                layer: top,
+                flags: PcbFlags::default(),
+                kind: Default::default(),
+                outline: PcbContour {
+                    segments: vec![
+                        ContourSegment::Line { endpoint: pt(0, 0) },
+                        ContourSegment::Arc {
+                            endpoint: pt(100, 0),
+                            center: pt(50, 0),
+                            radius: Coord::from_mils(50).unwrap(),
+                            start_angle: 180.0,
+                            end_angle: 360.0,
+                        },
+                        ContourSegment::Line {
+                            endpoint: pt(100, 80),
+                        },
+                    ],
+                },
+                holes: Vec::new(),
+            }),
+            PcbGraphic::ComponentBody(ComponentBodyGraphic {
+                unique_id: None,
+                layer: mech,
+                flags: PcbFlags::default(),
+                standoff_height: Coord::ZERO,
+                overall_height: Coord::from_mils(47).unwrap(),
+                body_color_3d: Default::default(),
+                body_opacity_3d: 1.0,
+                model_name: "R0603.step".to_string(),
+                outline: PcbContour {
+                    segments: vec![
+                        ContourSegment::Line {
+                            endpoint: pt(-31, 15),
+                        },
+                        ContourSegment::Line {
+                            endpoint: pt(31, 15),
+                        },
+                        ContourSegment::Line {
+                            endpoint: pt(31, -15),
+                        },
+                    ],
+                },
+            }),
+        ];
+
+        let mut body = String::new();
+        for g in &graphics {
+            dump_pcb_graphic(&mut body, g, 4);
+        }
+        let src = format!("footprint \"RT\" {{\n{body}}}\n");
+
+        let file = parse_spec(&src)
+            .unwrap_or_else(|e| panic!("dump output failed to parse: {e:?}\n{src}"));
+        let model = compile_spec(&file, SpecDomain::PcbLib)
+            .unwrap_or_else(|e| panic!("dump output failed to compile: {e:?}\n{src}"));
+        let SpecModel::PcbLib(lib) = model else {
+            panic!("expected PcbLib model");
+        };
+        let fp = &lib.footprints[0];
+        assert_eq!(fp.graphics.len(), graphics.len(), "graphic count\n{src}");
+
+        let track = &fp.graphics[0];
+        assert!(matches!(track.graphic_type, PcbGraphicType::Track));
+        assert_eq!(track.properties.from, Some(pt(-50, 0)), "track from\n{src}");
+        assert_eq!(track.properties.to, Some(pt(50, 0)), "track to\n{src}");
+
+        let fill = &fp.graphics[1];
+        assert!(matches!(fill.graphic_type, PcbGraphicType::Fill));
+        assert_eq!(
+            fill.properties.corner1,
+            Some(pt(-30, -20)),
+            "fill corner1\n{src}"
+        );
+        assert_eq!(
+            fill.properties.corner2,
+            Some(pt(30, 20)),
+            "fill corner2\n{src}"
+        );
+        assert_eq!(fill.properties.rotation, Some(45.0), "fill rotation\n{src}");
+
+        let via = &fp.graphics[2];
+        assert!(matches!(via.graphic_type, PcbGraphicType::Via));
+        assert_eq!(via.properties.at, Some(pt(12, 34)), "via at\n{src}");
+        assert_eq!(
+            via.properties.diameter,
+            Some(Coord::from_mils(24).unwrap()),
+            "via diameter\n{src}"
+        );
+
+        let text = &fp.graphics[3];
+        assert!(matches!(text.graphic_type, PcbGraphicType::Text));
+        assert_eq!(text.properties.at, Some(pt(5, 6)), "text at\n{src}");
+        assert_eq!(
+            text.properties.height,
+            Some(Coord::from_mils(40).unwrap()),
+            "text height\n{src}"
+        );
+
+        let region = &fp.graphics[4];
+        assert!(matches!(region.graphic_type, PcbGraphicType::Region));
+        let outline = region.properties.outline.as_ref().expect("region outline");
+        assert_eq!(outline.len(), 3, "region outline segments\n{src}");
+        assert_eq!(
+            outline[1],
+            ContourSegmentSpec::Arc {
+                endpoint: pt(100, 0),
+                center: pt(50, 0),
+                radius: Coord::from_mils(50).unwrap(),
+                start_angle: 180.0,
+                end_angle: 360.0,
+            },
+            "region arc segment\n{src}"
+        );
+
+        let body_g = &fp.graphics[5];
+        assert!(matches!(body_g.graphic_type, PcbGraphicType::ComponentBody));
+        assert_eq!(
+            body_g.properties.height,
+            Some(Coord::from_mils(47).unwrap()),
+            "component_body height\n{src}"
+        );
+        assert_eq!(
+            body_g.properties.model.as_deref(),
+            Some("R0603.step"),
+            "component_body model\n{src}"
+        );
+        assert_eq!(
+            body_g.properties.outline.as_ref().map(|o| o.len()),
+            Some(3),
+            "component_body outline\n{src}"
         );
     }
 }

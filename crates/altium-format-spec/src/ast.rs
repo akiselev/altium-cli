@@ -174,6 +174,8 @@ pub struct FootprintMapDecl {
     /// `None` = implicit 1:1 mapping (pin N → pad N for all pads).
     /// `Some(pairs)` = explicit pin:pad remapping.
     pub maps: Option<Vec<Spanned<PinPadPair>>>,
+    /// Footprint model description (`description: "..."` in the body).
+    pub description: Option<Spanned<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -185,8 +187,16 @@ pub enum FootprintRef {
 /// $pin_ref: $footprint_ref.padN
 #[derive(Debug, Clone, PartialEq)]
 pub struct PinPadPair {
-    pub pin: Spanned<DollarPath>,
-    pub pad: Spanned<DollarPath>,
+    pub pin: PinPadRef,
+    pub pad: PinPadRef,
+}
+
+/// A pin or pad reference in a footprint pin-pad mapping: either a `$name`
+/// dollar-path reference or a literal designator (`pin "1": pad "3"`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PinPadRef {
+    Dollar(Spanned<DollarPath>),
+    Literal(Spanned<String>),
 }
 
 /// [binding =] footprint NAME { ... }

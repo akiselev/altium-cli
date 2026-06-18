@@ -338,6 +338,7 @@ mod tests {
             annotation: None,
             fonts: Vec::new(),
             power_declarations: std::collections::HashMap::new(),
+            sheet_style: None,
             custom_width: None,
             custom_height: None,
             snap_grid_on: None,

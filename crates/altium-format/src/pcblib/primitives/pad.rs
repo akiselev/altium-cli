@@ -546,7 +546,7 @@ fn parse_stack_subrecord(data: &[u8]) -> Result<Option<PcbPadStackData>> {
     }
 
     let padding_261 = reader.read_u8()?;
-    let hole_shape = PadShape::try_from(reader.read_u8()?)?;
+    let hole_shape = altium_format_types::pcb::HoleType::try_from(reader.read_u8()?)?;
     let slot_size = reader.read_coord()?;
     let slot_rotation = reader.read_f64_le()?;
 

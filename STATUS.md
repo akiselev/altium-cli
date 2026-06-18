@@ -1,6 +1,6 @@
 # Codebase Status
 
-Updated: 2026-05-25
+Updated: 2026-06-09
 
 ## Workspace Overview
 
@@ -66,6 +66,35 @@ INI-style format with indexed sections. Complete roundtrip. Read-only high-level
 ### IntLib
 Read-only. Decompresses embedded SchLib/PcbLib from CFB. Dump produces separate `.schlib-spec` and `.pcblib-spec` files.
 
+## Spec Dump/Apply Roundtrip (2026-06-09 audit)
+
+Criterion: `dump → apply (new doc) → validate → re-dump` produces an identical
+spec (modulo random annotation IDs) across the `data/` fixture corpora.
+
+| Document | Result | Remaining failures |
+|----------|--------|--------------------|
+| SchLib   | 121/126 | 4 parameter `%UTF8%` whitespace-trim upgrade artifacts; 1 duplicate component storage name on apply |
+| PcbLib   | 33/40  | 5 parser gaps on originals (Parameters streams, binary misread, SectionKeys pascal length); 2 long-footprint-name apply failures (SectionKeys not written on apply). Zero roundtrip diffs. |
+| SchDoc   | 67/1226 | 278 parser gaps on originals (`IGNOREONLOAD`, `OWNERINDEXADDITIONALLIST`, …); 881 blocked on the inline-children design gap below |
+| PcbDoc   | dump+plan runs on 79/132 | 36 corrupt/non-CFB fixtures; 15 `Dimensions6 TEXTX` parse gaps; 2 V5 files. `plan` reports false ADDs for board primitives (reconciler has no spec↔document identity matching yet). |
+
+Invariants now enforced:
+- `Coord` Display only emits mm when the printed string re-parses (via the
+  393,701 units/mm conversion) to the identical coordinate; mils are always exact.
+- Unknown graphic property keys are compile errors (sch + pcb paths) instead of
+  silently dropped geometry.
+- Dump emission keys match the grammar (rectangle `from`/`to`, polyline
+  `vertices`, fill `corner1`/`corner2`, via `at`, component_body
+  `height`/`model`/`outline` with typed `arc(...)` segments, pad
+  `mid_*`/`bot_*`/`hole_shape`/`slot_size`, `is_solid: false` emission,
+  explicit pad sizes, `part_count`, sheet `style:`).
+
+**Design gap (needs decision)**: SchDoc spec dump emits inline component
+children (pins, graphics, parameters), but `apply` creates components with
+empty children — the apply path was designed for SchLib-import authoring
+(`symbol: $lib.Name` + `pin X -> #NET`), not full-fidelity sheet
+reconstruction. Sheet-level document `parameter` blocks are also not applied.
+
 ## Known Issues
 
 **Moderate:**
@@ -73,6 +102,19 @@ Read-only. Decompresses embedded SchLib/PcbLib from CFB. Dump produces separate 
 - PcbDoc rendering not supported (no SVG/PNG)
 
 **Minor:**
+- PcbLib `apply` cannot create footprints whose names exceed the 31-char CFB
+  storage limit (SectionKeys mapping not generated on apply)
+- SchLib parameter values with non-ASCII chars get whitespace-trimmed via the
+  `%UTF8%` duplicate entry on save (matches documented Altium upgrade
+  behavior; verify against decompiled reader precedence)
+- Spec language does not yet capture (silently normalized on apply): pin
+  `show_name`/`show_designator`, schematic graphic colors/line widths, pad
+  `corner_radius_pct`/`inner_layers`/`slot_rotation`, component_body
+  `standoff_height`/3D color/opacity, text_frame `word_wrap`/`clip_to_rect`,
+  image `embed_image`/`keep_aspect`, PCB region `holes`/`kind` (PcbLib path)
+- PcbLib dump skips regions with empty outlines (graphic count changes silently)
+- `compile_pad`/pin compilation still accept unknown keys silently (graphics
+  and sheet metadata reject them; pads/pins should too)
 - PcbDoc: 2/96 V6 files failing (EmbeddedFonts, WideStrings edge cases — see PCBDOC-next.md)
 - PcbDoc V5 format not supported (2 test files deferred)
 - PcbDoc spec dumps currently omit layer stack and board geometry blocks until the spec compiler supports applying them.

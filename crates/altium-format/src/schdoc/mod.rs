@@ -212,6 +212,37 @@ impl SchDoc {
                         strikeout: f.strikeout,
                     })
                     .collect();
+                // Write back every display setting the API sheet models
+                // (mirror of api::schdoc_read sheet construction). Fields not
+                // modeled by the API (zones, margins, MBCS, ...) keep their
+                // existing values.
+                let ds = &mut s.display_settings;
+                ds.snap_grid_on = Some(sheet.snap_grid_on);
+                ds.snap_grid_size = Some(sheet.snap_grid_size);
+                ds.visible_grid_on = Some(sheet.visible_grid_on);
+                ds.visible_grid_size = Some(sheet.visible_grid_size);
+                ds.hot_spot_grid_on = Some(sheet.hot_spot_grid_on);
+                ds.hot_spot_grid_size = Some(sheet.hot_spot_grid_size);
+                ds.sheet_style = Some(sheet.sheet_style);
+                ds.use_custom_sheet = Some(sheet.use_custom_sheet);
+                ds.custom_x = Some(sheet.custom_width);
+                ds.custom_y = Some(sheet.custom_height);
+                ds.border_on = Some(sheet.border_on);
+                ds.title_block_on = Some(sheet.title_block_on);
+                ds.show_template_graphics = Some(sheet.show_template_graphics);
+                ds.show_hidden_pins = Some(sheet.show_hidden_pins);
+                ds.template_file_name = Some(sheet.template_file_name.clone());
+                ds.display_unit = Some(sheet.display_unit);
+                ds.area_color = Some(sheet.area_color);
+                let orientation_raw = u8::try_from(sheet.workspace_orientation).map_err(|_| {
+                    altium_format_types::InvalidEnumValue {
+                        type_name: "SheetOrientation",
+                        value: sheet.workspace_orientation as i64,
+                    }
+                })?;
+                ds.workspace_orientation = Some(
+                    altium_format_types::sch::SheetOrientation::try_from(orientation_raw)?,
+                );
                 SchRecord::Sheet(s)
             }
             other => {

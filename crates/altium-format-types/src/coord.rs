@@ -152,16 +152,27 @@ impl SubAssign for Coord {
 
 impl fmt::Display for Coord {
     /// Format as the most natural unit for the spec language.
-    /// Prefers mm if the value is "clean" (exact to 3 decimal places in mm).
-    /// Falls back to mils otherwise.
+    ///
+    /// Invariant: the printed string MUST parse back (via the spec-language
+    /// unit conversions `from_mms`/`from_mils_f64`) to this exact coordinate.
+    /// The mil form is always exact (4 decimals = 1 internal unit), so mm is
+    /// only chosen when the printed mm string round-trips through `from_mms`
+    /// (which uses Altium's 393,701 units/mm approximation, NOT the exact
+    /// 0.0254 mm/mil ratio).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mils = self.to_mils();
-        let mm = mils * 0.0254;
-        if (mm * 1000.0).round() == mm * 1000.0 && mm.abs() >= 0.001 {
-            write!(f, "{}mm", format_float_trimmed(mm))
-        } else {
-            write!(f, "{}mil", format_float_trimmed(mils))
+        if self.0 != 0 {
+            let mm_str = format_float_trimmed(mils * 0.0254);
+            let decimals = mm_str.split('.').nth(1).map_or(0, str::len);
+            if decimals <= 3 {
+                if let Ok(parsed) = mm_str.parse::<f64>() {
+                    if Self::from_mms(parsed) == *self {
+                        return write!(f, "{}mm", mm_str);
+                    }
+                }
+            }
         }
+        write!(f, "{}mil", format_float_trimmed(mils))
     }
 }
 
@@ -325,6 +336,79 @@ impl BoundingBox {
                 x: self.max.x.max(p.x),
                 y: self.max.y.max(p.y),
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Re-parse a displayed coordinate the way the spec-language evaluator does
+    /// (`Unit::Mm` → from_mms, `Unit::Mil` → from_mils_f64).
+    fn parse_display(s: &str) -> Coord {
+        if let Some(mm) = s.strip_suffix("mm") {
+            Coord::from_mms(mm.parse::<f64>().unwrap())
+        } else if let Some(mil) = s.strip_suffix("mil") {
+            Coord::from_mils_f64(mil.parse::<f64>().unwrap())
+        } else {
+            panic!("displayed coord has no unit suffix: {s}");
+        }
+    }
+
+    #[test]
+    fn display_mil_grid_value_stays_in_mils() {
+        // 200 mil = 2,000,000 units. The "nice" mm form 5.08mm would re-parse
+        // to 2,000,001 units (5.08 * 393,701), so it must NOT be used.
+        assert_eq!(Coord::from_internal(2_000_000).to_string(), "200mil");
+        assert_eq!(Coord::from_internal(12_000_000).to_string(), "1200mil");
+    }
+
+    #[test]
+    fn display_mm_grid_value_uses_mm() {
+        // Altium stores 2.54mm as round(2.54 * 393,701) = 1,000,001 units.
+        assert_eq!(Coord::from_internal(1_000_001).to_string(), "2.54mm");
+        assert_eq!(Coord::from_mms(5.08).to_string(), "5.08mm");
+        assert_eq!(Coord::from_mms(1.0).to_string(), "1mm");
+        assert_eq!(Coord::from_mms(-0.635).to_string(), "-0.635mm");
+    }
+
+    #[test]
+    fn display_zero_is_mil() {
+        assert_eq!(Coord::ZERO.to_string(), "0mil");
+    }
+
+    #[test]
+    fn display_reparses_to_identical_coord() {
+        // Mix of mil-grid, mm-grid, and arbitrary raw values.
+        let raws = [
+            0,
+            1,
+            -1,
+            39,
+            394,
+            10_000,
+            -10_000,
+            2_000_000,
+            2_000_001,
+            1_000_000,
+            1_000_001,
+            12_000_000,
+            12_000_006,
+            393_701,
+            -393_701,
+            123_456_789,
+            i32::MAX / 2,
+            -i32::MAX / 2,
+        ];
+        for raw in raws {
+            let c = Coord::from_internal(raw);
+            let shown = c.to_string();
+            assert_eq!(
+                parse_display(&shown),
+                c,
+                "display `{shown}` of raw {raw} does not re-parse to itself"
+            );
         }
     }
 }

@@ -855,6 +855,67 @@ fn diff_pcb_pads(spec_pads: &[PadSpec], existing: &[api::Pad], out: &mut Vec<Ent
                         });
                     }
                 }
+                if let Some(pad_mode) = spec_pad.pad_mode {
+                    if pad_mode != existing_pad.pad_mode {
+                        prop_changes.push(PropChange {
+                            field: "pad_mode".to_string(),
+                            old_value: format!("{:?}", existing_pad.pad_mode),
+                            new_value: format!("{pad_mode:?}"),
+                        });
+                    }
+                }
+                // Per-layer stack overrides (mid/bot shape+size, hole shape, slot)
+                let stack = &existing_pad.stack;
+                let shape_checks: [(
+                    &str,
+                    Option<altium_format_types::PadShape>,
+                    altium_format_types::PadShape,
+                ); 2] = [
+                    ("mid_shape", spec_pad.mid_shape, stack.mid.shape),
+                    ("bot_shape", spec_pad.bot_shape, stack.bot.shape),
+                ];
+                if let Some(v) = spec_pad.hole_shape {
+                    if v != stack.hole_shape {
+                        prop_changes.push(PropChange {
+                            field: "hole_shape".to_string(),
+                            old_value: format!("{:?}", stack.hole_shape),
+                            new_value: format!("{v:?}"),
+                        });
+                    }
+                }
+                for (field, spec_val, existing_val) in shape_checks {
+                    if let Some(v) = spec_val {
+                        if v != existing_val {
+                            prop_changes.push(PropChange {
+                                field: field.to_string(),
+                                old_value: format!("{existing_val:?}"),
+                                new_value: format!("{v:?}"),
+                            });
+                        }
+                    }
+                }
+                let coord_checks: [(
+                    &str,
+                    Option<altium_format_types::Coord>,
+                    altium_format_types::Coord,
+                ); 5] = [
+                    ("mid_x_size", spec_pad.mid_x_size, stack.mid.x_size),
+                    ("mid_y_size", spec_pad.mid_y_size, stack.mid.y_size),
+                    ("bot_x_size", spec_pad.bot_x_size, stack.bot.x_size),
+                    ("bot_y_size", spec_pad.bot_y_size, stack.bot.y_size),
+                    ("slot_size", spec_pad.slot_size, stack.slot_size),
+                ];
+                for (field, spec_val, existing_val) in coord_checks {
+                    if let Some(v) = spec_val {
+                        if v != existing_val {
+                            prop_changes.push(PropChange {
+                                field: field.to_string(),
+                                old_value: format!("{}mil", existing_val.to_mils()),
+                                new_value: format!("{}mil", v.to_mils()),
+                            });
+                        }
+                    }
+                }
 
                 if prop_changes.is_empty() {
                     out.push(EntityChange::Unchanged {
@@ -2782,6 +2843,7 @@ mod tests {
                     },
                 ],
                 source: None,
+                description: None,
             }],
             graphics: vec![],
             parts: vec![],
@@ -3149,6 +3211,14 @@ mod tests {
             relief_conductor_width: None,
             relief_entries: None,
             relief_air_gap: None,
+            mid_shape: None,
+            mid_x_size: None,
+            mid_y_size: None,
+            bot_shape: None,
+            bot_x_size: None,
+            bot_y_size: None,
+            hole_shape: None,
+            slot_size: None,
         }
     }
 
@@ -3164,7 +3234,7 @@ mod tests {
         }
     }
 
-    fn make_pcblib_spec(footprints: Vec<crate::model::FootprintSpec>) -> SchLibSpec {
+    fn make_pcblib_spec(footprints: Vec<crate::model::FootprintSpec>) -> PcbLibSpec {
         PcbLibSpec { footprints }
     }
 

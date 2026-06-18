@@ -222,7 +222,10 @@ impl<'a> Printer<'a> {
             parts.push(format!("group = \"{}\"", group.node));
         }
         if let Some(source_id) = &ann.source_id {
-            parts.push(format!("source_id = \"{}\"", source_id.node));
+            parts.push(format!(
+                "source_id = \"{}\"",
+                source_id.node.replace('\\', "\\\\").replace('"', "\\\"")
+            ));
         }
 
         self.push_indent();
@@ -705,11 +708,23 @@ impl<'a> Printer<'a> {
                         self.push(",");
                     }
                     self.push(" ");
-                    self.fmt_dollar_path(&pair.node.pin.node);
+                    self.fmt_pin_pad_ref(&pair.node.pin, "pin");
                     self.push(": ");
-                    self.fmt_dollar_path(&pair.node.pad.node);
+                    self.fmt_pin_pad_ref(&pair.node.pad, "pad");
                 }
                 self.push(" }");
+            }
+        }
+    }
+
+    fn fmt_pin_pad_ref(&mut self, r: &crate::ast::PinPadRef, keyword: &str) {
+        match r {
+            crate::ast::PinPadRef::Dollar(dp) => self.fmt_dollar_path(&dp.node),
+            crate::ast::PinPadRef::Literal(s) => {
+                self.push(keyword);
+                self.push(" \"");
+                self.push(&s.node.replace('\\', "\\\\").replace('"', "\\\""));
+                self.push("\"");
             }
         }
     }

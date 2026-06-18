@@ -8,7 +8,7 @@ use altium_format_types::project::{
 };
 use altium_format_types::sch::{
     HorizontalAlign, LeftRightSide, LineStyle, PenWidth, PortArrowStyle, PortIoType,
-    PowerObjectStyle, TextJustification,
+    PowerObjectStyle, SheetStyle, TextJustification,
 };
 use altium_format_types::{
     Color, ComponentKind, Coord, CoordPoint, PadShape, PadStackMode, PinElectricalType,
@@ -90,6 +90,7 @@ pub struct FootprintMapSpec {
     pub model_name: String,
     pub maps: Vec<PinPadMap>,
     pub source: Option<PathBuf>,
+    pub description: Option<String>,
 }
 
 pub struct PinPadMap {
@@ -132,6 +133,9 @@ pub struct SheetSpec {
     /// Power net declarations collected from top-level `power` items.
     /// Keyed by net name (without `#` prefix). Used by executor for stub generation.
     pub power_declarations: std::collections::HashMap<String, PowerObjectStyle>,
+    /// Standard sheet size (`style: "A4"`). Mutually exclusive with
+    /// `custom_width`/`custom_height` (which imply a custom sheet size).
+    pub sheet_style: Option<SheetStyle>,
     pub custom_width: Option<Coord>,
     pub custom_height: Option<Coord>,
     pub snap_grid_on: Option<bool>,
@@ -406,6 +410,17 @@ pub struct PadSpec {
     pub relief_conductor_width: Option<Coord>,
     pub relief_entries: Option<i32>,
     pub relief_air_gap: Option<Coord>,
+
+    // Per-layer stack overrides for LocalStack/ExternalStack pads.
+    // When absent, the layer uses the pad's top shape/size.
+    pub mid_shape: Option<PadShape>,
+    pub mid_x_size: Option<Coord>,
+    pub mid_y_size: Option<Coord>,
+    pub bot_shape: Option<PadShape>,
+    pub bot_x_size: Option<Coord>,
+    pub bot_y_size: Option<Coord>,
+    pub hole_shape: Option<altium_format_types::pcb::HoleType>,
+    pub slot_size: Option<Coord>,
 }
 
 // ── Graphics (Schematic) ─────────────────────────────────────────────────────
@@ -492,22 +507,43 @@ pub enum PcbGraphicType {
     Polyline,
 }
 
+/// One segment of a PCB contour (region or component body outline).
+/// Mirrors `altium_format::api::ContourSegment`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContourSegmentSpec {
+    Line {
+        endpoint: CoordPoint,
+    },
+    Arc {
+        endpoint: CoordPoint,
+        center: CoordPoint,
+        radius: Coord,
+        start_angle: f64,
+        end_angle: f64,
+    },
+}
+
 pub struct PcbGraphicProperties {
     pub layer: Option<LayerSpec>,
     pub width: Option<Coord>,
     pub from: Option<CoordPoint>,
     pub to: Option<CoordPoint>,
+    pub corner1: Option<CoordPoint>,
+    pub corner2: Option<CoordPoint>,
     pub center: Option<CoordPoint>,
     pub radius: Option<Coord>,
     pub start_angle: Option<f64>,
     pub end_angle: Option<f64>,
     pub points: Option<Vec<CoordPoint>>,
+    pub outline: Option<Vec<ContourSegmentSpec>>,
     pub text: Option<String>,
     pub at: Option<CoordPoint>,
     pub rotation: Option<f64>,
     pub hole_size: Option<Coord>,
     pub diameter: Option<Coord>,
     pub is_solid: Option<bool>,
+    pub height: Option<Coord>,
+    pub model: Option<String>,
 }
 
 // ── Domain / SpecModel ───────────────────────────────────────────────────────

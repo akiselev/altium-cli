@@ -388,6 +388,40 @@ pub fn lex(input: &str) -> Result<(Vec<Token>, Vec<CommentToken>), ParseError> {
     Ok((out, comments))
 }
 
+/// True if `s` lexes as a keyword token instead of an identifier.
+/// Keep in sync with the keyword match in `lex()`.
+pub(crate) fn is_keyword(s: &str) -> bool {
+    matches!(
+        s,
+        "import"
+            | "as"
+            | "component"
+            | "footprint"
+            | "project"
+            | "sheet"
+            | "net"
+            | "power"
+            | "pin"
+            | "pad"
+            | "part"
+            | "parameter"
+            | "alias"
+            | "row"
+            | "column"
+            | "grid"
+            | "board"
+            | "swap_group"
+            | "group"
+            | "separate"
+            | "autoplace"
+            | "pad_net"
+            | "let"
+            | "true"
+            | "false"
+            | "null"
+    )
+}
+
 fn tok(kind: TokenKind, start: usize, end: usize) -> Token {
     Token {
         kind,

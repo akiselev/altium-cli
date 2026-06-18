@@ -66,12 +66,12 @@ pub fn apply_spec_pcblib(spec: &PcbLibSpec, lib: &mut PcbLib) -> Result<(), Spec
     for fp_spec in &spec.footprints {
         match lib.footprint(&fp_spec.display_name) {
             Ok(existing) => {
-                let merged = merge_spec_into_footprint(&existing, fp_spec);
+                let merged = merge_spec_into_footprint(&existing, fp_spec)?;
                 lib.update_footprint(&merged)
                     .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
             }
             Err(_) => {
-                let fp = footprint_from_pcblib_spec(fp_spec);
+                let fp = footprint_from_pcblib_spec(fp_spec)?;
                 lib.add_footprint(fp)
                     .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
             }
@@ -605,6 +605,10 @@ fn apply_sheet_metadata(sheet: &mut api::SchDocSheet, spec: &SheetSpec) {
             })
             .collect();
     }
+    if let Some(style) = spec.sheet_style {
+        sheet.sheet_style = style;
+        sheet.use_custom_sheet = false;
+    }
     if let Some(w) = spec.custom_width {
         sheet.use_custom_sheet = true;
         sheet.custom_width = w;
@@ -1130,8 +1134,15 @@ fn component_from_spec(spec: &ComponentSpec) -> api::Component {
 
     // For single-part components, all records belong to part 1.
     // For multi-part, component-level graphics are shared (part 0).
-    let part_count = spec.part_count.unwrap_or(1);
-    let default_owner_part_id = if part_count <= 1 { 1 } else { 0 };
+    // Components with explicit `part N { }` blocks treat component-level
+    // items as shared too (mirrors the dump's owner_part_id grouping).
+    let inferred_part_count = spec.parts.iter().map(|p| p.part_number).max().unwrap_or(1);
+    let part_count = spec.part_count.unwrap_or(inferred_part_count);
+    let default_owner_part_id = if part_count <= 1 && spec.parts.is_empty() {
+        1
+    } else {
+        0
+    };
 
     let mut graphics: Vec<api::Graphic> = spec
         .graphics
@@ -1313,7 +1324,9 @@ fn merge_graphics(
 fn pin_from_spec(spec: &PinSpec) -> api::Pin {
     api::Pin {
         designator: spec.designator.clone(),
-        name: spec.name.clone().unwrap_or_else(|| spec.designator.clone()),
+        // Dump omits `name:` when the pin name is empty, so a missing name
+        // must round-trip back to empty — NOT default to the designator.
+        name: spec.name.clone().unwrap_or_default(),
         electrical: spec.electrical.unwrap_or(PinElectricalType::Passive),
         location: spec.location,
         length: spec
@@ -1376,7 +1389,7 @@ fn param_from_spec(spec: &ParameterSpec) -> api::Parameter {
 fn footprint_from_spec(spec: &FootprintMapSpec) -> api::FootprintMap {
     api::FootprintMap {
         model_name: spec.model_name.clone(),
-        description: String::new(),
+        description: spec.description.clone().unwrap_or_default(),
         is_current: false,
         pin_pad_maps: spec
             .maps
@@ -1554,8 +1567,8 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
 
 /// Create a complete `api::Footprint` from a `FootprintSpec`, filling fields
 /// not specified in the spec with sensible defaults.
-fn footprint_from_pcblib_spec(spec: &FootprintSpec) -> api::Footprint {
-    api::Footprint {
+fn footprint_from_pcblib_spec(spec: &FootprintSpec) -> Result<api::Footprint, SpecError> {
+    Ok(api::Footprint {
         display_name: spec.display_name.clone(),
         description: spec.description.clone().unwrap_or_default(),
         pattern: spec
@@ -1567,9 +1580,9 @@ fn footprint_from_pcblib_spec(spec: &FootprintSpec) -> api::Footprint {
         graphics: spec
             .graphics
             .iter()
-            .filter_map(pcb_graphic_from_spec)
-            .collect(),
-    }
+            .map(pcb_graphic_from_spec)
+            .collect::<Result<Vec<_>, _>>()?,
+    })
 }
 
 /// Resolve a `LayerSpec` to a `LayerRef` for Altium export.
@@ -1619,26 +1632,62 @@ fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
         relief_conductor_width: spec.relief_conductor_width.unwrap_or(Coord::ZERO),
         relief_entries: spec.relief_entries.unwrap_or(4),
         relief_air_gap: spec.relief_air_gap.unwrap_or(Coord::ZERO),
-        stack: api::PadStack::simple(shape, x_size, y_size),
+        stack: pad_stack_from_spec(spec, shape, x_size, y_size),
     }
 }
 
-fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
+/// Build the per-layer pad stack: start from the top shape and apply the
+/// spec's mid/bot/hole overrides (LocalStack/ExternalStack pads).
+fn pad_stack_from_spec(
+    spec: &PadSpec,
+    shape: PadShape,
+    x_size: Coord,
+    y_size: Coord,
+) -> api::PadStack {
+    let mut stack = api::PadStack::simple(shape, x_size, y_size);
+    if let Some(v) = spec.mid_shape {
+        stack.mid.shape = v;
+    }
+    if let Some(v) = spec.mid_x_size {
+        stack.mid.x_size = v;
+    }
+    if let Some(v) = spec.mid_y_size {
+        stack.mid.y_size = v;
+    }
+    if let Some(v) = spec.bot_shape {
+        stack.bot.shape = v;
+    }
+    if let Some(v) = spec.bot_x_size {
+        stack.bot.x_size = v;
+    }
+    if let Some(v) = spec.bot_y_size {
+        stack.bot.y_size = v;
+    }
+    if let Some(v) = spec.hole_shape {
+        stack.hole_shape = v;
+    }
+    if let Some(v) = spec.slot_size {
+        stack.slot_size = v;
+    }
+    stack
+}
+
+fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Result<api::PcbGraphic, SpecError> {
     let props = &spec.properties;
     let layer = resolve_layer_spec_opt(&props.layer, V6Layer::TopOverlay);
     let flags = PcbFlags::default();
     let width = props.width.unwrap_or(Coord::ZERO);
 
-    match spec.graphic_type {
-        PcbGraphicType::Track => Some(api::PcbGraphic::Track(api::TrackGraphic {
+    Ok(match spec.graphic_type {
+        PcbGraphicType::Track => api::PcbGraphic::Track(api::TrackGraphic {
             unique_id: Some(spec.unique_id.clone()),
             layer,
             flags,
             start: props.from.unwrap_or_default(),
             end: props.to.unwrap_or_default(),
             width,
-        })),
-        PcbGraphicType::Arc => Some(api::PcbGraphic::Arc(api::PcbArcGraphic {
+        }),
+        PcbGraphicType::Arc => api::PcbGraphic::Arc(api::PcbArcGraphic {
             unique_id: Some(spec.unique_id.clone()),
             layer,
             flags,
@@ -1647,31 +1696,24 @@ fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
             start_angle: props.start_angle.unwrap_or(0.0),
             end_angle: props.end_angle.unwrap_or(360.0),
             width,
-        })),
-        PcbGraphicType::Fill => Some(api::PcbGraphic::Fill(api::FillGraphic {
+        }),
+        PcbGraphicType::Fill => api::PcbGraphic::Fill(api::FillGraphic {
             unique_id: Some(spec.unique_id.clone()),
             layer,
             flags,
-            corner1: props.from.unwrap_or_default(),
-            corner2: props.to.unwrap_or_default(),
+            corner1: props.corner1.or(props.from).unwrap_or_default(),
+            corner2: props.corner2.or(props.to).unwrap_or_default(),
             rotation: props.rotation.unwrap_or(0.0),
-        })),
-        PcbGraphicType::Region => {
-            let points = props.points.clone().unwrap_or_default();
-            let segments = points
-                .iter()
-                .map(|pt| api::ContourSegment::Line { endpoint: *pt })
-                .collect();
-            Some(api::PcbGraphic::Region(api::RegionGraphic {
-                unique_id: Some(spec.unique_id.clone()),
-                layer,
-                flags,
-                kind: RegionKind::default(),
-                outline: api::PcbContour { segments },
-                holes: Vec::new(),
-            }))
-        }
-        PcbGraphicType::Text => Some(api::PcbGraphic::Text(api::TextGraphic {
+        }),
+        PcbGraphicType::Region => api::PcbGraphic::Region(api::RegionGraphic {
+            unique_id: Some(spec.unique_id.clone()),
+            layer,
+            flags,
+            kind: RegionKind::default(),
+            outline: contour_from_spec_props(props),
+            holes: Vec::new(),
+        }),
+        PcbGraphicType::Text => api::PcbGraphic::Text(api::TextGraphic {
             unique_id: Some(spec.unique_id.clone()),
             layer,
             flags,
@@ -1679,18 +1721,19 @@ fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
             text: props.text.clone().unwrap_or_default(),
             rotation: props.rotation.unwrap_or(0.0),
             height: props
-                .width
+                .height
+                .or(props.width)
                 .unwrap_or_else(|| Coord::from_mils(60).expect("60 mils fits Coord")),
             width: Coord::ZERO,
             color: altium_format_types::color::Color::default(),
             font_name: String::new(),
             is_mirrored: false,
-        })),
-        PcbGraphicType::Via => Some(api::PcbGraphic::Via(api::ViaGraphic {
+        }),
+        PcbGraphicType::Via => api::PcbGraphic::Via(api::ViaGraphic {
             unique_id: Some(spec.unique_id.clone()),
             layer: LayerRef::from_v6(V6Layer::MultiLayer),
             flags,
-            location: props.center.unwrap_or_default(),
+            location: props.at.or(props.center).unwrap_or_default(),
             diameter: props
                 .diameter
                 .unwrap_or_else(|| Coord::from_mils(50).expect("50 mils fits Coord")),
@@ -1707,9 +1750,63 @@ fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
             use_separate_solder_mask_expansion: false,
             solder_mask_expansion_from_hole_edge: false,
             paste_mask_override: false,
-        })),
-        PcbGraphicType::ComponentBody | PcbGraphicType::Polyline => None,
+        }),
+        PcbGraphicType::ComponentBody => {
+            api::PcbGraphic::ComponentBody(api::ComponentBodyGraphic {
+                unique_id: Some(spec.unique_id.clone()),
+                layer: resolve_layer_spec_opt(&props.layer, V6Layer::Mechanical1),
+                flags,
+                standoff_height: Coord::ZERO,
+                overall_height: props.height.unwrap_or(Coord::ZERO),
+                body_color_3d: altium_format_types::color::Color::default(),
+                body_opacity_3d: 1.0,
+                model_name: props.model.clone().unwrap_or_default(),
+                outline: contour_from_spec_props(props),
+            })
+        }
+        PcbGraphicType::Polyline => {
+            return Err(SpecError::no_span(
+                SpecErrorCode::NotSupported,
+                "polyline/line is not a PCB footprint primitive: use track instead",
+            ));
+        }
+    })
+}
+
+/// Build a `PcbContour` from spec properties: prefer the typed `outline:`
+/// segments (lines and arcs), fall back to plain `points:`.
+fn contour_from_spec_props(props: &crate::model::PcbGraphicProperties) -> api::PcbContour {
+    use crate::model::ContourSegmentSpec;
+    if let Some(outline) = &props.outline {
+        let segments: Vec<api::ContourSegment> = outline
+            .iter()
+            .map(|seg| match seg.clone() {
+                ContourSegmentSpec::Line { endpoint } => api::ContourSegment::Line { endpoint },
+                ContourSegmentSpec::Arc {
+                    endpoint,
+                    center,
+                    radius,
+                    start_angle,
+                    end_angle,
+                } => api::ContourSegment::Arc {
+                    endpoint,
+                    center,
+                    radius,
+                    start_angle,
+                    end_angle,
+                },
+            })
+            .collect();
+        return api::PcbContour { segments };
     }
+    let segments: Vec<api::ContourSegment> = props
+        .points
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|pt| api::ContourSegment::Line { endpoint: pt })
+        .collect();
+    api::PcbContour { segments }
 }
 
 // ── PCB: Merge spec into existing footprint ────────────────────────────────────
@@ -1719,7 +1816,10 @@ fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Option<api::PcbGraphic> {
 /// - Top-level `Option` fields: override if `Some`, preserve if `None`
 /// - Children (pads, graphics): match by natural key, update matched, add unmatched
 /// - Existing children not in spec: preserved (additive-only)
-fn merge_spec_into_footprint(existing: &api::Footprint, spec: &FootprintSpec) -> api::Footprint {
+fn merge_spec_into_footprint(
+    existing: &api::Footprint,
+    spec: &FootprintSpec,
+) -> Result<api::Footprint, SpecError> {
     let mut result = existing.clone();
 
     if let Some(ref d) = spec.description {
@@ -1747,19 +1847,18 @@ fn merge_spec_into_footprint(existing: &api::Footprint, spec: &FootprintSpec) ->
 
     // Merge graphics by unique_id
     for graphic_spec in &spec.graphics {
+        let new_graphic = pcb_graphic_from_spec(graphic_spec)?;
         if let Some(pos) = result.graphics.iter().position(|g| {
             g.unique_id()
                 .map_or(false, |uid| uid == graphic_spec.unique_id)
         }) {
-            if let Some(new_graphic) = pcb_graphic_from_spec(graphic_spec) {
-                result.graphics[pos] = new_graphic;
-            }
-        } else if let Some(new_graphic) = pcb_graphic_from_spec(graphic_spec) {
+            result.graphics[pos] = new_graphic;
+        } else {
             result.graphics.push(new_graphic);
         }
     }
 
-    result
+    Ok(result)
 }
 
 fn apply_pad_spec(pad: &mut api::Pad, spec: &PadSpec) {
@@ -1805,6 +1904,30 @@ fn apply_pad_spec(pad: &mut api::Pad, spec: &PadSpec) {
     }
     if let Some(g) = spec.relief_air_gap {
         pad.relief_air_gap = g;
+    }
+    if let Some(v) = spec.mid_shape {
+        pad.stack.mid.shape = v;
+    }
+    if let Some(v) = spec.mid_x_size {
+        pad.stack.mid.x_size = v;
+    }
+    if let Some(v) = spec.mid_y_size {
+        pad.stack.mid.y_size = v;
+    }
+    if let Some(v) = spec.bot_shape {
+        pad.stack.bot.shape = v;
+    }
+    if let Some(v) = spec.bot_x_size {
+        pad.stack.bot.x_size = v;
+    }
+    if let Some(v) = spec.bot_y_size {
+        pad.stack.bot.y_size = v;
+    }
+    if let Some(v) = spec.hole_shape {
+        pad.stack.hole_shape = v;
+    }
+    if let Some(v) = spec.slot_size {
+        pad.stack.slot_size = v;
     }
 }
 
@@ -1973,6 +2096,7 @@ mod tests {
                     },
                 ],
                 source: None,
+                description: None,
             }],
             graphics: vec![],
             parts: vec![],
@@ -2126,6 +2250,14 @@ mod tests {
             relief_conductor_width: None,
             relief_entries: None,
             relief_air_gap: None,
+            mid_shape: None,
+            mid_x_size: None,
+            mid_y_size: None,
+            bot_shape: None,
+            bot_x_size: None,
+            bot_y_size: None,
+            hole_shape: None,
+            slot_size: None,
         }
     }
 
@@ -2239,6 +2371,7 @@ mod tests {
                 annotation: None,
                 fonts: vec![],
                 power_declarations,
+                sheet_style: None,
                 custom_width: None,
                 custom_height: None,
                 snap_grid_on: None,

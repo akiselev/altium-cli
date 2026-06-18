@@ -402,7 +402,7 @@ pub(crate) struct PcbPadStackData {
     pub(crate) inner_size_y: [Coord; 29],
     pub(crate) inner_shape: [PadShape; 29],
     pub(crate) padding_261: u8,
-    pub(crate) hole_shape: PadShape,
+    pub(crate) hole_shape: altium_format_types::pcb::HoleType,
     pub(crate) slot_size: Coord,
     pub(crate) slot_rotation: f64,
     pub(crate) hole_offset_x: [Coord; 32],

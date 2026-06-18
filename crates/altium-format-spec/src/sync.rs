@@ -1252,8 +1252,9 @@ fn format_new_component(designator: &str, comp: &SyncComponent) -> String {
     let id = crate::annotation::generate_short_id();
     let source_id = crate::annotation::generate_source_id(designator);
     let annotation_line = format!(
-        "#[annotation(id = \"{}\", source_id = \"{}\")]\n",
-        id, source_id
+        "#[annotation(id = \"{}\", source_id = {})]\n",
+        id,
+        quote_spec_string(&source_id)
     );
 
     let mut props: Vec<String> = Vec::new();
@@ -1416,6 +1417,7 @@ mod tests {
             annotation: None,
             fonts: Vec::new(),
             power_declarations: std::collections::HashMap::new(),
+            sheet_style: None,
             custom_width: None,
             custom_height: None,
             snap_grid_on: None,
@@ -2693,6 +2695,7 @@ mod tests {
                     model_name: "QFN-48".to_string(),
                     maps: Vec::new(),
                     source: None,
+                    description: None,
                 }],
                 graphics: Vec::new(),
                 parts: Vec::new(),
@@ -2744,6 +2747,7 @@ mod tests {
                     model_name: "0603".to_string(),
                     maps: Vec::new(),
                     source: None,
+                    description: None,
                 }],
                 graphics: Vec::new(),
                 parts: Vec::new(),
@@ -3126,7 +3130,8 @@ mod proptests {
                 annotation: None,
                 fonts: Vec::new(),
                 power_declarations: std::collections::HashMap::new(),
-                custom_width: None,
+                sheet_style: None,
+            custom_width: None,
                 custom_height: None,
                 snap_grid_on: None,
                 visible_grid_on: None,

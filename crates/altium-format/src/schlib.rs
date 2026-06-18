@@ -942,12 +942,14 @@ fn write_pin_desc(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     Some(serialize_embedded_object_stream(PIN_DESC, &entries))
 }
 
-// Returns PinMiscData sidecar stream if any pin has a swap_id_pair that needs
-// sidecar storage (exceeds binary pin format limits per NeedToSaveParameter).
+// Returns PinMiscData sidecar stream if any pin has a non-empty swap_id_pair.
+// The sidecar is the ONLY storage for pair swap IDs (the binary pin record has
+// no field for them); per the documented Altium export condition it is written
+// whenever the value is non-empty (docs/dxp/sidecar-streams-deep-dive.md 5.7).
 fn write_pin_misc_data(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     let mut entries = Vec::new();
     for (i, pin) in pins.iter().enumerate() {
-        if pin_field_needs_wide_text(&pin.swap_id_pair) {
+        if !pin.swap_id_pair.is_empty() {
             let mut params = ParameterCollection::new();
             params.insert(PAIR_SWAP_ID, pin.swap_id_pair.clone());
             entries.push((i.to_string(), write_sidecar_utf16le_params(&params)));

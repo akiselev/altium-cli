@@ -442,7 +442,14 @@ impl SpecCompiler {
         // We need to resolve after:/before: chains before producing final PinSpecs.
         // For single-part components (part_count absent or 1), all items belong to part 1.
         // For multi-part components, component-level items are shared (part 0).
-        let default_owner_part_id = if part_count.unwrap_or(1) <= 1 {
+        // A component is multi-part if `part_count` says so OR if it contains
+        // explicit `part N { }` blocks (dumps emit part blocks; component-level
+        // pins/graphics are then shared, i.e. owner part 0).
+        let has_part_blocks = decl
+            .body
+            .iter()
+            .any(|item| matches!(&item.node, ComponentItem::Part(_)));
+        let default_owner_part_id = if part_count.unwrap_or(1) <= 1 && !has_part_blocks {
             1i32
         } else {
             0i32
@@ -573,6 +580,7 @@ impl SpecCompiler {
                 power_declarations.insert(power_decl.name.node.as_str(), PowerObjectStyle::Bar);
             }
         }
+        let mut sheet_style = None;
         let mut custom_width = None;
         let mut custom_height = None;
         let mut snap_grid_on = None;
@@ -596,6 +604,7 @@ impl SpecCompiler {
                     self.compile_sheet_metadata(
                         sheet_decl,
                         &mut fonts,
+                        &mut sheet_style,
                         &mut custom_width,
                         &mut custom_height,
                         &mut snap_grid_on,
@@ -650,6 +659,7 @@ impl SpecCompiler {
             annotation: sheet_annotation,
             fonts,
             power_declarations,
+            sheet_style,
             custom_width,
             custom_height,
             snap_grid_on,
@@ -674,6 +684,7 @@ impl SpecCompiler {
         &mut self,
         decl: &SheetDecl,
         fonts: &mut Vec<FontSpec>,
+        sheet_style: &mut Option<altium_format_types::sch::SheetStyle>,
         custom_width: &mut Option<Coord>,
         custom_height: &mut Option<Coord>,
         snap_grid_on: &mut Option<bool>,
@@ -694,6 +705,25 @@ impl SpecCompiler {
                 SheetItem::Property(prop) => {
                     let val = eval_expr(&prop.value, &self.scope)?;
                     match prop.key.node.as_str() {
+                        "style" => {
+                            let Value::String(name) = &val else {
+                                return Err(SpecError::new(
+                                    SpecErrorCode::TypeMismatch,
+                                    format!("style must be a string, got {}", val.kind_name()),
+                                    Some(prop.value.span),
+                                ));
+                            };
+                            *sheet_style = Some(parse_sheet_style(name).ok_or_else(|| {
+                                SpecError::new(
+                                    SpecErrorCode::TypeMismatch,
+                                    format!(
+                                        "unknown sheet style '{name}' (expected A4, A3, A2, A1, A0, \
+A, B, C, D, E, Letter, Legal, Tabloid, OrcadA, OrcadB, OrcadC, OrcadD, or OrcadE)"
+                                    ),
+                                    Some(prop.value.span),
+                                )
+                            })?);
+                        }
                         "custom_width" => {
                             *custom_width = Some(value_to_coord(&val, Some(prop.value.span))?)
                         }
@@ -1434,10 +1464,6 @@ impl SpecCompiler {
 
     // ── Part compilation ───────────────────────────────────────────────────
 
-    fn compile_part(&mut self, part_block: &PartBlock) -> Result<PartSpec, SpecError> {
-        self.compile_part_with_anchors(part_block, &HashMap::new())
-    }
-
     fn compile_part_with_anchors(
         &mut self,
         part_block: &PartBlock,
@@ -1567,53 +1593,6 @@ impl SpecCompiler {
         })
     }
 
-    // ── Pin compilation ────────────────────────────────────────────────────
-
-    fn compile_pin(&mut self, decl: &PinDecl, owner_part_id: i32) -> Result<PinSpec, SpecError> {
-        let designator = decl.name.node.as_str();
-        let props = eval_object_to_map(&decl.body.node, &self.scope)?;
-
-        let name = get_string_opt(&props, "name");
-        let electrical = get_enum_opt(&props, "electrical", parse_pin_electrical_type)?;
-        let length = get_coord_opt(&props, "length")?;
-        let is_hidden = get_bool_opt(&props, "is_hidden");
-        let hidden_net_name = get_string_opt(&props, "hidden_net_name");
-        let swap_group = get_swap_group_opt(&props, "swap_group")?;
-        let part_swap_group = get_swap_group_opt(&props, "part_swap_group")?;
-        let pair_swap_group = get_swap_group_opt(&props, "pair_swap_group")?;
-        let orientation = get_enum_opt(&props, "orientation", parse_rotation_by90)?
-            .unwrap_or(RotationBy90::Rotate0);
-
-        let location = if let Some(v) = props.get("at") {
-            value_to_coord_point(v, Some(decl.body.span))?
-        } else if let Some(x_val) = props.get("x") {
-            let x = value_to_coord(x_val, Some(decl.body.span))?;
-            let y = props
-                .get("y")
-                .map(|v| value_to_coord(v, Some(decl.body.span)))
-                .transpose()?
-                .unwrap_or(Coord::ZERO);
-            CoordPoint::new(x, y)
-        } else {
-            CoordPoint::zero()
-        };
-
-        Ok(PinSpec {
-            designator,
-            name,
-            electrical,
-            length,
-            location,
-            orientation,
-            is_hidden,
-            hidden_net_name,
-            owner_part_id,
-            swap_group,
-            part_swap_group,
-            pair_swap_group,
-        })
-    }
-
     // ── Parameter compilation ──────────────────────────────────────────────
 
     fn compile_parameter(&mut self, decl: &ParameterDecl) -> Result<ParameterSpec, SpecError> {
@@ -1673,15 +1652,15 @@ impl SpecCompiler {
                     model_name,
                     maps: vec![],
                     source: None,
+                    description: decl.description.as_ref().map(|d| d.node.clone()),
                 })
             }
             Some(pairs) => {
                 let mut maps = Vec::new();
                 for pair_spanned in pairs {
                     let pair = &pair_spanned.node;
-                    // Resolve pin dollar path to its designator string
-                    let pin_val = self.resolve_dollar_path_to_string(&pair.pin)?;
-                    let pad_val = self.resolve_dollar_path_to_string(&pair.pad)?;
+                    let pin_val = self.resolve_pin_pad_ref(&pair.pin)?;
+                    let pad_val = self.resolve_pin_pad_ref(&pair.pad)?;
                     maps.push(PinPadMap {
                         pin: pin_val,
                         pad: pad_val,
@@ -1691,8 +1670,16 @@ impl SpecCompiler {
                     model_name,
                     maps,
                     source: None,
+                    description: decl.description.as_ref().map(|d| d.node.clone()),
                 })
             }
+        }
+    }
+
+    fn resolve_pin_pad_ref(&mut self, r: &crate::ast::PinPadRef) -> Result<String, SpecError> {
+        match r {
+            crate::ast::PinPadRef::Dollar(dp) => self.resolve_dollar_path_to_string(dp),
+            crate::ast::PinPadRef::Literal(s) => Ok(s.node.clone()),
         }
     }
 
@@ -1901,6 +1888,14 @@ impl SpecCompiler {
         let relief_conductor_width = get_coord_opt(&props, "relief_conductor_width")?;
         let relief_entries = get_integer_opt(&props, "relief_entries");
         let relief_air_gap = get_coord_opt(&props, "relief_air_gap")?;
+        let mid_shape = get_enum_opt(&props, "mid_shape", parse_pad_shape)?;
+        let mid_x_size = get_coord_opt(&props, "mid_x_size")?;
+        let mid_y_size = get_coord_opt(&props, "mid_y_size")?;
+        let bot_shape = get_enum_opt(&props, "bot_shape", parse_pad_shape)?;
+        let bot_x_size = get_coord_opt(&props, "bot_x_size")?;
+        let bot_y_size = get_coord_opt(&props, "bot_y_size")?;
+        let hole_shape = get_enum_opt(&props, "hole_shape", parse_hole_type)?;
+        let slot_size = get_coord_opt(&props, "slot_size")?;
 
         Ok(PadSpec {
             pad_name,
@@ -1919,6 +1914,14 @@ impl SpecCompiler {
             relief_conductor_width,
             relief_entries,
             relief_air_gap,
+            mid_shape,
+            mid_x_size,
+            mid_y_size,
+            bot_shape,
+            bot_x_size,
+            bot_y_size,
+            hole_shape,
+            slot_size,
         })
     }
 
@@ -3773,6 +3776,16 @@ fn parse_rotation_by90(s: &str) -> Option<RotationBy90> {
     }
 }
 
+fn parse_hole_type(s: &str) -> Option<altium_format_types::pcb::HoleType> {
+    use altium_format_types::pcb::HoleType as Ht;
+    match s.to_ascii_lowercase().as_str() {
+        "round" => Some(Ht::Round),
+        "square" => Some(Ht::Square),
+        "slot" => Some(Ht::Slot),
+        _ => None,
+    }
+}
+
 fn parse_pad_shape(s: &str) -> Option<PadShape> {
     match s.to_ascii_lowercase().as_str() {
         "no_shape" | "none" => Some(PadShape::NoShape),
@@ -3902,6 +3915,31 @@ fn parse_left_right_side(s: &str) -> Option<LeftRightSide> {
     }
 }
 
+fn parse_sheet_style(s: &str) -> Option<altium_format_types::sch::SheetStyle> {
+    use altium_format_types::sch::SheetStyle as Ss;
+    match s.to_ascii_lowercase().as_str() {
+        "a4" => Some(Ss::A4),
+        "a3" => Some(Ss::A3),
+        "a2" => Some(Ss::A2),
+        "a1" => Some(Ss::A1),
+        "a0" => Some(Ss::A0),
+        "a" => Some(Ss::A),
+        "b" => Some(Ss::B),
+        "c" => Some(Ss::C),
+        "d" => Some(Ss::D),
+        "e" => Some(Ss::E),
+        "letter" => Some(Ss::Letter),
+        "legal" => Some(Ss::Legal),
+        "tabloid" => Some(Ss::Tabloid),
+        "orcada" => Some(Ss::OrcadA),
+        "orcadb" => Some(Ss::OrcadB),
+        "orcadc" => Some(Ss::OrcadC),
+        "orcadd" => Some(Ss::OrcadD),
+        "orcade" => Some(Ss::OrcadE),
+        _ => None,
+    }
+}
+
 fn parse_layer_spec(s: &str) -> Option<LayerSpec> {
     // Try copper(N) syntax
     if let Some(n) = parse_copper_position(s) {
@@ -4020,7 +4058,7 @@ fn compile_graphic_properties(
         .transpose()?;
 
     let points = props
-        .get("points")
+        .get("vertices")
         .map(|v| value_to_points(v, Some(span)))
         .transpose()?;
 
@@ -4033,6 +4071,41 @@ fn compile_graphic_properties(
     } else {
         None
     };
+
+    // Fail fast on unrecognized keys: a silently ignored key means the
+    // geometry it carried is silently dropped (e.g. a dump/grammar drift).
+    const KNOWN_KEYS: &[&str] = &[
+        "from",
+        "to",
+        "center",
+        "at",
+        "radius",
+        "secondary_radius",
+        "line_width",
+        "width",
+        "corner_x_radius",
+        "corner_y_radius",
+        "start_angle",
+        "end_angle",
+        "is_solid",
+        "closed",
+        "show_border",
+        "font_id",
+        "text",
+        "file_name",
+        "color",
+        "area_color",
+        "vertices",
+        "layer",
+        "image_data",
+    ];
+    if let Some(unknown) = props.keys().find(|k| !KNOWN_KEYS.contains(&k.as_str())) {
+        return Err(SpecError::new(
+            SpecErrorCode::UnknownProperty,
+            format!("unknown graphic property '{unknown}'"),
+            Some(span),
+        ));
+    }
 
     Ok(GraphicProperties {
         from,
@@ -4111,23 +4184,123 @@ fn compile_pcb_graphic_properties(
         .map(|v| value_to_points(v, Some(span)))
         .transpose()?;
 
+    let corner1 = props
+        .get("corner1")
+        .map(|v| value_to_coord_point(v, Some(span)))
+        .transpose()?;
+    let corner2 = props
+        .get("corner2")
+        .map(|v| value_to_coord_point(v, Some(span)))
+        .transpose()?;
+    let height = props
+        .get("height")
+        .map(|v| value_to_coord(v, Some(span)))
+        .transpose()?;
+    let model = get_string_opt(props, "model");
+    let outline = props
+        .get("outline")
+        .map(|v| value_to_contour(v, Some(span)))
+        .transpose()?;
+
+    // Fail fast on unrecognized keys: a silently ignored key means the
+    // geometry it carried is silently dropped (e.g. a dump/grammar drift).
+    const KNOWN_KEYS: &[&str] = &[
+        "layer",
+        "width",
+        "from",
+        "to",
+        "corner1",
+        "corner2",
+        "center",
+        "at",
+        "radius",
+        "hole_size",
+        "diameter",
+        "start_angle",
+        "end_angle",
+        "rotation",
+        "is_solid",
+        "text",
+        "points",
+        "outline",
+        "height",
+        "model",
+    ];
+    if let Some(unknown) = props.keys().find(|k| !KNOWN_KEYS.contains(&k.as_str())) {
+        return Err(SpecError::new(
+            SpecErrorCode::UnknownProperty,
+            format!("unknown PCB graphic property '{unknown}'"),
+            Some(span),
+        ));
+    }
+
     Ok(PcbGraphicProperties {
         layer,
         width,
         from,
         to,
+        corner1,
+        corner2,
         center,
         radius,
         start_angle,
         end_angle,
         points,
+        outline,
         text,
         at,
         rotation,
         hole_size,
         diameter,
         is_solid,
+        height,
+        model,
     })
+}
+
+/// Convert an evaluated `outline:` array into typed contour segments.
+/// Accepts `(x, y)` coordinate points (line segments) and `arc(...)` values.
+fn value_to_contour(
+    v: &Value,
+    span: Option<crate::diagnostic::Span>,
+) -> Result<Vec<crate::model::ContourSegmentSpec>, SpecError> {
+    use crate::model::ContourSegmentSpec;
+    let Value::Array(items) = v else {
+        return Err(SpecError::new(
+            SpecErrorCode::TypeMismatch,
+            format!("expected outline array, got {}", v.kind_name()),
+            span,
+        ));
+    };
+    items
+        .iter()
+        .map(|item| match item {
+            Value::CoordPoint(x, y) => Ok(ContourSegmentSpec::Line {
+                endpoint: CoordPoint::new(Coord::new(*x), Coord::new(*y)),
+            }),
+            Value::ContourArc {
+                endpoint,
+                center,
+                radius,
+                start_angle,
+                end_angle,
+            } => Ok(ContourSegmentSpec::Arc {
+                endpoint: CoordPoint::new(Coord::new(endpoint.0), Coord::new(endpoint.1)),
+                center: CoordPoint::new(Coord::new(center.0), Coord::new(center.1)),
+                radius: Coord::new(*radius),
+                start_angle: *start_angle,
+                end_angle: *end_angle,
+            }),
+            other => Err(SpecError::new(
+                SpecErrorCode::TypeMismatch,
+                format!(
+                    "outline entries must be coordinate points or arc(...), got {}",
+                    other.kind_name()
+                ),
+                span,
+            )),
+        })
+        .collect()
 }
 
 /// Minimal base64 decoder (alphabet A-Z a-z 0-9 + /).
@@ -5610,6 +5783,14 @@ fn pad_from_template(
     let relief_conductor_width = get_coord_opt(template, "relief_conductor_width")?;
     let relief_entries = get_integer_opt(template, "relief_entries");
     let relief_air_gap = get_coord_opt(template, "relief_air_gap")?;
+    let mid_shape = get_enum_opt(template, "mid_shape", parse_pad_shape)?;
+    let mid_x_size = get_coord_opt(template, "mid_x_size")?;
+    let mid_y_size = get_coord_opt(template, "mid_y_size")?;
+    let bot_shape = get_enum_opt(template, "bot_shape", parse_pad_shape)?;
+    let bot_x_size = get_coord_opt(template, "bot_x_size")?;
+    let bot_y_size = get_coord_opt(template, "bot_y_size")?;
+    let hole_shape = get_enum_opt(template, "hole_shape", parse_hole_type)?;
+    let slot_size = get_coord_opt(template, "slot_size")?;
     // Use template `at` only if no computed position was given; here `at` is always computed.
     let _ = span; // used for context
     Ok(PadSpec {
@@ -5629,6 +5810,14 @@ fn pad_from_template(
         relief_conductor_width,
         relief_entries,
         relief_air_gap,
+        mid_shape,
+        mid_x_size,
+        mid_y_size,
+        bot_shape,
+        bot_x_size,
+        bot_y_size,
+        hole_shape,
+        slot_size,
     })
 }
 

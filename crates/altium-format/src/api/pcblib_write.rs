@@ -3,14 +3,14 @@
 use crate::api::pcb_common::pcb_contour_to_internal;
 use crate::api::pcblib_types::*;
 use crate::pcblib::{
-    PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPadCache, PcbPrimitive,
-    PcbPrimitiveCommon, PcbRegion, PcbText, PcbTrack, PcbVia,
+    PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPadCache, PcbPadStackData,
+    PcbPrimitive, PcbPrimitiveCommon, PcbRegion, PcbText, PcbTrack, PcbVia,
 };
 use crate::util::generate_unique_id;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    BarcodeRenderMode, DaisyChainStyle, LayerRef, MaskExpansionState, PadStackMode, PcbFlags,
-    PlaneConnectionStyle, TCacheState, TextKind, V6Layer,
+    BarcodeRenderMode, DaisyChainStyle, HoleType, LayerRef, MaskExpansionState, PadShape,
+    PadStackMode, PcbFlags, PlaneConnectionStyle, TCacheState, TextKind, V6Layer,
 };
 
 /// Build a `PcbPrimitiveCommon` for a library context (no net/polygon/component links).
@@ -136,7 +136,36 @@ pub(crate) fn update_footprint_internal(fp: &Footprint, existing: &PcbFootprint)
                 new_pad.has_sub4_extension = ep.has_sub4_extension;
                 new_pad.sub4_extension = ep.sub4_extension.clone();
                 new_pad.thermal_reliefs = ep.thermal_reliefs.clone();
-                new_pad.stack_data = ep.stack_data.clone();
+                // Merge stack data: the API pad is authoritative for the
+                // fields it models (hole shape/slot, inner overrides, corner
+                // radii — already synthesized into new_pad.stack_data); the
+                // existing record supplies the fields the API does not model
+                // (hole offsets, alt shapes, per-layer flags, extended CR).
+                new_pad.stack_data = match (ep.stack_data.clone(), new_pad.stack_data.take()) {
+                    (Some(mut sd), Some(api_sd)) => {
+                        sd.hole_shape = api_sd.hole_shape;
+                        sd.slot_size = api_sd.slot_size;
+                        sd.slot_rotation = api_sd.slot_rotation;
+                        sd.inner_size_x = api_sd.inner_size_x;
+                        sd.inner_size_y = api_sd.inner_size_y;
+                        sd.inner_shape = api_sd.inner_shape;
+                        sd.corner_radius_pct = api_sd.corner_radius_pct;
+                        Some(sd)
+                    }
+                    (Some(mut sd), None) => {
+                        // API stack reverted to defaults: clear the modeled
+                        // fields but keep the unmodeled ones.
+                        sd.hole_shape = HoleType::Round;
+                        sd.slot_size = Coord::ZERO;
+                        sd.slot_rotation = 0.0;
+                        sd.inner_size_x = [Coord::ZERO; 29];
+                        sd.inner_size_y = [Coord::ZERO; 29];
+                        sd.inner_shape = [PadShape::Round; 29];
+                        sd.corner_radius_pct = [0; 32];
+                        Some(sd)
+                    }
+                    (None, api_sd) => api_sd,
+                };
             }
         }
     }
@@ -264,9 +293,62 @@ fn pad_to_internal(pad: &Pad) -> PcbPad {
         has_sub4_extension: false,
         sub4_extension: None,
         thermal_reliefs: Vec::new(),
-        stack_data: None,
+        stack_data: stack_data_from_api(&pad.stack),
         unique_id: pad.unique_id.clone(),
     }
+}
+
+/// Synthesize the per-layer stack subrecord from the API pad stack.
+///
+/// Returns `None` when every modeled field is at its default (matching pads
+/// whose source records carry no stack subrecord). Fields the API does not
+/// model (hole offsets, alt shapes, per-layer flags, extended CR) are
+/// default-initialized; for pads patched against an existing record they are
+/// merged back from that record by the caller.
+fn stack_data_from_api(stack: &crate::api::pcb_common::PadStack) -> Option<PcbPadStackData> {
+    let needed = stack.hole_shape != HoleType::Round
+        || stack.slot_size != Coord::ZERO
+        || stack.slot_rotation != 0.0
+        || !stack.inner_layers.is_empty()
+        || stack.top.corner_radius_pct != 0
+        || stack.mid.corner_radius_pct != 0
+        || stack.bot.corner_radius_pct != 0;
+    if !needed {
+        return None;
+    }
+
+    let mut sd = PcbPadStackData {
+        inner_size_x: [Coord::ZERO; 29],
+        inner_size_y: [Coord::ZERO; 29],
+        inner_shape: [PadShape::Round; 29],
+        padding_261: 0,
+        hole_shape: stack.hole_shape,
+        slot_size: stack.slot_size,
+        slot_rotation: stack.slot_rotation,
+        hole_offset_x: [Coord::ZERO; 32],
+        hole_offset_y: [Coord::ZERO; 32],
+        padding_531: 0,
+        alt_shape: [PadShape::Round; 32],
+        corner_radius_pct: [0; 32],
+        per_layer_overrides: [0; 32],
+        extended_cr: Vec::new(),
+    };
+    // corner_radius_pct layout: [0]=top, [1]=mid, [2..31]=inner, [31]=bot
+    sd.corner_radius_pct[0] = stack.top.corner_radius_pct;
+    sd.corner_radius_pct[1] = stack.mid.corner_radius_pct;
+    sd.corner_radius_pct[31] = stack.bot.corner_radius_pct;
+    for ov in &stack.inner_layers {
+        assert!(
+            ov.inner_layer_index < 29,
+            "inner pad stack layer index {} out of range (max 28)",
+            ov.inner_layer_index
+        );
+        sd.inner_size_x[ov.inner_layer_index] = ov.shape.x_size;
+        sd.inner_size_y[ov.inner_layer_index] = ov.shape.y_size;
+        sd.inner_shape[ov.inner_layer_index] = ov.shape.shape;
+        sd.corner_radius_pct[ov.inner_layer_index + 2] = ov.shape.corner_radius_pct;
+    }
+    Some(sd)
 }
 
 fn track_to_internal(g: &TrackGraphic) -> PcbTrack {
