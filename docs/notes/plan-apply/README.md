@@ -32,6 +32,8 @@ plan/apply pairs per document type:
 | `03-proposed-cli.md` | CLI: per-type command groups, `compile {plan,apply}` + `dump {plan,apply}`, `plan --out` / `apply --plan`, exit codes, delete policy/flags |
 | `04-roadmap.md` | Five-phase incremental roadmap, dependency graph, open questions needing a user decision |
 | `05-bidirectional.md` | The authoritative bidirectional model: both artifacts editable; `dump apply` merges into the existing spec; stable annotation IDs as the two-way binding; conflict handling |
+| `07-open-questions-deep-dive.md` | In-depth treatment of note 06's four open questions (choose `M`, identity, generic `reconcile`, CFB-verify scope) with evidence, options, tradeoffs, and how they interact — incl. the sleeper "partial specs die when `M` goes concrete" |
+| `06-architecture.md` | **Rust types & the two ECOs.** The semantic ECO is computed on a *common Rust model* (spec & document are just serializations) in every direction — no text/byte diffs. The CFB `DiffIssue` diff is a *separate, parallel, agent-facing* artifact for verifying file-format support (not nested under the ECO). Which Rust model `M` is the open decision (high-level API model recommended); `Provider` trait + generic `reconcile`; enabling additions |
 
 ## TL;DR
 
