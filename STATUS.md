@@ -89,11 +89,18 @@ Invariants now enforced:
   `mid_*`/`bot_*`/`hole_shape`/`slot_size`, `is_solid: false` emission,
   explicit pad sizes, `part_count`, sheet `style:`).
 
-**Design gap (needs decision)**: SchDoc spec dump emits inline component
-children (pins, graphics, parameters), but `apply` creates components with
-empty children — the apply path was designed for SchLib-import authoring
-(`symbol: $lib.Name` + `pin X -> #NET`), not full-fidelity sheet
-reconstruction. Sheet-level document `parameter` blocks are also not applied.
+**Design gap (decision RESOLVED 2026-06-20)**: SchDoc spec dump emits inline
+component children (pins, graphics, parameters), but `apply` was designed for
+SchLib-import authoring (`symbol: $lib.Name` + `pin X -> #NET`), not
+full-fidelity sheet reconstruction. Resolved via the greenfield/brownfield
+model — see `docs/spec-lang/explanation/greenfield-vs-brownfield.md`. Inline
+children will materialize verbatim (brownfield) or as overrides on an imported
+symbol (greenfield), selected per component by whether `symbol:` resolves.
+**Fail-fast fix landed**: inline `pin`/`graphic`/`part`/`footprint_map` blocks
+inside a SchDoc component previously parsed then silently dropped at compile;
+they now hard-error (`compiler.rs::compile_schdoc_component`) until
+materialization is implemented. Sheet-level document `parameter` blocks are
+still not applied.
 
 ## Known Issues
 
@@ -113,6 +120,22 @@ reconstruction. Sheet-level document `parameter` blocks are also not applied.
   `standoff_height`/3D color/opacity, text_frame `word_wrap`/`clip_to_rect`,
   image `embed_image`/`keep_aspect`, PCB region `holes`/`kind` (PcbLib path)
 - PcbLib dump skips regions with empty outlines (graphic count changes silently)
+
+**Fail-fast audit gaps (spec crate, 2026-06-20 — open):**
+- `compile_pad` / pin compilation have no unknown-key rejection (unlike sch/pcb
+  graphics, which got `KNOWN_KEYS` allow-lists). Misspelled/unsupported pad/pin
+  keys are silently dropped. Fix: add allow-lists; validate against the fixture
+  corpus before merge.
+- Placement DSL "parse-later" no-ops (forbidden by CARDINAL RULE): unknown
+  placement config keys (`compiler.rs` ~2491), `minimize` non-`wirelength`
+  objectives + `subject_to` hints (~2528), and `SeparateDecl` (~2538) are
+  accepted then dropped. Should hard-error or emit an explicit "unsupported"
+  diagnostic.
+- Reconciler under-reporting: documents/graphics/polygon-props/placement-rotation
+  marked "unchanged for now" (`reconciler.rs` 327/1235/2135/2482) → `plan` can
+  show no change while `apply` mutates (plan/apply disagreement).
+- `lexer::is_keyword` flagged dead-code despite a call in
+  `dump::quote_entity_name` — investigate reachability of the keyword-quote guard.
 - `compile_pad`/pin compilation still accept unknown keys silently (graphics
   and sheet metadata reject them; pads/pins should too)
 - PcbDoc: 2/96 V6 files failing (EmbeddedFonts, WideStrings edge cases — see PCBDOC-next.md)

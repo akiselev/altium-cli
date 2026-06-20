@@ -2,6 +2,17 @@
 
 Spec DSL crate: parse, compile, execute, reconcile, dump, and sync Altium spec files.
 
+## Read first: greenfield vs brownfield
+
+Before changing the SchDoc executor/dump/reconciler (or any inline-children,
+identity, or two-sided change-set behavior), read
+`docs/spec-lang/explanation/greenfield-vs-brownfield.md`. It defines whether the
+spec or the Altium files are authoritative, which decides whether inline children
+are materialized verbatim (brownfield) or treated as overrides on an imported
+symbol (greenfield), how object identity is tracked (UniqueId → embedded typed spec
+params → structural match), and why `plan`/`apply` must write both the source spec
+(linking annotations) and the destination document.
+
 ## Index
 
 | File              | Contents (WHAT)                                                                   | Read When (WHEN)                                                        |

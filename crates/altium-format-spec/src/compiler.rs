@@ -934,6 +934,40 @@ A, B, C, D, E, Letter, Legal, Tabloid, OrcadA, OrcadB, OrcadC, OrcadD, or OrcadE
             }
         }
 
+        // Fail-fast: reject any component item the SchDoc compiler does not yet
+        // consume. Several of these (`pin`, `graphic`, `part`, `footprint_map`) are
+        // emitted by `dump` for SchDoc components but are not yet materialized on
+        // apply; silently dropping a parsed block violates the project's
+        // no-silent-data-loss rule. This is mode-independent — whatever the eventual
+        // greenfield/brownfield handling, a dropped block is never correct. See
+        // docs/spec-lang/explanation/greenfield-vs-brownfield.md.
+        for item in &decl.body {
+            let kind = match &item.node {
+                ComponentItem::Property(_)
+                | ComponentItem::LetBinding(_)
+                | ComponentItem::Parameter(_)
+                | ComponentItem::PinConnection(_) => continue,
+                ComponentItem::Pin(_) => "pin",
+                ComponentItem::Graphic(_) => "graphic",
+                ComponentItem::Part(_) => "part",
+                ComponentItem::FootprintMap(_) => "footprint_map",
+                ComponentItem::Alias(_) => "alias",
+                ComponentItem::SwapGroup(_) => "swap_group",
+                ComponentItem::PadNet { .. } => "pad_net",
+            };
+            return Err(SpecError::new(
+                SpecErrorCode::AltiumFormat,
+                format!(
+                    "inline '{}' blocks inside a SchDoc component are not yet supported on apply \
+                     (component '{}'). Dump emits these for inspection, but apply cannot yet \
+                     materialize them; remove the block or implement inline-children support. \
+                     See docs/spec-lang/explanation/greenfield-vs-brownfield.md.",
+                    kind, designator
+                ),
+                Some(item.span),
+            ));
+        }
+
         Ok(SchDocComponentSpec {
             annotation,
             designator,

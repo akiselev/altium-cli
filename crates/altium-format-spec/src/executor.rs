@@ -193,7 +193,7 @@ pub fn apply_spec_pcbdoc(spec: &PcbDocSpec, doc: &mut PcbDoc) -> Result<(), Spec
             .map_err(|e| SpecError::no_span(SpecErrorCode::AltiumFormat, e.to_string()))?;
 
         // Board settings
-        apply_pcbdoc_board_settings(&mut board.settings, board_spec);
+        apply_pcbdoc_board_settings(&mut board.settings, board_spec)?;
 
         // Named collections
         apply_pcbdoc_nets(&mut board, &board_spec.nets);
@@ -209,7 +209,10 @@ pub fn apply_spec_pcbdoc(spec: &PcbDocSpec, doc: &mut PcbDoc) -> Result<(), Spec
     Ok(())
 }
 
-fn apply_pcbdoc_board_settings(settings: &mut api::BoardSettings, spec: &BoardSpec) {
+fn apply_pcbdoc_board_settings(
+    settings: &mut api::BoardSettings,
+    spec: &BoardSpec,
+) -> Result<(), SpecError> {
     if let Some(count) = spec.signal_layer_count {
         settings.signal_layer_count = count;
     }
@@ -223,9 +226,19 @@ fn apply_pcbdoc_board_settings(settings: &mut api::BoardSettings, spec: &BoardSp
         match unit_str.as_str() {
             "metric" => settings.display_unit = Unit::Metric,
             "imperial" => settings.display_unit = Unit::Imperial,
-            _ => {} // unknown unit string, leave unchanged
+            // Fail-fast: an unrecognized display_unit must not be silently dropped.
+            other => {
+                return Err(SpecError::no_span(
+                    SpecErrorCode::AltiumFormat,
+                    format!(
+                        "unknown display_unit '{}' (expected 'metric' or 'imperial')",
+                        other
+                    ),
+                ));
+            }
         }
     }
+    Ok(())
 }
 
 fn apply_pcbdoc_nets(board: &mut api::PcbDocBoard, specs: &[PcbDocNetSpec]) {

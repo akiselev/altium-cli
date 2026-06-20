@@ -212,7 +212,25 @@ important findings: any `save-as` of an affected file lost data, not just spec r
 
 ## 6. Open decisions
 
-### Decision #1 — SchDoc inline children (the real architectural fork)
+### Decision #1 — RESOLVED → see `docs/spec-lang/explanation/greenfield-vs-brownfield.md`
+
+**Resolution (2026-06-20):** The A/B/C fork below was reframed and resolved. The
+spec language serves two workflows — *greenfield* (spec authoritative, Altium is a
+generated artifact + GUI escape hatch) and *brownfield* (Altium authoritative, spec
+is an agent-editable view). Inline-children handling is selected per component by
+whether it resolves to an imported symbol: brownfield → materialize verbatim
+(lossless, "Option A"); greenfield → reconstruct from the imported symbol and apply
+inline children as overrides (emit only divergence on dump). Identity uses a cascade
+(native UniqueId → embedded typed spec params → structural match). `plan`/`apply`
+must produce two-sided change sets (source spec gains linking annotations; document
+gains the design delta). Open item: mode detection (file-level marker vs inferred)
+gated on a reverse-engineering investigation into whether Altium preserves our
+metadata across a GUI save. Immediate fail-fast fix regardless: unhandled inline
+children currently drop silently at compile and must become a hard error.
+
+The original analysis is retained below for context.
+
+### Decision #1 (original) — SchDoc inline children (the real architectural fork)
 
 **The asymmetry.** The SchDoc spec language has two layers built for opposite purposes:
 

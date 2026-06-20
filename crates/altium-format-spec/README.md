@@ -126,7 +126,7 @@ present.
 ### Why annotation keys are predefined (no arbitrary key-value pairs)
 
 `#[annotation(...)]` accepts only the keys declared in `AnnotationKey` (`id`, `stable`,
-`group`). Arbitrary key-value pairs are intentionally rejected.
+`group`, `source_id`). Arbitrary key-value pairs are intentionally rejected.
 
 If free-form keys were allowed, a typo such as `stabl = true` would be silently
 accepted by the parser and have no effect — the component would not be treated as
