@@ -66,15 +66,15 @@ A spec file's domain is determined by its extension (`detect_spec_domain` in
 | `.pcbdoc-spec` | `PcbDoc` | PCB board (board outline, primitives, rules, placement). |
 | `.prjpcb-spec` | `PrjPcb` | PCB project (member documents, annotation, ERC, variants). |
 
-## The five operations
+## Operations
 
-Each spec domain supports the same set of operations, exposed through the
-`altium` CLI and the crate's public API (`src/lib.rs`):
+The CLI exposes these operations, but their applicability is not uniform across
+all domains:
 
-| Operation | CLI | Crate entry point |
+| Operation | CLI | Applicability |
 | --- | --- | --- |
-| **compile / apply** — turn a spec into (or onto) a binary document | `altium apply` | `apply_spec_*` (`src/executor.rs`) |
-| **plan / reconcile** — show the ECO without mutating | `altium plan` | `reconcile_*` (`src/reconciler.rs`) |
-| **dump** — reverse-generate a spec from a document | `altium dump` | `dump_*` (`src/dump.rs`) |
-| **format** — reformat spec text | `altium format` | `format_spec` (`src/formatter.rs`) |
-| **sync** — synchronize two specs | `altium spec sync` | `diff_snapshots` / `apply_sync_changes_to_pcbdoc` (`src/sync.rs`) |
+| **compile / apply** — turn a spec into (or onto) a document | `altium apply` | The five spec domains, subject to the implementation gaps documented in each block reference and `STATUS.md`. |
+| **plan / reconcile** — show the ECO without mutating | `altium plan` | The five spec domains; known plan/apply disagreement gaps are tracked in `STATUS.md`. |
+| **dump** — reverse-generate a spec from a document | `altium dump` | SchLib, PcbLib, SchDoc, PcbDoc, PrjPcb; IntLib can split into SchLib and PcbLib specs. |
+| **format** — reformat spec text | `altium format` | Any parseable spec source. |
+| **sync** — synchronize two specs | `altium spec sync` | SchDoc source to PcbDoc target only. |

@@ -43,6 +43,9 @@ string comparison inside the parser. Those are listed in
 
 ## Reserved keywords
 
+There are 26 reserved keywords. The table below is kept in lockstep with both
+the lexer keyword match and `is_keyword()`.
+
 | Keyword | `TokenKind` | Introduces / used in | See |
 | --- | --- | --- | --- |
 | `import` | `Import` | Top-level `import "path" [as alias]` directive (`parse_import`). | [operations: cli](../operations/cli.md), [schlib](../blocks/schlib.md) |

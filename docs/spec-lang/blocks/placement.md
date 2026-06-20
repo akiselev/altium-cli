@@ -1,9 +1,9 @@
 # The `placement` block (`.pcbdoc-spec`)
 
 A sub-language inside a `.pcbdoc-spec` file that describes **where components go**
-on the board and how an automatic placer may move them. The spec crate parses,
-compiles, and formats placement intent, but contains no placement solver itself —
-the compiled `PlacementSpec` is handed to the external autopcb placer.
+on the board and how a future automatic placer may move them. The spec crate
+parses, compiles, and formats part of this placement intent, but this repository
+contains no placement solver and does not execute a compiled `PlacementSpec`.
 
 **Related pages:** [`.pcbdoc-spec` blocks](pcbdoc.md) ·
 [Blocks overview](../language/blocks-overview.md) ·
@@ -45,11 +45,9 @@ placement {
 }
 ```
 
-> **Maps to Altium:** Placement intent has **no direct Altium record**. It is
-> consumed by the autopcb placer, which produces concrete component X/Y/rotation
-> values that *then* flow through the normal `component` apply path
-> (`apply_spec_pcbdoc`). A `place` with a fixed `at:` and no `autoplace` is
-> equivalent to setting the component's location directly.
+> **Maps to Altium:** Placement intent has **no direct Altium record**. The
+> current CLI does not run a placer. Only concrete component properties handled
+> by the normal PcbDoc component apply path can affect an Altium document.
 
 ---
 
@@ -85,11 +83,11 @@ Controls what happens to PcbDoc components **not** named in any `place` block
 ### `minimize` objective
 
 `minimize <objective> [subject_to { … }]` (`MinimizeDecl`). The objective is an
-identifier such as `wirelength`, `congestion`, or `area`. Currently only
-`wirelength` is wired through — it sets `optimize.ratsnest = true` with a default
-weight; other objectives parse but are reserved for future milestones. The
-optional `subject_to { … }` block carries constraint-relaxation hints (parsed,
-not yet consumed).
+identifier. Currently only `wirelength` is lowered: it sets
+`optimize.ratsnest = true` with a default weight. Other objectives and the
+optional `subject_to { … }` body are accepted and then dropped by the compiler.
+That is a known fail-fast defect, not supported forward-compatible syntax. Do
+not use either form until the compiler rejects or fully lowers it.
 
 ### `optimize` and `clearance`
 
@@ -105,9 +103,9 @@ clearance { all: 0.4mm, edge: 1mm }
 ### `autoplace { }` configuration block
 
 A bare `autoplace { … }` (distinct from the `autoplace:` property on a `place`)
-configures the solver itself — `algorithm`, `sa_cooling`, `sa_moves_per_temp`,
-and related tuning knobs (`compile_autoplace_config`, `AutoplaceConfig`). A
-common value is `algorithm: full_pipeline`.
+produces an `AutoplaceConfig` — `algorithm`, `sa_cooling`,
+`sa_moves_per_temp`, and related tuning knobs (`compile_autoplace_config`). No
+solver in this repository consumes that configuration.
 
 ---
 
@@ -158,8 +156,8 @@ The `autoplace:` value maps to `PlacementAutoplaceMode`
 
 ### Constraint semantics summary
 
-How `place` properties translate to solver constraints (reproduced from the crate
-README; the spec crate stores the intent, the solver applies the constraint):
+How `place` properties are represented as solver-oriented intent in the model.
+These rows do not imply that the current CLI executes a solver:
 
 | Spec property | Solver constraint |
 |---|---|
@@ -205,13 +203,10 @@ syntax.
 separate $power, $analog { gap: 3mm }
 ```
 
-Requests a minimum `gap` between the centroids of two groups
-(`PlacementSeparateDecl`). The `gap` is a coordinate distance.
-
-> **Note:** `separate` is parsed and carried in the AST, but at the current
-> milestone `compile_placement` does not yet lower it into a
-> `PlacementConstraintSpec`. Treat it as forward-looking syntax until the solver
-> side consumes it.
+Expresses a minimum `gap` between two groups (`PlacementSeparateDecl`). The
+parser retains it in the AST, but `compile_placement` currently drops the entire
+declaration. This is a known fail-fast defect. Do not use `separate` until it is
+either rejected or fully lowered.
 
 ---
 
@@ -233,11 +228,11 @@ preceded by an annotation — only `place` blocks can.
 
 ## Notes and limitations
 
-- The `placement` block is **PcbDoc-only**. It is ignored in other spec domains.
-- The spec crate has **no solver dependency**: it produces a typed `PlacementSpec`
-  describing intent. Concrete coordinates come from the external placer and are
-  then applied through the normal `component` path.
-- Several items (`minimize` objectives beyond `wirelength`, `separate` lowering,
-  `subject_to` hints) are accepted by the grammar but only partially consumed at
-  the current milestone, by design — they reserve syntax for upcoming solver
-  features rather than failing the parse.
+- The `placement` block is **PcbDoc-only**. Other-domain compilation currently
+  drops it, which is a known fail-fast defect; do not rely on the drop.
+- The spec crate produces a typed `PlacementSpec`, but no solver in this
+  repository consumes it.
+- Unknown placement properties/config keys, non-`wirelength` objectives,
+  `subject_to` hints, and `separate` declarations currently have compiler no-op
+  paths. These are defects, not supported syntax. Avoid them until they hard-error
+  or are fully implemented.

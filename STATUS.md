@@ -1,6 +1,6 @@
 # Codebase Status
 
-Updated: 2026-06-09
+Updated: 2026-06-20
 
 ## Workspace Overview
 
@@ -45,6 +45,9 @@ altium-cli             (CLI binary)
 
 Additional commands: `spec sync` (forward/diff/dry-run), `cfb ls/dump/blocks/diff/cat`.
 Spec files use `.schlib-spec`, `.pcblib-spec`, `.schdoc-spec`, `.pcbdoc-spec`, and `.prjpcb-spec`.
+
+Default `cargo test --workspace` is fixture-free. CFB container, tracked-CFB,
+and IntLib tests that read `data/` are gated by `test-fixtures`.
 
 ## Per-Document Notes
 
@@ -119,7 +122,6 @@ still not applied.
   `corner_radius_pct`/`inner_layers`/`slot_rotation`, component_body
   `standoff_height`/3D color/opacity, text_frame `word_wrap`/`clip_to_rect`,
   image `embed_image`/`keep_aspect`, PCB region `holes`/`kind` (PcbLib path)
-- PcbLib dump skips regions with empty outlines (graphic count changes silently)
 
 **Fail-fast audit gaps (spec crate, 2026-06-20 — open):**
 - `compile_pad` / pin compilation have no unknown-key rejection (unlike sch/pcb
@@ -131,14 +133,21 @@ still not applied.
   objectives + `subject_to` hints (~2528), and `SeparateDecl` (~2538) are
   accepted then dropped. Should hard-error or emit an explicit "unsupported"
   diagnostic.
+- Domain compilers skip parsed top-level declarations that belong to another
+  document domain (`compile_schdoc` / `compile_pcbdoc`). Mixed-domain specs must
+  hard-error instead of silently dropping declarations.
+- PcbLib dump catches individual footprint load failures and emits an `// ERROR`
+  comment, producing an incomplete spec instead of failing the operation.
+- PcbLib dump skips regions with empty outlines, silently changing the graphic
+  count in the generated spec.
+- PcbDoc class compilation filters non-string `members` values out of arrays;
+  malformed members must return a type error instead of disappearing.
 - Reconciler under-reporting: documents/graphics/polygon-props/placement-rotation
   marked "unchanged for now" (`reconciler.rs` 327/1235/2135/2482) → `plan` can
   show no change while `apply` mutates (plan/apply disagreement).
 - `lexer::is_keyword` flagged dead-code despite a call in
   `dump::quote_entity_name` — investigate reachability of the keyword-quote guard.
-- `compile_pad`/pin compilation still accept unknown keys silently (graphics
-  and sheet metadata reject them; pads/pins should too)
-- PcbDoc: 2/96 V6 files failing (EmbeddedFonts, WideStrings edge cases — see PCBDOC-next.md)
+- PcbDoc: 2/96 V6 files failing (EmbeddedFonts and WideStrings edge cases)
 - PcbDoc V5 format not supported (2 test files deferred)
 - PcbDoc spec dumps currently omit layer stack and board geometry blocks until the spec compiler supports applying them.
 - SVG clip regions not applied

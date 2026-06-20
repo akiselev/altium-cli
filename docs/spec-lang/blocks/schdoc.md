@@ -13,9 +13,12 @@ schematic objects.
 A `.schdoc-spec` file compiles to a `SchDocSpec` containing a single `SheetSpec`
 (`src/model.rs`). The top-level items recognised in this domain are `sheet`,
 `component`, `net`, `power`, and the identifier-dispatched SchDoc object blocks
-(`wire`, `net_label`, `power_object`, …). All other-domain items (`board`,
-`placement`, `rule`, …) are silently skipped when compiling as `SchDoc`
-(`compile_schdoc` in `src/compiler.rs`).
+(`wire`, `net_label`, `power_object`, …).
+
+> **Fail-fast gap:** `compile_schdoc` currently skips top-level items from other
+> domains (`board`, `placement`, `rule`, …). Do not mix document domains in one
+> file or rely on that behavior; accepting and dropping a parsed declaration
+> violates the repository's fail-fast rule and is tracked in `STATUS.md`.
 
 ---
 

@@ -101,8 +101,9 @@ document's desired state. The relationship is bidirectional:
   the reconciler diffs it against an existing document (or an empty one for a new
   file), and the executor applies the ECO to produce or update the binary.
 - **Reverse** (`dump`) — an existing `.SchLib`, `.PcbLib`, `.SchDoc`, `.PcbDoc`,
-  or `.PrjPcb` is read and emitted as spec text, with an `#[annotation(...)]`
-  emitted before each block to anchor its identity for future sync.
+  or `.PrjPcb` is read and emitted as spec text. `.IntLib` is a dump-only input
+  that can produce separate SchLib and PcbLib specs. Dumped entity blocks use
+  `#[annotation(...)]` where the dumper supports identity anchoring.
 
 Because reconciliation is a diff, applying an unchanged spec is a no-op, and
 applying an edited spec produces only the minimal ECO needed to bring the

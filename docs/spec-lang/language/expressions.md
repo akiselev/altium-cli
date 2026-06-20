@@ -172,7 +172,7 @@ this provenance to emit a typed `SymbolRef::Import` and to validate the referenc
 against the imported library at compile time:
 
 ```
-import "mcus.sym" as mcu
+import "mcus.schlib-spec" as mcu
 
 sheet { }
 component U1 {

@@ -25,7 +25,7 @@ an `import` directive, a top-level `let` binding, or a block declaration. The se
 top-level blocks depends on the document domain (SchLib, PcbLib, SchDoc, PcbDoc, PrjPcb).
 
 ```
-import "standard-footprints.sym" as fp
+import "standard-footprints.pcblib-spec" as fp
 
 let passive_pin = { electrical: passive, length: 25, side: outside }
 

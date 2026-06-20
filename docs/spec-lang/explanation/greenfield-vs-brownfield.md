@@ -52,7 +52,7 @@ matching only.
 
 ## How this resolves the inline-children fork
 
-(Previously "Decision #1" in `docs/spec-problems.md`.) The earlier framing asked
+(Previously "Decision #1" in the June 2026 spec roundtrip worklog.) The earlier framing asked
 whether to teach `apply` to materialize inline children (Option A), make `dump`
 authoring-only (Option B), or treat inline children as advisory (Option C). The
 two-case model resolves it: **it is both A and a greenfield override layer**,
@@ -67,14 +67,13 @@ This answers the old open question "who wins when both inline children *and* a
 `symbol:` reference appear?" — **the import is the base, inline children are
 overrides layered on top.**
 
-### Immediate fail-fast fix (independent of mode)
+### Current fail-fast boundary (independent of mode)
 
-Today inline `pin` / `graphic` / `part` / `footprint_map` blocks inside a SchDoc
-component *parse* (`ast.rs` `ComponentItem`) but are **silently dropped at compile**
-(`compiler.rs::compile_schdoc_component` only consumes `LetBinding`, `Property`,
-`Parameter`, `PinConnection`). A silently dropped block is a fail-fast violation.
-Until the materialization path above lands, unhandled inline children must be a
-hard compile error, not a silent drop.
+Inline `pin` / `graphic` / `part` / `footprint_map` blocks inside a SchDoc
+component parse into `ComponentItem`, but materialization is not implemented.
+`compiler.rs::compile_schdoc_component` now rejects those blocks with a hard
+compile error. Keep that boundary until the materialization path above lands;
+never turn unsupported inline children back into a no-op.
 
 ## Identity cascade (greenfield)
 

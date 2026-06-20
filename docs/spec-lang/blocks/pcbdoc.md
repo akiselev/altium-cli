@@ -15,7 +15,12 @@ A `.pcbdoc-spec` file compiles to a `PcbDocSpec { boards, placement,
 placement_rules, routing }` (`src/model.rs`). At most one `board` block produces
 the single `BoardSpec`; all primitives, nets, rules, classes, polygons, and
 differential pairs are collected into that board (`compile_pcbdoc` in
-`src/compiler.rs`). Other-domain items are silently skipped.
+`src/compiler.rs`).
+
+> **Fail-fast gap:** `compile_pcbdoc` currently skips top-level items from other
+> domains. Do not mix document domains in one file or rely on that behavior;
+> accepting and dropping a parsed declaration is an open defect tracked in
+> `STATUS.md`.
 
 The recognised top-level primitive types (`PCBDOC_PRIMITIVE_TYPES`) are `track`,
 `arc`, `via`, `fill`, `text`, `region`, `component_body`, `dimension`; the named

@@ -147,7 +147,7 @@ An `import "lib" as alias` binding evaluates to an `ImportObject { alias, entrie
 returns a provenance-tracked `ImportRef { alias, name }` rather than a plain string:
 
 ```
-import "mcus.sym" as mcu
+import "mcus.schlib-spec" as mcu
 // ... $mcu          → ImportObject { alias: "mcu", entries: { ESP32_C6: "ESP32_C6", … } }
 // ... $mcu.ESP32_C6 → ImportRef { alias: "mcu", name: "ESP32_C6" }
 ```

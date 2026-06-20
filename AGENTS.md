@@ -250,43 +250,21 @@ assert_cfb_files_semantic_eq(original_path, tmp.path());
 ```
 
 
-# DXP File Format Documentation (`docs/dxp/`)
+# Documentation routing
 
-Reverse-engineered documentation for Altium Designer binary file formats. **Start with `container-format.md` for the big picture**, then dive into the domain you need.
+Start with `docs/README.md`. It defines the authority order and maintenance
+rules for documentation in this repository.
 
-## Navigation Guide
+- Current implementation status and known defects: `STATUS.md`
+- Current format invariants: `docs/format/`
+- Implemented spec language and CLI workflows: `docs/spec-lang/`
+- Query, rendering, and test surfaces: `docs/query-language.md`,
+  `docs/rendering.md`, and `docs/testing.md`
+- Decompiled AD26 source evidence: `docs/reference/ad26/`
 
-| When you need to...                                                                             | Read this                                                        |
-| ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Understand how all Altium files are structured (CFB containers, block encoding, stream layouts) | `container-format.md`                                            |
-| Understand coordinates, DXP fractional encoding, or color format                                | `coordinates.md`                                                 |
-| Implement or debug a **schematic** record type                                                  | `schematic-records.md` + `file-format-constants.md`              |
-| Understand SchDoc/SchLib loading/saving pipelines, OWNERINDEX linking, font tables              | `sch-files.md`                                                   |
-| Implement or debug a **PCB** record type                                                        | `pcb-records.md` + `pcb-files.md`                                |
-| Understand PCB binary record format, section registry, loading pipeline                         | `pcb-files.md`                                                   |
-| Understand sidecar streams (WideStrings, UniqueIDs, pin sidecars, etc.)                         | `sidecar-streams-deep-dive.md`                                   |
-| Verify parameter ordering or serialization invariants                                           | `invariants.md`                                                  |
-| Look up .NET interface hierarchy for schematic or PCB                                           | `sch-dotnet-model.md` / `pcb-dotnet-model.md`                    |
-| Look up Delphi API exports (`SchApi_*` / `PcbApi_*`)                                            | `sch-api-functions.md` / `pcb-api-functions.md`                  |
-| Understand .NET↔Delphi COM interop architecture                                                 | `dotnet-delphi.md`                                               |
-| Investigate unknown pad binary fields                                                           | `altium-pad-field-analysis.md` → `altium-pad-unknowns-REPORT.md` |
-| Look up raw Delphi enums/constants (TObjectId, TLayer, TShape, etc.)                            | `altium-types.md` / `altium-constants.md`                        |
-
-## Critical Format Facts
-
-- **Container**: All files are OLE/CFB V3 compound documents
-- **Block encoding**: 4-byte header = `flags(8b) | size(24b)`, then payload. Flag `0x01` = binary mode
-- **Schematic records**: Pipe-delimited `|KEY=VALUE|` strings in Windows-1252. Dispatch on `RECORD=N`
-- **PCB records**: Binary little-endian structs. Dispatch on `u8` object ID byte
-- **Coordinates**: 10,000 internal units = 1 mil. Schematic splits into integer + `_FRAC` params. PCB stores raw i32
-- **Colors**: Win32 COLORREF `0x00BBGGRR` (BGR, not RGB)
-- **Schematic ownership**: Flat list + `OWNERINDEX` pointing to parent. In SchLib, indices are component-relative
-- **PCB ownership**: Separate sections per primitive type. Cross-references via net/component/polygon indices
-- **Sidecar streams**: Format-evolution artifacts — supplementary data in separate CFB streams merged at load time. No runtime distinction from core data
-- **PcbLib WideStrings pitfall**: Uses parameter-block format, NOT the binary TLV encoding used by PcbDoc's WideStrings6
-- **SchLib pin sidecars**: 9 streams per component (PinFrac → PinFunctionData). PinWideText is authoritative over PinDesc
-- **RECORD >= 256**: Written as `RECORD=254` + `RECORDEX=<actual_value>`
-- **Parameter keys**: Case-insensitive, first occurrence wins. `%UTF8%` prefix for Unicode keys. Byte 0x8E escapes `|` (single = pipe, double = literal 0x8E). `¦` (broken bar) also represents `|` in UTF-16LE/string contexts. `=` is never escaped (parser splits on first `=` only)
+Files under `docs/reference/ad26/` are source snapshots, not implementation
+status. Validate them against the current Rust code and original AD26 sources.
+Files under `docs/proposals/` and `docs/worklogs/` are non-authoritative.
 
 
 # Test files

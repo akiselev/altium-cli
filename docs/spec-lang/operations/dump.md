@@ -120,9 +120,11 @@ Dump is not a perfect inverse of apply. Key gaps to be aware of:
 - **Auto-generated annotation IDs are not document-stable** for ambiguous blocks
   (see above). Use manual IDs plus merge-on-write to keep them fixed.
 
-- **Load failures are inlined as comments** (PcbLib): if a footprint fails to
-  load, dump emits `// ERROR loading footprint <name>: <e>` rather than aborting
-  the whole dump.
+- **Known fail-fast defect:** PcbLib dump currently catches a footprint load
+  failure and emits `// ERROR loading footprint <name>: <e>` instead of
+  aborting. Do not treat that output as a complete library spec or use it for
+  apply; this violates the repository's fail-fast rule and is tracked in
+  `STATUS.md`.
 
 For a faithful round-trip workflow, dump once, hand-pin the annotation IDs you
 care about, and rely on merge-on-write for subsequent dumps.
