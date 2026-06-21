@@ -179,10 +179,10 @@ altium dump <DOCUMENT> [--output <PATH>]
 Dump never blindly overwrites. `write_spec_merged` checks whether the output
 already exists:
 
-- Exists and parses → merge the fresh dump with the existing file (preserving
-  comments and manual annotation IDs), printing `Merged: <doc> -> <out>`.
-- Exists but has parse errors → warn and overwrite (`Warning: existing spec
-  file has parse errors, overwriting without merge`).
+- Exists and parses → apply typed structured CST edits (preserving unchanged
+  bytes, comments, ordering, and manual annotation IDs), printing
+  `Merged: <doc> -> <out>`.
+- Exists but has parse errors → return a hard error and leave it untouched.
 - Does not exist → write fresh, printing `Dumped: <doc> -> <out>`.
 
 ### Exit codes

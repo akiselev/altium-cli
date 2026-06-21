@@ -95,11 +95,20 @@ Dump does not blindly clobber an existing spec. `write_spec_merged` (main.rs):
 | Existing output state      | Action |
 | -------------------------- | ------ |
 | Does not exist             | Write fresh. Prints `Dumped: <doc> -> <out>`. |
-| Exists and parses cleanly  | Merge the fresh dump into the old file, preserving comments and manual annotation IDs. Prints `Merged: <doc> -> <out>`. |
-| Exists but fails to parse  | Warn (`existing spec file has parse errors, overwriting without merge`) and overwrite. |
+| Exists and parses cleanly  | Apply typed structured CST edits, preserving unchanged bytes, comments, ordering, and manual annotation IDs. Prints `Merged: <doc> -> <out>`. |
+| Exists but fails to parse  | Return a hard error. The existing source is never overwritten. |
 
 This is what lets you hand-edit a dumped spec (add comments, pin manual IDs) and
 re-dump after a document change without losing your edits.
+
+When a fresh block has a source ID, that ID is authoritative and must match.
+Blocks without source IDs use a natural key when available, then a guarded
+ordinal fallback for identityless records whose collection cardinality is
+unchanged. Property and annotation values are edited at their exact CST ranges;
+unchanged formatting and comments remain byte-identical. A source-ID-backed
+rename changes only the name token. If a different authored header construct
+(for example, adding/removing a binding) cannot be updated without destroying
+intent, dump fails closed and leaves the file untouched.
 
 ## Round-trip caveats
 
@@ -120,11 +129,8 @@ Dump is not a perfect inverse of apply. Key gaps to be aware of:
 - **Auto-generated annotation IDs are not document-stable** for ambiguous blocks
   (see above). Use manual IDs plus merge-on-write to keep them fixed.
 
-- **Known fail-fast defect:** PcbLib dump currently catches a footprint load
-  failure and emits `// ERROR loading footprint <name>: <e>` instead of
-  aborting. Do not treat that output as a complete library spec or use it for
-  apply; this violates the repository's fail-fast rule and is tracked in
-  `STATUS.md`.
+- **PcbLib footprint errors abort dump.** A failed footprint load cannot produce
+  a partial `.pcblib-spec`.
 
 For a faithful round-trip workflow, dump once, hand-pin the annotation IDs you
 care about, and rely on merge-on-write for subsequent dumps.

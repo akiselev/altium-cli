@@ -1,6 +1,6 @@
 # Codebase Status
 
-Updated: 2026-06-20
+Updated: 2026-06-21
 
 ## Workspace Overview
 
@@ -46,8 +46,27 @@ altium-cli             (CLI binary)
 Additional commands: `spec sync` (forward/diff/dry-run), `cfb ls/dump/blocks/diff/cat`.
 Spec files use `.schlib-spec`, `.pcblib-spec`, `.schdoc-spec`, `.pcbdoc-spec`, and `.prjpcb-spec`.
 
-Default `cargo test --workspace` is fixture-free. CFB container, tracked-CFB,
-and IntLib tests that read `data/` are gated by `test-fixtures`.
+Default `cargo test --workspace` is intended to be fixture-free. Most tests
+that read `data/` are gated by `test-fixtures`, but 11 legacy CFB/IntLib tests
+remain ungated and fail with `No such file or directory` when fixture repos are
+absent. This is a test-infrastructure defect, not a parser failure.
+
+## Lossless Spec Updates (2026-06-21)
+
+The spec crate now has a lossless structured CST for every current spec domain,
+a typed accessor layer, and typed source edits: `InsertBlock`, `DeleteBlock`,
+`SetProperty`, `RemoveProperty`, and `SetAnnotation`. Edits reparse before
+returning, reject stale source IDs, preserve CRLF/LF style, and leave bytes
+outside the edited syntax ranges unchanged.
+
+`altium dump` no longer uses the CLI's AST-span text splice. Existing specs are
+updated recursively through typed CST edits, preserving matched ordering,
+authored comments/formatting, and prior annotation IDs. Source IDs are
+authoritative; identityless records use exact matching followed by guarded
+same-header ordinal matching. Malformed existing source, ambiguous identities,
+and non-name header changes that cannot be preserved are hard errors rather
+than overwrite/canonicalization fallbacks. PcbLib footprint load failures now
+abort dump instead of producing an incomplete `// ERROR` spec.
 
 ## Per-Document Notes
 
@@ -136,8 +155,6 @@ still not applied.
 - Domain compilers skip parsed top-level declarations that belong to another
   document domain (`compile_schdoc` / `compile_pcbdoc`). Mixed-domain specs must
   hard-error instead of silently dropping declarations.
-- PcbLib dump catches individual footprint load failures and emits an `// ERROR`
-  comment, producing an incomplete spec instead of failing the operation.
 - PcbLib dump skips regions with empty outlines, silently changing the graphic
   count in the generated spec.
 - PcbDoc class compilation filters non-string `members` values out of arrays;
@@ -147,6 +164,9 @@ still not applied.
   show no change while `apply` mutates (plan/apply disagreement).
 - `lexer::is_keyword` flagged dead-code despite a call in
   `dump::quote_entity_name` — investigate reachability of the keyword-quote guard.
+- 11 `altium-format` CFB/IntLib unit tests read absent `data/` files without the
+  required `test-fixtures` gate, so default workspace tests are not currently
+  fixture-free.
 - PcbDoc: 2/96 V6 files failing (EmbeddedFonts and WideStrings edge cases)
 - PcbDoc V5 format not supported (2 test files deferred)
 - PcbDoc spec dumps currently omit layer stack and board geometry blocks until the spec compiler supports applying them.

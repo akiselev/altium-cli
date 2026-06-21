@@ -26,6 +26,7 @@ pub use annotation::{CompiledAnnotation, generate_short_id, validate_short_id};
 pub use compiler::{
     compile_imported_schlibs, compile_spec, compile_spec_with_imports, compile_spec_with_resolved,
 };
+pub use cst::{DumpMergeError, merge_dump};
 #[cfg(feature = "altium-apply")]
 pub use dump::{
     IntLibDump, dump_intlib, dump_pcbdoc, dump_pcblib, dump_placement_block, dump_prjpcb,

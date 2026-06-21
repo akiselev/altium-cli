@@ -39,7 +39,11 @@ pub fn lex_lossless(source: &str) -> Result<Vec<LosslessToken>, ParseError> {
         if matches!(t.kind, TokenKind::Eof) {
             continue;
         }
-        items.push((t.span.start as usize, t.span.end as usize, map_token_kind(&t.kind)));
+        items.push((
+            t.span.start as usize,
+            t.span.end as usize,
+            map_token_kind(&t.kind),
+        ));
     }
     for c in &comments {
         let kind = if c.is_block {
@@ -57,7 +61,10 @@ pub fn lex_lossless(source: &str) -> Result<Vec<LosslessToken>, ParseError> {
         if start > pos {
             push_whitespace_gap(&mut out, source, pos..start)?;
         }
-        out.push(LosslessToken { kind, range: start..end });
+        out.push(LosslessToken {
+            kind,
+            range: start..end,
+        });
         pos = end;
     }
     if pos < source.len() {
@@ -75,7 +82,10 @@ fn push_whitespace_gap(
     range: Range<usize>,
 ) -> Result<(), ParseError> {
     let slice = &source.as_bytes()[range.clone()];
-    if let Some(bad) = slice.iter().position(|&b| !matches!(b, b' ' | b'\t' | b'\r')) {
+    if let Some(bad) = slice
+        .iter()
+        .position(|&b| !matches!(b, b' ' | b'\t' | b'\r'))
+    {
         let off = range.start + bad;
         return Err(ParseError::new(
             ParseErrorCode::E1001,

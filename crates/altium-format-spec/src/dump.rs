@@ -55,20 +55,14 @@ fn emit_annotation_line(out: &mut String, indent: &str, source_id: Option<&str>)
 }
 
 /// Generate `.pcblib-spec` source (footprint blocks) from a PcbLib document.
-pub fn dump_pcblib(lib: &PcbLib) -> String {
+pub fn dump_pcblib(lib: &PcbLib) -> Result<String, altium_format::AltiumFormatError> {
     let mut out = String::new();
     for name in lib.footprint_names() {
-        match lib.footprint(name) {
-            Ok(fp) => {
-                dump_footprint(&mut out, &fp);
-                out.push('\n');
-            }
-            Err(e) => {
-                out.push_str(&format!("// ERROR loading footprint {name}: {e}\n\n"));
-            }
-        }
+        let fp = lib.footprint(name)?;
+        dump_footprint(&mut out, &fp);
+        out.push('\n');
     }
-    out
+    Ok(out)
 }
 
 /// Generate `.schlib-spec` source (component blocks) from a SchLib document.

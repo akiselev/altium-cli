@@ -7,10 +7,18 @@
 //! token stream the structured parser emits is exactly the one produced here, so
 //! losslessness is preserved by construction.
 
+pub mod access;
+pub mod edit;
 pub mod lexer;
+pub mod merge;
 pub mod parser;
 pub mod syntax;
 
+pub use access::{
+    AnnotationRef, BindingMetadata, BlockKind, BlockRef, PropertyRef, SourceId, SpecTree,
+};
+pub use edit::{ExprSource, IntentBlock, PropertyKey, SpecEdit, StructuredEditError, apply_edits};
+pub use merge::{DumpMergeError, merge_dump};
 pub use parser::parse_structured;
 
 use cstree::build::GreenNodeBuilder;

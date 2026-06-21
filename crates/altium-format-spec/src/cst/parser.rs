@@ -18,7 +18,9 @@
 
 use cstree::build::GreenNodeBuilder;
 
-use crate::ast::{is_graphic_type, is_pcbdoc_block_type, is_pcbdoc_primitive_type, is_schdoc_object_type};
+use crate::ast::{
+    is_graphic_type, is_pcbdoc_block_type, is_pcbdoc_primitive_type, is_schdoc_object_type,
+};
 use crate::cst::lexer::{LosslessToken, lex_lossless};
 use crate::cst::syntax::{ResolvedNode, SyntaxKind as K, SyntaxNode};
 use crate::diagnostic::{ParseError, ParseErrorCode, Span};
@@ -315,10 +317,16 @@ impl<'a> Parser<'a> {
         let id = if has_let { 1 } else { 0 };
         if self.nth(id) == Some(K::Ident) && self.nth(id + 1) == Some(K::Eq) {
             match self.nth(id + 2) {
-                Some(K::ComponentKw) => self.bound_block(cp, K::Component, Self::parse_component_decl)?,
-                Some(K::FootprintKw) => self.bound_block(cp, K::Footprint, Self::parse_footprint_decl)?,
+                Some(K::ComponentKw) => {
+                    self.bound_block(cp, K::Component, Self::parse_component_decl)?
+                }
+                Some(K::FootprintKw) => {
+                    self.bound_block(cp, K::Footprint, Self::parse_footprint_decl)?
+                }
                 Some(K::ProjectKw) => self.bound_block(cp, K::Project, Self::parse_project_decl)?,
-                Some(K::SwapGroupKw) => self.bound_block(cp, K::SwapGroup, Self::parse_swap_group_decl)?,
+                Some(K::SwapGroupKw) => {
+                    self.bound_block(cp, K::SwapGroup, Self::parse_swap_group_decl)?
+                }
                 _ => {
                     self.builder.start_node_at(cp, K::LetBinding);
                     self.eat(K::LetKw);
@@ -401,18 +409,28 @@ impl<'a> Parser<'a> {
                 break;
             }
             self.builder.start_node(K::AnnotationArg);
-            // key: identifier or the `group` keyword
-            if self.at(K::Ident) || self.at(K::GroupKw) {
-                self.bump();
-            } else {
-                return Err(self.err("expected annotation key"));
+            // Keep this contract synchronized with `ast::AnnotationKey` and the
+            // main AST parser. Unknown keys are never retained.
+            let key = self.cur_text().map(str::to_owned);
+            match key.as_deref() {
+                Some("id" | "stable" | "source_id") if self.at(K::Ident) => self.bump(),
+                Some("group") if self.at(K::GroupKw) => self.bump(),
+                Some(other) => return Err(self.err(format!("unknown annotation key '{other}'"))),
+                None => return Err(self.err("expected annotation key")),
             }
             self.expect(K::Eq, "expected '=' after annotation key")?;
-            // value: string or boolean
-            if matches!(self.cur(), Some(K::String | K::TrueKw | K::FalseKw)) {
-                self.bump();
-            } else {
-                return Err(self.err("expected string or boolean annotation value"));
+            match key.as_deref() {
+                Some("stable") if matches!(self.cur(), Some(K::TrueKw | K::FalseKw)) => self.bump(),
+                Some("stable") => {
+                    return Err(self.err("expected boolean value for annotation key 'stable'"));
+                }
+                Some(_) if self.at(K::String) => self.bump(),
+                Some(other) => {
+                    return Err(self.err(format!(
+                        "expected string value for annotation key '{other}'"
+                    )));
+                }
+                None => unreachable!("annotation key was checked above"),
             }
             self.builder.finish_node(); // AnnotationArg
             if !self.eat(K::Comma) {
@@ -584,7 +602,11 @@ impl<'a> Parser<'a> {
     }
 
     /// `row {...}` / `column {...}` / `grid {...}` — keyword then object body.
-    fn wrap_keyword_object(&mut self, cp: cstree::build::Checkpoint, kind: K) -> Result<(), ParseError> {
+    fn wrap_keyword_object(
+        &mut self,
+        cp: cstree::build::Checkpoint,
+        kind: K,
+    ) -> Result<(), ParseError> {
         self.builder.start_node_at(cp, kind);
         self.bump(); // keyword
         self.parse_object()?;
@@ -786,15 +808,33 @@ impl<'a> Parser<'a> {
             }
             let kw = self.cur_text().map(str::to_owned);
             match kw.as_deref() {
-                Some("document") => return self.proj_block(cp, K::DocumentBlock, Self::parse_document_block),
-                Some("annotation") => return self.proj_block(cp, K::AnnotationBlock, Self::parse_annotation_block),
-                Some("erc_matrix") => return self.proj_block(cp, K::ErcMatrix, Self::parse_erc_matrix_block),
-                Some("erc_levels") => return self.proj_block(cp, K::ErcLevels, Self::parse_erc_levels_block),
-                Some("output_group") => return self.proj_block(cp, K::OutputGroup, Self::parse_output_group_block),
-                Some("comparison") => return self.proj_block(cp, K::Comparison, Self::parse_comparison_block),
-                Some("class_gen") => return self.proj_block(cp, K::ClassGen, Self::parse_property_block_kw),
-                Some("library_update") => return self.proj_block(cp, K::LibraryUpdate, Self::parse_property_block_kw),
-                Some("variant") => return self.proj_block(cp, K::Variant, Self::parse_variant_block),
+                Some("document") => {
+                    return self.proj_block(cp, K::DocumentBlock, Self::parse_document_block);
+                }
+                Some("annotation") => {
+                    return self.proj_block(cp, K::AnnotationBlock, Self::parse_annotation_block);
+                }
+                Some("erc_matrix") => {
+                    return self.proj_block(cp, K::ErcMatrix, Self::parse_erc_matrix_block);
+                }
+                Some("erc_levels") => {
+                    return self.proj_block(cp, K::ErcLevels, Self::parse_erc_levels_block);
+                }
+                Some("output_group") => {
+                    return self.proj_block(cp, K::OutputGroup, Self::parse_output_group_block);
+                }
+                Some("comparison") => {
+                    return self.proj_block(cp, K::Comparison, Self::parse_comparison_block);
+                }
+                Some("class_gen") => {
+                    return self.proj_block(cp, K::ClassGen, Self::parse_property_block_kw);
+                }
+                Some("library_update") => {
+                    return self.proj_block(cp, K::LibraryUpdate, Self::parse_property_block_kw);
+                }
+                Some("variant") => {
+                    return self.proj_block(cp, K::Variant, Self::parse_variant_block);
+                }
                 _ => {}
             }
         }
@@ -1028,7 +1068,9 @@ impl<'a> Parser<'a> {
     fn parse_schdoc_object(&mut self) -> Result<(), ParseError> {
         let has_name = matches!(
             self.cur_text(),
-            Some("net_label" | "power_object" | "port" | "sheet_symbol" | "parameter_set" | "probe")
+            Some(
+                "net_label" | "power_object" | "port" | "sheet_symbol" | "parameter_set" | "probe"
+            )
         );
         self.bump(); // object type identifier
         if has_name && !self.at(K::LBrace) {
@@ -1234,7 +1276,10 @@ impl<'a> Parser<'a> {
         self.parse_object()
     }
 
-    fn parse_pcbdoc_named_block(&mut self, cp: cstree::build::Checkpoint) -> Result<(), ParseError> {
+    fn parse_pcbdoc_named_block(
+        &mut self,
+        cp: cstree::build::Checkpoint,
+    ) -> Result<(), ParseError> {
         let kind = match self.cur_text() {
             Some("polygon") => K::Polygon,
             Some("rule") => K::Rule,
@@ -1418,14 +1463,24 @@ impl<'a> Parser<'a> {
         let cp = self.builder.checkpoint();
         match self.cur() {
             Some(
-                K::String | K::Template | K::Int | K::Float | K::Dim | K::Color | K::TrueKw
-                | K::FalseKw | K::NullKw | K::DollarIdent,
+                K::String
+                | K::Template
+                | K::Int
+                | K::Float
+                | K::Dim
+                | K::Color
+                | K::TrueKw
+                | K::FalseKw
+                | K::NullKw
+                | K::DollarIdent,
             ) => {
                 self.bump();
                 Ok(())
             }
             // Keywords usable as identifier values in expressions.
-            Some(K::PowerKw | K::NetKw | K::SheetKw | K::AutoplaceKw | K::GroupKw | K::SeparateKw) => {
+            Some(
+                K::PowerKw | K::NetKw | K::SheetKw | K::AutoplaceKw | K::GroupKw | K::SeparateKw,
+            ) => {
                 self.bump();
                 Ok(())
             }
@@ -1523,7 +1578,11 @@ mod tests {
     fn assert_roundtrip(src: &str) {
         let root = parse_structured(src)
             .unwrap_or_else(|e| panic!("structured parse failed: {e}\nsource:\n{src}"));
-        assert_eq!(root.text(), src, "structured CST must equal source byte-for-byte");
+        assert_eq!(
+            root.text(),
+            src,
+            "structured CST must equal source byte-for-byte"
+        );
     }
 
     #[test]
@@ -1567,8 +1626,16 @@ component R_0603 {
     }
 
     #[test]
+    fn structured_annotation_rejects_unknown_keys_and_wrong_types() {
+        assert!(parse_structured("#[annotation(foo = \"x\")] component X {}").is_err());
+        assert!(parse_structured("#[annotation(stable = \"yes\")] component X {}").is_err());
+        assert!(parse_structured("#[annotation(id = true)] component X {}").is_err());
+    }
+
+    #[test]
     fn structured_expressions() {
-        let src = "component X { a: 1 + 2 * 3, b: $ref.field[0], c: foo(1, key: 2), d: [1, 2, 3] }\n";
+        let src =
+            "component X { a: 1 + 2 * 3, b: $ref.field[0], c: foo(1, key: 2), d: [1, 2, 3] }\n";
         assert_roundtrip(src);
     }
 

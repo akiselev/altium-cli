@@ -12,16 +12,15 @@ use altium_format_spec::{
     apply_spec_pcblib, apply_spec_prjpcb, apply_spec_schdoc, apply_spec_schlib,
     apply_sync_changes_to_pcbdoc, compile_imported_schlibs, compile_spec_with_resolved,
     diff_snapshots, dump_intlib, dump_pcbdoc, dump_pcblib, dump_prjpcb, dump_schdoc, dump_schlib,
-    filter_changes, format_spec, project_pcbdoc_spec, project_schdoc_spec, reconcile_pcbdoc,
-    reconcile_pcbdoc_empty, reconcile_pcblib, reconcile_pcblib_empty, reconcile_prjpcb,
-    reconcile_prjpcb_empty, reconcile_schdoc, reconcile_schdoc_empty, reconcile_schlib,
-    reconcile_schlib_empty, render_eco_report, resolve_imports, rewrite_pcbdoc_spec_with_changes,
-    validate_pcbdoc_spec, validate_schdoc_spec,
+    filter_changes, format_spec, merge_dump, project_pcbdoc_spec, project_schdoc_spec,
+    reconcile_pcbdoc, reconcile_pcbdoc_empty, reconcile_pcblib, reconcile_pcblib_empty,
+    reconcile_prjpcb, reconcile_prjpcb_empty, reconcile_schdoc, reconcile_schdoc_empty,
+    reconcile_schlib, reconcile_schlib_empty, render_eco_report, resolve_imports,
+    rewrite_pcbdoc_spec_with_changes, validate_pcbdoc_spec, validate_schdoc_spec,
 };
 use clap::{Parser, Subcommand};
 
 mod cfb;
-pub mod spec_merge;
 
 #[derive(Parser)]
 #[command(name = "altium", about = "CLI tool for Altium Designer files")]
@@ -1576,36 +1575,25 @@ fn instantiate_footprint_primitives(
 
 // ── dump ──────────────────────────────────────────────────────────────────────
 
-/// Write a spec file, merging with existing content if the output file exists.
-///
-/// If the output file already exists and can be parsed, merges the fresh dump
-/// with the existing content to preserve comments and annotation IDs.
-/// Falls back to overwriting if the existing file can't be parsed.
+/// Write a spec file, applying typed CST edits when source already exists.
 fn write_spec_merged(
     out_path: &std::path::Path,
     spec_source: &str,
     document: &PathBuf,
 ) -> anyhow::Result<()> {
     if out_path.exists() {
-        match std::fs::read_to_string(out_path) {
-            Ok(old_text) => match spec_merge::merge_spec(&old_text, spec_source) {
-                Some(merged) => {
-                    std::fs::write(out_path, &merged).map_err(|e| {
-                        anyhow::anyhow!("failed to write {}: {e}", out_path.display())
-                    })?;
-                    println!("Merged: {} -> {}", document.display(), out_path.display());
-                    return Ok(());
-                }
-                None => {
-                    eprintln!(
-                        "Warning: existing spec file has parse errors, overwriting without merge"
-                    );
-                }
-            },
-            Err(_) => {
-                // Can't read existing file — just overwrite.
-            }
-        }
+        let old_text = std::fs::read_to_string(out_path)
+            .map_err(|e| anyhow::anyhow!("failed to read existing {}: {e}", out_path.display()))?;
+        let merged = merge_dump(&old_text, spec_source).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to apply structured dump edits to {}: {e}",
+                out_path.display()
+            )
+        })?;
+        std::fs::write(out_path, &merged)
+            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
+        println!("Merged: {} -> {}", document.display(), out_path.display());
+        return Ok(());
     }
     std::fs::write(out_path, spec_source)
         .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", out_path.display()))?;
@@ -1641,7 +1629,8 @@ fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> 
         SpecDomain::PcbLib => {
             let lib = PcbLib::open(document)
                 .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", document.display()))?;
-            let spec_source = dump_pcblib(&lib);
+            let spec_source = dump_pcblib(&lib)
+                .map_err(|e| anyhow::anyhow!("failed to dump {}: {e}", document.display()))?;
             write_spec_merged(&out_path, &spec_source, document)?;
         }
         SpecDomain::SchDoc => {

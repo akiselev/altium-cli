@@ -2,6 +2,12 @@
 
 Status: proposed plan of record for the next implementation cycle.
 
+Implementation checkpoint (2026-06-21): the lossless structured CST, typed
+accessor/edit layer, and comment-preserving `dump` update path described in
+sections 4.1 and 11 are implemented. The old CLI `spec_merge` text splice has
+been removed. The baseline, three-way planner, saved-plan transaction, and
+document patch portions of this plan remain future work.
+
 This document captures the clean-slate design discussion for replacing the existing spec-language
 dump/reconciler/executor/apply machinery. Future work should start here rather than extending the
 current reconciler or executor.
