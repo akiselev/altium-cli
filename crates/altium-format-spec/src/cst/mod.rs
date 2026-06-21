@@ -8,7 +8,10 @@
 //! losslessness is preserved by construction.
 
 pub mod lexer;
+pub mod parser;
 pub mod syntax;
+
+pub use parser::parse_structured;
 
 use cstree::build::GreenNodeBuilder;
 
