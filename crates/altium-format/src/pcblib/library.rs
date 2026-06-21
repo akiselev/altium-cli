@@ -642,9 +642,11 @@ pub(crate) fn parse_texture_metadata(header: &[u8], data: &[u8]) -> Result<Vec<P
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "test-fixtures")]
     use crate::tracked_cfb::TrackedCfbDocument;
     use altium_format_types::constants::parsing::BLOCK_SIZE_MASK;
 
+    #[cfg(feature = "test-fixtures")]
     fn data_path(filename: &str) -> std::path::PathBuf {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         std::path::Path::new(manifest_dir)
@@ -739,12 +741,10 @@ mod tests {
 
     // ── Integration tests (real files) ──────────────────────────────────────
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn pcblib_28pins_library_data() {
         let path = data_path("pcblib/28Pins_Project.PcbLib");
-        if !path.exists() {
-            return;
-        }
         let mut doc = TrackedCfbDocument::open(&path).expect("should open PcbLib");
         let data = doc
             .read_stream("/Library/Data")
@@ -759,12 +759,10 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn pcblib_28pins_component_toc() {
         let path = data_path("pcblib/28Pins_Project.PcbLib");
-        if !path.exists() {
-            return;
-        }
         let mut doc = TrackedCfbDocument::open(&path).expect("should open PcbLib");
         let header = doc
             .read_stream("/Library/ComponentParamsTOC/Header")
@@ -782,12 +780,10 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "test-fixtures")]
     #[test]
     fn pcblib_28pins_model_metadata() {
         let path = data_path("pcblib/28Pins_Project.PcbLib");
-        if !path.exists() {
-            return;
-        }
         let mut doc = TrackedCfbDocument::open(&path).expect("should open PcbLib");
         let header = doc
             .read_stream("/Library/Models/Header")

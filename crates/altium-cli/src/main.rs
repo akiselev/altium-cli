@@ -109,7 +109,7 @@ enum Commands {
     },
     /// Reverse-generate a spec file from an existing Altium document
     Dump {
-        /// Path to the document (.SchLib or .PcbLib)
+        /// Path to a supported Altium document
         document: PathBuf,
         /// Output spec file path (overrides default)
         #[arg(long)]

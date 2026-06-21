@@ -945,7 +945,7 @@ fn write_pin_desc(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
 // Returns PinMiscData sidecar stream if any pin has a non-empty swap_id_pair.
 // The sidecar is the ONLY storage for pair swap IDs (the binary pin record has
 // no field for them); per the documented Altium export condition it is written
-// whenever the value is non-empty (docs/dxp/sidecar-streams-deep-dive.md 5.7).
+// whenever the value is non-empty (see docs/format/schematic.md and the AD26 source).
 fn write_pin_misc_data(pins: &[&SchPin]) -> Option<Result<Vec<u8>>> {
     let mut entries = Vec::new();
     for (i, pin) in pins.iter().enumerate() {
