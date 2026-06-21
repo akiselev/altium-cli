@@ -247,6 +247,120 @@ saves preserve it. Candidate carriers include typed document/component parameter
 fully understood stream. If preservation is not proven, use managed external state or native-only
 identity.
 
+### 6.1 GUI-save preservation: empirical result (2026-06-21, SchLib / Altium 26.2)
+
+Tested directly. Unknown `|KEY=VALUE|` pairs were injected at four points through the high-level
+write path, the file was opened in the Altium GUI, saved (`Ctrl+S`, which re-serializes in place),
+and the result was inspected stream-by-stream.
+
+| Injection point | Entity has native UniqueID? | Survived GUI save? |
+| --- | --- | --- |
+| `FileHeader` document block (raw key) | n/a | No — dropped |
+| Component header `RECORD=1` (raw key) | Yes | No — dropped |
+| Pie primitive `RECORD=9` (raw key) | No | No — dropped |
+| User parameter `RECORD=41` (real `Name=/Text=` object) | n/a | Yes — Altium normalized it and assigned it a fresh UniqueID |
+
+Conclusions that constrain the identity/metadata design:
+
+- Altium round-trips every record through a typed model and **discards any parameter it has no field
+  for** on save. This is the same fail-fast/typed-reserialize behavior `altium-format` itself enforces.
+- **Native UniqueID presence does not protect an unknown key.** The component header carries a
+  UniqueID and still lost its injected key. Survival depends on the key being a *recognized
+  first-class object*, not on the host entity having an id.
+- The only proven embedded carrier in SchLib is a **real component parameter (`RECORD=41`), and only
+  at component scope.** Document-level keys and sub-component primitives cannot carry surviving
+  embedded metadata.
+- Therefore `MetadataPolicy::ManagedEmbedded` is viable **only for component-scoped metadata via real
+  parameters**. Document-level and primitive-level managed metadata must use
+  `MetadataPolicy::ManagedExternal` (an external baseline file) or fall back to native-only identity.
+- For entities below component scope (pins, graphics) and for document/component headers, **binding
+  must rely on native `UniqueId` where it exists, and on structural/natural-key matching where it does
+  not.** We cannot persist our own `BindingId` on them.
+- Still to confirm for PcbLib, SchDoc, PcbDoc, PrjPcb. The pipeline is the same param-based
+  typed-reserialize, so the result is expected to be identical, but each must be verified before any
+  format relies on an embedded carrier.
+
+### 6.2 Resolved identity model (2026-06-21)
+
+Native identity coverage is heterogeneous (verified against the high-level API types). The new design
+must model identity *source/confidence per entity*, not assume a single id field per entity — that
+assumption is the core defect of the current reconciler (one natural-key string used as both identity
+*and* apply-address, exact-match only, additive-only, no rename detection, no baseline).
+
+Identity tiers:
+
+| Tier | Entities | Anchor |
+| --- | --- | --- |
+| 1 — reliable native id | All SchDoc sheet objects; PrjPcb document refs/variants; PcbDoc *named* collections (Net/Component/Polygon/Rule, `id == name`) | `BindingId` ← native `UniqueId` directly; renames are free |
+| 2 — present-but-blank | SchLib Component / Pin / Parameter (`unique_id` exists but is often empty) | Component anchored by an embedded `BindingId`; Pin/Parameter use native id when populated, else parent-scoped natural key |
+| 3 — keyless | SchLib `PieGraphic`; **all** PcbLib primitives; **all** PcbDoc primitives (their `id` is synthesized at parse, not stored in the file) | No native id and not embeddable — identity exists **only** in the external ledger |
+
+Three fixed decisions:
+
+1. **The keyless structural ledger is designed up front** (covers Tier 3 across PcbDoc/PcbLib/Pie), not
+   deferred. The baseline format must support all three tiers from the first release.
+2. **Managed SchLib component binding is embedded as a hidden `RECORD=41` parameter** — the only
+   GUI-survivable carrier (§6.1). Sub-component and keyless entities are carried by the external ledger
+   only. (Reserved parameter name TBD; must be re-confirmed survivable when `is_hidden` and excluded
+   from Altium's own param dedup. The visible-parameter case is proven.)
+3. **Unmatched + key-changed entities are handled conservatively**: delete + add, surfaced as a
+   blocking review item. Exact-id, stable natural-key, and exact-fingerprint/stable-ordinal pairing are
+   allowed; similarity/"looks alike" pairing is never performed.
+
+Core types:
+
+```rust
+struct BindingId(u128);   // opaque, minted at first bind, never derived from mutable data
+
+enum DocumentLocator {                                   // how a BindingId re-finds its Altium entity
+    Native { unique_id: String },                        // Tier 1, and Tier 2 when populated
+    NaturalKey { parent: BindingId, key: String },       // Tier 2 fallback
+    Structural {                                          // Tier 3 — ledger only
+        parent: BindingId,
+        collection: CollectionKind,
+        ordinal: u32,
+        fingerprint: Fingerprint,
+    },
+}
+
+struct LedgerEntry {
+    binding: BindingId,
+    parent: Option<BindingId>,
+    source: Option<SourceId>,            // authored-side CST node identity
+    document: DocumentLocator,           // Altium side
+    semantic_fingerprint: Fingerprint,   // EXCLUDES management metadata (the embedded BindingId param)
+    revision: Revision,
+}
+```
+
+Resolution ladder (each run, per entity; stop at first hit):
+
+1. Embedded managed `BindingId` (SchLib component parameter).
+2. Native `UniqueId`.
+3. Parent-scoped natural key.
+4. Ledger structural match: same `(parent, collection, ordinal)`, fingerprint confirms/disambiguates.
+5. Ledger exact-fingerprint match within parent (recovers reorder/insert when the ordinal shifted) —
+   only when the match is unique.
+6. No unique match → fresh `BindingId` for a genuinely new entity; an unmatched baseline counterpart is
+   a delete. Any pair that would require similarity guessing is emitted as delete+add and flagged for
+   review, never silently bound.
+
+Identity is decoupled from the apply target. `BindingId` is the stable handle; `ResourceAddress`
+(parent path + collection + locator) is re-resolved from it each run, so reordering an entity does not
+change its identity. Change detection: same `BindingId` resolving on both sides with a differing
+semantic fingerprint is an Update; address/ordinal drift with an unchanged fingerprint is a Move. The
+embedded `BindingId` parameter is excluded from the semantic fingerprint, so writing it never registers
+as a content change (§7).
+
+Consequences accepted:
+
+- Editing a keyless primitive's geometry keeps identity via `(parent, collection, ordinal)`; the
+  fingerprint flags the edit as Update. If the collection's count or order also changed so the ordinal
+  is ambiguous, the affected primitives fall to delete+add+review rather than being fuzzy-matched.
+- First brownfield adoption has no ledger and no embedded ids: bootstrap binds by native id + natural
+  key, mints `BindingId`s, and writes the ledger (plus component params where managed/embedded). Keyless
+  primitives bind by an ordinal+fingerprint snapshot taken at adoption.
+
 ## 7. Synchronization baseline
 
 Every successful managed synchronization records a semantic baseline:
@@ -734,8 +848,13 @@ Before implementation begins, explicitly decide:
 1. Whether the existing surface syntax is retained, revised, or replaced.
 2. Which lossless CST technology/pattern to use.
 3. Exact `BindingId`, `SourceId`, and resource-path formats.
-4. Embedded metadata carriers per Altium document type, after GUI preservation validation.
-5. External baseline file name and versioning if embedded metadata is unavailable or disabled.
+4. Embedded metadata carriers per Altium document type, after GUI preservation validation. SchLib is
+   resolved (see §6.1): the only surviving embedded carrier is a real component parameter
+   (`RECORD=41`) at component scope; everything else must use external state. PcbLib/SchDoc/PcbDoc/
+   PrjPcb still need the same validation.
+5. External baseline file name and versioning. §6.1 makes this mandatory rather than optional: any
+   metadata below component scope (pins, primitives) or at document scope cannot be embedded, so the
+   external baseline is the primary carrier, not a fallback.
 6. Whether managed scope is declared in source, project configuration, CLI policy, or a combination.
 7. Saved-plan compatibility/versioning policy.
 8. Conflict-resolution UX and whether the first version only reports conflicts.

@@ -1,6 +1,7 @@
 pub mod annotation;
 pub mod ast;
 pub mod compiler;
+pub mod cst;
 pub mod diagnostic;
 #[cfg(feature = "altium-apply")]
 pub mod dump;

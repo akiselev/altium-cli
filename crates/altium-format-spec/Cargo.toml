@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 altium-format = { version = "0.2.0", path = "../altium-format", optional = true }
 altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
+cstree = { version = "0.12", features = ["derive"] }
 indexmap = { version = "2", features = ["serde"] }
 rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }

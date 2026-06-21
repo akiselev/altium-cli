@@ -136,10 +136,16 @@ impl CfbDocument {
             .map_err(|e| AltiumFormatError::CfbError(e.to_string()))?;
         let children: Vec<(String, bool)> = entries
             .map(|e| {
+                // `PathBuf::display()` renders the platform separator (`\` on Windows),
+                // but every caller addresses streams with `/`-separated paths and the
+                // `cfb` crate accepts `/` on all platforms. Normalize to `/` so the
+                // consumed-tracking set matches; otherwise `assert_all_consumed` reports
+                // false positives like `/Component_1\Data` on Windows.
                 (
                     e.path()
                         .display()
                         .to_string()
+                        .replace('\\', "/")
                         .trim_end_matches('/')
                         .to_owned(),
                     e.is_storage(),
