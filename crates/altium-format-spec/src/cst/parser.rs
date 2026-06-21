@@ -242,73 +242,83 @@ impl<'a> Parser<'a> {
 
         // import (never annotated)
         if self.at(K::ImportKw) {
-            self.builder.start_node_at(cp, K::Import);
-            self.parse_import()?;
-            self.builder.finish_node();
-            return Ok(());
+            return self.block(cp, K::Import, Self::parse_import);
         }
 
-        // optional block annotation
-        if self.at(K::Hash) {
+        // optional block annotation (wrapped into the following block via `cp`)
+        let had_anno = self.at(K::Hash);
+        if had_anno {
             self.parse_annotation()?;
         }
 
-        // unannotated/annotated keyword-led blocks
+        // keyword-led top-level blocks
         if self.at(K::ComponentKw) {
-            self.builder.start_node_at(cp, K::Component);
-            self.parse_component_decl()?;
-            self.builder.finish_node();
-            return Ok(());
+            return self.block(cp, K::Component, Self::parse_component_decl);
         }
         if self.at(K::FootprintKw) {
-            self.builder.start_node_at(cp, K::Footprint);
-            self.parse_footprint_decl()?;
-            self.builder.finish_node();
-            return Ok(());
+            return self.block(cp, K::Footprint, Self::parse_footprint_decl);
+        }
+        if self.at(K::ProjectKw) {
+            return self.block(cp, K::Project, Self::parse_project_decl);
+        }
+        if self.at(K::SheetKw) {
+            return self.block(cp, K::Sheet, Self::parse_sheet_decl);
+        }
+        if self.at(K::NetKw) {
+            return self.block(cp, K::Net, Self::parse_net_decl);
+        }
+        if self.at(K::PowerKw) {
+            return self.block(cp, K::Power, Self::parse_power_decl);
+        }
+        if self.at(K::BoardKw) {
+            return self.block(cp, K::Board, Self::parse_board_decl);
+        }
+        if self.at(K::PadKw) {
+            return self.block(cp, K::PcbPrimitive, Self::parse_pcbdoc_primitive_pad);
+        }
+        if self.at(K::ParameterKw) {
+            return self.block(cp, K::SchDocObject, Self::parse_schdoc_object_param);
         }
         if self.at(K::SwapGroupKw) && self.nth(1) != Some(K::Colon) {
-            self.builder.start_node_at(cp, K::SwapGroup);
-            self.parse_swap_group_decl()?;
-            self.builder.finish_node();
-            return Ok(());
+            return self.block(cp, K::SwapGroup, Self::parse_swap_group_decl);
         }
 
-        // Domains not yet ported in the CST (SchLib-only milestone).
-        if self.not_yet_ported_top_level() {
-            return Err(self.err(
-                "CST parser: this block type is not yet ported (SchLib component/footprint only for now)",
-            ));
+        // identifier-dispatched top-level blocks
+        if self.at_ident("placement") {
+            return self.block(cp, K::Placement, Self::parse_placement_decl);
+        }
+        if self.at_ident("routing") {
+            return self.block(cp, K::Routing, Self::parse_routing_decl);
+        }
+        if self.at(K::Ident) {
+            let t = self.cur_text().unwrap_or("");
+            // pcbdoc named blocks (polygon/rule/class/differential_pair) before
+            // primitives, since `polygon` overlaps; primitives before schdoc/graphic
+            // (since `arc` overlaps).
+            if is_pcbdoc_block_type(t) {
+                return self.parse_pcbdoc_named_block(cp);
+            }
+            if is_pcbdoc_primitive_type(t) {
+                return self.block(cp, K::PcbPrimitive, Self::parse_pcbdoc_primitive);
+            }
+            if is_schdoc_object_type(t) || is_graphic_type(t) {
+                return self.block(cp, K::SchDocObject, Self::parse_schdoc_object);
+            }
         }
 
-        // [let] IDENT = (component|footprint|swap_group|expr)
+        if had_anno {
+            return Err(self.err("expected a block declaration after annotation"));
+        }
+
+        // [let] IDENT = (component|footprint|project|swap_group|expr)
         let has_let = self.at(K::LetKw);
         let id = if has_let { 1 } else { 0 };
         if self.nth(id) == Some(K::Ident) && self.nth(id + 1) == Some(K::Eq) {
             match self.nth(id + 2) {
-                Some(K::ComponentKw) => {
-                    self.builder.start_node_at(cp, K::Component);
-                    self.eat(K::LetKw);
-                    self.emit_binding()?;
-                    self.parse_component_decl()?;
-                    self.builder.finish_node();
-                }
-                Some(K::FootprintKw) => {
-                    self.builder.start_node_at(cp, K::Footprint);
-                    self.eat(K::LetKw);
-                    self.emit_binding()?;
-                    self.parse_footprint_decl()?;
-                    self.builder.finish_node();
-                }
-                Some(K::SwapGroupKw) => {
-                    self.builder.start_node_at(cp, K::SwapGroup);
-                    self.eat(K::LetKw);
-                    self.emit_binding()?;
-                    self.parse_swap_group_decl()?;
-                    self.builder.finish_node();
-                }
-                Some(K::ProjectKw) => {
-                    return Err(self.err("CST parser: project blocks not yet ported"));
-                }
+                Some(K::ComponentKw) => self.bound_block(cp, K::Component, Self::parse_component_decl)?,
+                Some(K::FootprintKw) => self.bound_block(cp, K::Footprint, Self::parse_footprint_decl)?,
+                Some(K::ProjectKw) => self.bound_block(cp, K::Project, Self::parse_project_decl)?,
+                Some(K::SwapGroupKw) => self.bound_block(cp, K::SwapGroup, Self::parse_swap_group_decl)?,
                 _ => {
                     self.builder.start_node_at(cp, K::LetBinding);
                     self.eat(K::LetKw);
@@ -324,38 +334,37 @@ impl<'a> Parser<'a> {
         if has_let {
             return Err(self.err("expected identifier after 'let'"));
         }
-        Err(self.err("expected import, component, footprint, swap_group, or let binding"))
+        Err(self.err("expected a top-level item (import, declaration, or let binding)"))
     }
 
-    fn not_yet_ported_top_level(&self) -> bool {
-        if matches!(
-            self.cur(),
-            Some(
-                K::ProjectKw
-                    | K::SheetKw
-                    | K::NetKw
-                    | K::PowerKw
-                    | K::BoardKw
-                    | K::PadKw
-                    | K::ParameterKw
-            )
-        ) {
-            return true;
-        }
-        if self.at_ident("placement") || self.at_ident("routing") {
-            return true;
-        }
-        if let Some(t) = self.cur_text() {
-            if self.at(K::Ident)
-                && (is_pcbdoc_block_type(t)
-                    || is_pcbdoc_primitive_type(t)
-                    || is_schdoc_object_type(t)
-                    || is_graphic_type(t))
-            {
-                return true;
-            }
-        }
-        false
+    /// Wrap `f` in a node of `kind` retroactively from `cp` (so any annotation
+    /// already emitted since `cp` is included). On error, returns early without
+    /// closing the node — the partial tree is discarded with the builder.
+    fn block(
+        &mut self,
+        cp: cstree::build::Checkpoint,
+        kind: K,
+        f: fn(&mut Self) -> Result<(), ParseError>,
+    ) -> Result<(), ParseError> {
+        self.builder.start_node_at(cp, kind);
+        f(self)?;
+        self.builder.finish_node();
+        Ok(())
+    }
+
+    /// Like [`block`], but first emits the optional `let` and the `IDENT =` binding.
+    fn bound_block(
+        &mut self,
+        cp: cstree::build::Checkpoint,
+        kind: K,
+        f: fn(&mut Self) -> Result<(), ParseError>,
+    ) -> Result<(), ParseError> {
+        self.builder.start_node_at(cp, kind);
+        self.eat(K::LetKw);
+        self.emit_binding()?;
+        f(self)?;
+        self.builder.finish_node();
+        Ok(())
     }
 
     // ── Import ────────────────────────────────────────────────────────────────
@@ -749,6 +758,498 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    // ── Project ───────────────────────────────────────────────────────────────
+
+    fn parse_project_decl(&mut self) -> Result<(), ParseError> {
+        self.expect(K::ProjectKw, "expected 'project'")?;
+        self.parse_name()?;
+        self.parse_block(Self::parse_project_item)
+    }
+
+    fn parse_project_item(&mut self) -> Result<(), ParseError> {
+        let cp = self.builder.checkpoint();
+        if self.at(K::LetKw) {
+            return self.wrap_let_binding(cp);
+        }
+        if self.at(K::Ident) {
+            let next = self.nth(1);
+            if next == Some(K::Colon) {
+                return self.parse_property();
+            }
+            if next == Some(K::Eq) {
+                self.builder.start_node_at(cp, K::LetBinding);
+                self.bump(); // IDENT
+                self.expect(K::Eq, "expected '=' in let binding")?;
+                self.parse_expr()?;
+                self.builder.finish_node();
+                return Ok(());
+            }
+            let kw = self.cur_text().map(str::to_owned);
+            match kw.as_deref() {
+                Some("document") => return self.proj_block(cp, K::DocumentBlock, Self::parse_document_block),
+                Some("annotation") => return self.proj_block(cp, K::AnnotationBlock, Self::parse_annotation_block),
+                Some("erc_matrix") => return self.proj_block(cp, K::ErcMatrix, Self::parse_erc_matrix_block),
+                Some("erc_levels") => return self.proj_block(cp, K::ErcLevels, Self::parse_erc_levels_block),
+                Some("output_group") => return self.proj_block(cp, K::OutputGroup, Self::parse_output_group_block),
+                Some("comparison") => return self.proj_block(cp, K::Comparison, Self::parse_comparison_block),
+                Some("class_gen") => return self.proj_block(cp, K::ClassGen, Self::parse_property_block_kw),
+                Some("library_update") => return self.proj_block(cp, K::LibraryUpdate, Self::parse_property_block_kw),
+                Some("variant") => return self.proj_block(cp, K::Variant, Self::parse_variant_block),
+                _ => {}
+            }
+        }
+        Err(self.err(
+            "expected project item (property, document, annotation, erc_matrix, erc_levels, \
+             output_group, comparison, class_gen, library_update, variant, or let binding)",
+        ))
+    }
+
+    /// Wrap a project sub-block: open `kind`, emit the leading keyword ident, run `f`.
+    fn proj_block(
+        &mut self,
+        cp: cstree::build::Checkpoint,
+        kind: K,
+        f: fn(&mut Self) -> Result<(), ParseError>,
+    ) -> Result<(), ParseError> {
+        self.builder.start_node_at(cp, kind);
+        self.bump(); // leading keyword identifier
+        f(self)?;
+        self.builder.finish_node();
+        Ok(())
+    }
+
+    fn parse_document_block(&mut self) -> Result<(), ParseError> {
+        self.parse_name()?; // document path
+        self.parse_block(Self::parse_property)
+    }
+
+    fn parse_annotation_block(&mut self) -> Result<(), ParseError> {
+        self.parse_block(Self::parse_annotation_block_item)
+    }
+
+    fn parse_annotation_block_item(&mut self) -> Result<(), ParseError> {
+        if self.at_ident("match_parameter") {
+            self.builder.start_node(K::MatchParameter);
+            self.bump();
+            if !self.at(K::Int) {
+                return Err(self.err("expected index after 'match_parameter'"));
+            }
+            self.bump();
+            self.parse_object()?;
+            self.builder.finish_node();
+            Ok(())
+        } else {
+            self.parse_property()
+        }
+    }
+
+    fn parse_erc_matrix_block(&mut self) -> Result<(), ParseError> {
+        self.parse_block(Self::parse_erc_matrix_item)
+    }
+
+    fn parse_erc_matrix_item(&mut self) -> Result<(), ParseError> {
+        self.builder.start_node(K::ErcMatrixEntry);
+        self.expect(K::LParen, "expected '(' for ERC matrix entry")?;
+        if !self.at(K::Ident) {
+            return Err(self.err("expected ERC connection code for row"));
+        }
+        self.bump();
+        self.expect(K::Comma, "expected ',' between row and col")?;
+        if !self.at(K::Ident) {
+            return Err(self.err("expected ERC connection code for col"));
+        }
+        self.bump();
+        self.expect(K::RParen, "expected ')' after col")?;
+        self.expect(K::Colon, "expected ':' after (row, col)")?;
+        if !self.at(K::Ident) {
+            return Err(self.err("expected error level"));
+        }
+        self.bump();
+        self.builder.finish_node();
+        Ok(())
+    }
+
+    fn parse_erc_levels_block(&mut self) -> Result<(), ParseError> {
+        self.parse_block(Self::parse_erc_levels_item)
+    }
+
+    fn parse_erc_levels_item(&mut self) -> Result<(), ParseError> {
+        self.builder.start_node(K::ErcLevelEntry);
+        if !self.at(K::Ident) {
+            return Err(self.err("expected ERC level name"));
+        }
+        self.bump();
+        self.expect(K::Colon, "expected ':' after ERC level name")?;
+        self.parse_expr()?;
+        self.builder.finish_node();
+        Ok(())
+    }
+
+    fn parse_output_group_block(&mut self) -> Result<(), ParseError> {
+        self.parse_name()?;
+        self.parse_block(Self::parse_output_group_item)
+    }
+
+    fn parse_output_group_item(&mut self) -> Result<(), ParseError> {
+        if self.at_ident("output") {
+            self.builder.start_node(K::Output);
+            self.bump();
+            self.parse_name()?;
+            self.parse_block(Self::parse_property)?;
+            self.builder.finish_node();
+            Ok(())
+        } else {
+            self.parse_property()
+        }
+    }
+
+    fn parse_comparison_block(&mut self) -> Result<(), ParseError> {
+        self.parse_block(Self::parse_comparison_item)
+    }
+
+    fn parse_comparison_item(&mut self) -> Result<(), ParseError> {
+        self.builder.start_node(K::ComparisonRule);
+        if !self.at_ident("rule") {
+            return Err(self.err("expected 'rule' inside comparison block"));
+        }
+        self.bump();
+        self.parse_name()?;
+        self.parse_object()?;
+        self.builder.finish_node();
+        Ok(())
+    }
+
+    fn parse_property_block_kw(&mut self) -> Result<(), ParseError> {
+        self.parse_block(Self::parse_property)
+    }
+
+    fn parse_variant_block(&mut self) -> Result<(), ParseError> {
+        self.parse_name()?;
+        self.parse_block(Self::parse_variant_item)
+    }
+
+    fn parse_variant_item(&mut self) -> Result<(), ParseError> {
+        if self.at_ident("variation") {
+            self.builder.start_node(K::Variation);
+            self.bump();
+            self.parse_name()?;
+            self.parse_object()?;
+            self.builder.finish_node();
+            Ok(())
+        } else if self.at_ident("param_variation") {
+            self.builder.start_node(K::ParamVariation);
+            self.bump();
+            self.parse_name()?;
+            self.parse_object()?;
+            self.builder.finish_node();
+            Ok(())
+        } else {
+            self.parse_property()
+        }
+    }
+
+    // ── SchDoc ────────────────────────────────────────────────────────────────
+
+    fn parse_sheet_decl(&mut self) -> Result<(), ParseError> {
+        self.expect(K::SheetKw, "expected 'sheet'")?;
+        self.parse_block(Self::parse_sheet_item)
+    }
+
+    fn parse_sheet_item(&mut self) -> Result<(), ParseError> {
+        let cp = self.builder.checkpoint();
+        if self.at(K::LetKw) {
+            return self.wrap_let_binding(cp);
+        }
+        if self.at(K::Hash) {
+            self.parse_annotation()?;
+            if self.at_ident("constraint") {
+                self.builder.start_node_at(cp, K::Constraint);
+                self.parse_constraint_decl()?;
+                self.builder.finish_node();
+                return Ok(());
+            }
+            return Err(self.err("expected 'constraint' after annotation inside sheet block"));
+        }
+        if self.at_ident("constraint") {
+            self.builder.start_node_at(cp, K::Constraint);
+            self.parse_constraint_decl()?;
+            self.builder.finish_node();
+            return Ok(());
+        }
+        if self.at_ident("fonts") {
+            self.builder.start_node_at(cp, K::FontBlock);
+            self.bump(); // fonts
+            self.parse_block(Self::parse_font_item)?;
+            self.builder.finish_node();
+            return Ok(());
+        }
+        self.parse_property()
+    }
+
+    fn parse_constraint_decl(&mut self) -> Result<(), ParseError> {
+        if !self.at_ident("constraint") {
+            return Err(self.err("expected 'constraint'"));
+        }
+        self.bump();
+        if !self.at(K::Ident) {
+            return Err(self.err("expected constraint kind after 'constraint'"));
+        }
+        self.bump();
+        self.parse_object()
+    }
+
+    fn parse_font_item(&mut self) -> Result<(), ParseError> {
+        self.builder.start_node(K::Font);
+        if !self.at_ident("font") {
+            return Err(self.err("expected 'font'"));
+        }
+        self.bump();
+        if !self.at(K::Int) {
+            return Err(self.err("expected font id number"));
+        }
+        self.bump();
+        self.parse_object()?;
+        self.builder.finish_node();
+        Ok(())
+    }
+
+    fn parse_net_decl(&mut self) -> Result<(), ParseError> {
+        self.expect(K::NetKw, "expected 'net'")?;
+        self.parse_name()?;
+        self.parse_object()
+    }
+
+    fn parse_power_decl(&mut self) -> Result<(), ParseError> {
+        self.expect(K::PowerKw, "expected 'power'")?;
+        self.parse_name()?;
+        self.parse_object()
+    }
+
+    fn parse_schdoc_object(&mut self) -> Result<(), ParseError> {
+        let has_name = matches!(
+            self.cur_text(),
+            Some("net_label" | "power_object" | "port" | "sheet_symbol" | "parameter_set" | "probe")
+        );
+        self.bump(); // object type identifier
+        if has_name && !self.at(K::LBrace) {
+            self.parse_name()?;
+        }
+        self.parse_block(Self::parse_schdoc_object_item)
+    }
+
+    fn parse_schdoc_object_param(&mut self) -> Result<(), ParseError> {
+        self.expect(K::ParameterKw, "expected 'parameter'")?;
+        if !self.at(K::LBrace) {
+            self.parse_name()?;
+        }
+        self.parse_block(Self::parse_schdoc_object_item)
+    }
+
+    fn parse_schdoc_object_item(&mut self) -> Result<(), ParseError> {
+        let cp = self.builder.checkpoint();
+        if self.at(K::ParameterKw) {
+            self.builder.start_node_at(cp, K::Parameter);
+            self.parse_parameter_decl()?;
+            self.builder.finish_node();
+            return Ok(());
+        }
+        if self.at(K::LetKw) {
+            return self.wrap_let_binding(cp);
+        }
+        if self.at_ident("entry") {
+            self.builder.start_node_at(cp, K::Entry);
+            self.parse_entry_decl()?;
+            self.builder.finish_node();
+            return Ok(());
+        }
+        if self.cur_is_graphic() && self.nth(1) != Some(K::Colon) {
+            self.builder.start_node_at(cp, K::Graphic);
+            self.parse_graphic_decl()?;
+            self.builder.finish_node();
+            return Ok(());
+        }
+        self.parse_property()
+    }
+
+    fn parse_entry_decl(&mut self) -> Result<(), ParseError> {
+        self.bump(); // entry
+        self.parse_name()?;
+        self.parse_object()
+    }
+
+    // ── PcbDoc ────────────────────────────────────────────────────────────────
+
+    fn parse_board_decl(&mut self) -> Result<(), ParseError> {
+        self.expect(K::BoardKw, "expected 'board'")?;
+        self.parse_name()?;
+        self.parse_block(Self::parse_board_item)
+    }
+
+    fn parse_board_item(&mut self) -> Result<(), ParseError> {
+        let cp = self.builder.checkpoint();
+        if self.at(K::LetKw) {
+            return self.wrap_let_binding(cp);
+        }
+        self.parse_property()
+    }
+
+    fn parse_routing_decl(&mut self) -> Result<(), ParseError> {
+        if !self.at_ident("routing") {
+            return Err(self.err("expected 'routing'"));
+        }
+        self.bump();
+        self.parse_object()
+    }
+
+    fn parse_placement_decl(&mut self) -> Result<(), ParseError> {
+        if !self.at_ident("placement") {
+            return Err(self.err("expected 'placement'"));
+        }
+        self.bump();
+        self.parse_block(Self::parse_placement_item)
+    }
+
+    fn parse_placement_item(&mut self) -> Result<(), ParseError> {
+        let cp = self.builder.checkpoint();
+        if self.at(K::LetKw) {
+            return self.wrap_let_binding(cp);
+        }
+        // An annotation may precede a `place` block.
+        if self.at(K::Hash) {
+            self.parse_annotation()?;
+        }
+        if self.at_ident("place") {
+            self.builder.start_node_at(cp, K::Place);
+            self.parse_place_decl()?;
+            self.builder.finish_node();
+            return Ok(());
+        }
+        if self.at_ident("left_of")
+            || self.at_ident("right_of")
+            || self.at_ident("above")
+            || self.at_ident("below")
+        {
+            self.builder.start_node_at(cp, K::PlacementConstraint);
+            self.bump(); // direction keyword
+            self.parse_dollar_path()?;
+            self.expect(K::Comma, "expected ',' between placement references")?;
+            self.parse_dollar_path()?;
+            if self.at(K::LBrace) {
+                self.parse_object()?;
+            }
+            self.builder.finish_node();
+            return Ok(());
+        }
+        if self.at_ident("optimize") {
+            self.builder.start_node_at(cp, K::Optimize);
+            self.bump();
+            self.parse_object()?;
+            self.builder.finish_node();
+            return Ok(());
+        }
+        if self.at_ident("clearance") {
+            self.builder.start_node_at(cp, K::Clearance);
+            self.bump();
+            self.parse_object()?;
+            self.builder.finish_node();
+            return Ok(());
+        }
+        if self.at_ident("minimize") {
+            self.builder.start_node_at(cp, K::Minimize);
+            self.bump();
+            if !self.at(K::Ident) {
+                return Err(self.err("expected objective name after 'minimize'"));
+            }
+            self.bump(); // objective
+            if self.at_ident("subject_to") {
+                self.bump();
+                self.parse_object()?;
+            }
+            self.builder.finish_node();
+            return Ok(());
+        }
+        if self.at(K::GroupKw) {
+            self.builder.start_node_at(cp, K::PlacementGroup);
+            self.bump(); // group
+            if !matches!(self.cur(), Some(K::Ident | K::String)) {
+                return Err(self.err("expected group name after 'group'"));
+            }
+            self.parse_name()?;
+            self.parse_object()?;
+            self.builder.finish_node();
+            return Ok(());
+        }
+        if self.at(K::SeparateKw) {
+            self.builder.start_node_at(cp, K::PlacementSeparate);
+            self.bump(); // separate
+            loop {
+                self.parse_dollar_path()?;
+                if !self.eat(K::Comma) {
+                    break;
+                }
+                if self.at(K::LBrace) {
+                    break;
+                }
+            }
+            if self.at(K::LBrace) {
+                self.parse_object()?;
+            }
+            self.builder.finish_node();
+            return Ok(());
+        }
+        if self.at(K::AutoplaceKw) {
+            self.builder.start_node_at(cp, K::Autoplace);
+            self.bump();
+            self.parse_object()?;
+            self.builder.finish_node();
+            return Ok(());
+        }
+        self.parse_property()
+    }
+
+    fn parse_place_decl(&mut self) -> Result<(), ParseError> {
+        self.bump(); // place
+        loop {
+            self.parse_name()?;
+            if !self.eat(K::Comma) {
+                break;
+            }
+        }
+        self.parse_object()
+    }
+
+    fn parse_pcbdoc_primitive(&mut self) -> Result<(), ParseError> {
+        self.bump(); // primitive type identifier
+        if !self.at(K::LBrace) {
+            self.parse_name()?;
+        }
+        self.parse_object()
+    }
+
+    fn parse_pcbdoc_primitive_pad(&mut self) -> Result<(), ParseError> {
+        self.expect(K::PadKw, "expected 'pad'")?;
+        if !self.at(K::LBrace) {
+            self.parse_name()?;
+        }
+        self.parse_object()
+    }
+
+    fn parse_pcbdoc_named_block(&mut self, cp: cstree::build::Checkpoint) -> Result<(), ParseError> {
+        let kind = match self.cur_text() {
+            Some("polygon") => K::Polygon,
+            Some("rule") => K::Rule,
+            Some("class") => K::Class,
+            Some("differential_pair") => K::DiffPair,
+            _ => return Err(self.err("expected polygon, rule, class, or differential_pair")),
+        };
+        self.builder.start_node_at(cp, kind);
+        self.bump(); // block type identifier
+        self.parse_name()?;
+        self.parse_object()?;
+        self.builder.finish_node();
+        Ok(())
+    }
+
     // ── Name / block / object / property ──────────────────────────────────────
 
     fn parse_name(&mut self) -> Result<(), ParseError> {
@@ -1074,6 +1575,71 @@ component R_0603 {
     #[test]
     fn structured_pin_connection_and_footprint_map() {
         let src = "component U1 {\n    pin GPIO4 -> #NET1\n    pin 2 -> nc\n    footprint $fp { pin \"1\": pad \"3\" }\n}\n";
+        assert_roundtrip(src);
+    }
+
+    #[test]
+    fn structured_project() {
+        let src = "\
+project MyProj {
+    output_dir: \"out\"
+    document \"top.SchDoc\" { primary: true }
+    variant \"V1\" {
+        description: \"variant one\"
+        variation \"R1\" { kind: fitted }
+        param_variation \"R2\" { parameter: \"Value\", value: \"10k\" }
+    }
+    erc_matrix { (input, output): warning }
+    erc_levels { unconnected: 2 }
+    output_group \"Fab\" { output \"Gerber\" { format: rs274x } }
+    annotation { scope: all, match_parameter 1 { name: \"X\" } }
+    class_gen { rooms: true }
+}
+";
+        assert_roundtrip(src);
+    }
+
+    #[test]
+    fn structured_schdoc() {
+        let src = "\
+#[annotation(id = \"AAAA1111\")]
+sheet {
+    title: \"S\"
+    fonts { font 1 { name: \"Arial\", size: 10 } }
+    #[annotation(id = \"BBBB2222\")]
+    constraint near { components: [\"U1\", \"U2\"] }
+}
+net GND { pins: [\"U1-1\", \"U2-3\"] }
+power VCC { style: bar }
+wire { vertices: [(0mil, 0mil), (100mil, 0mil)] }
+net_label N1 { at: (10mil, 0mil), text: \"N1\" }
+sheet_symbol S1 { entry E1 { name: \"e\" } parameter \"P\" { text: \"v\" } }
+parameter \"DocParam\" { text: \"123\" }
+";
+        assert_roundtrip(src);
+    }
+
+    #[test]
+    fn structured_pcbdoc() {
+        let src = "\
+board B { layer_count: 4 }
+track { start: (0mil, 0mil), end: (10mil, 0mil) }
+via V1 { at: (5mil, 5mil) }
+pad P1 { at: (1mil, 1mil) }
+polygon GND { layer: top }
+rule Clearance1 { gap: 6mil }
+class Power { nets: [\"VCC\", \"GND\"] }
+differential_pair DP1 { net_p: \"A\", net_n: \"B\" }
+placement {
+    place U1, U2 { region: top }
+    left_of $a, $b { gap: 10mil }
+    group g1 { components: [\"U1\"] }
+    separate $g1, $g2 { gap: 5mm }
+    minimize wirelength
+    optimize { effort: high }
+}
+routing { width: 6mil }
+";
         assert_roundtrip(src);
     }
 }

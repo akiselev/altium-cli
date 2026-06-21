@@ -200,6 +200,55 @@ pub enum SyntaxKind {
     /// A `$root.field[i]` dollar-path reference.
     DollarPath,
 
+    // Project / SchDoc / PcbDoc top-level item declarations.
+    Project,
+    Sheet,
+    Net,
+    Power,
+    SchDocObject,
+    Board,
+    Placement,
+    Routing,
+    PcbPrimitive,
+    Polygon,
+    Rule,
+    Class,
+    DiffPair,
+
+    // Project sub-blocks.
+    DocumentBlock,
+    AnnotationBlock,
+    MatchParameter,
+    ErcMatrix,
+    ErcMatrixEntry,
+    ErcLevels,
+    ErcLevelEntry,
+    OutputGroup,
+    Output,
+    Comparison,
+    ComparisonRule,
+    ClassGen,
+    LibraryUpdate,
+    Variant,
+    Variation,
+    ParamVariation,
+
+    // Placement sub-blocks.
+    Place,
+    PlacementConstraint,
+    Minimize,
+    PlacementGroup,
+    PlacementSeparate,
+    Optimize,
+    Clearance,
+    Autoplace,
+
+    // SchDoc sub-blocks.
+    Entry,
+    Constraint,
+    FontBlock,
+    Font,
+
     /// A reserved error node for future recoverable parsing. Not emitted today.
     Error,
 }
