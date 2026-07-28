@@ -1,0 +1,26 @@
+[package]
+name = "altium-spec-lang"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+
+description = "Lossless CST, parser, formatter, authored-intent model, and semantic compilation for the Altium spec language."
+license = "Apache-2.0"
+repository = "https://github.com/akiselev/altium-cli"
+homepage = "https://github.com/akiselev/altium-cli"
+authors = ["Alexander Kiselev <alex@akiselev.com>"]
+
+[lints]
+workspace = true
+
+[dependencies]
+altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
+cstree = { version = "0.12", features = ["derive"] }
+indexmap = { version = "2", features = ["serde"] }
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

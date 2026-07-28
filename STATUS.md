@@ -13,9 +13,22 @@ altium-format          (core: parsing, serialization, high-level API, rendering 
   ├→ altium-format-query       (AQL query language engine)
   ├→ altium-format-render-svg  (SVG rendering backend)
   └→ altium-format-render-png  (PNG rasterization via resvg)
-altium-format-spec     (declarative spec language for Altium documents)
+altium-format-spec     (declarative spec language for Altium documents — being replaced)
+altium-spec-lang       (NEW: lossless CST, parser, intent model, compilation)
+altium-sync            (NEW: snapshots, identity, baseline, three-way planner, plans/patches)
 altium-cli             (CLI binary)
 ```
+
+## Plan/apply rebuild (in progress, 2026-06-21)
+
+A clean-slate replacement of the spec dump/reconciler/executor/apply machinery is
+underway (see `NEXT.md`; design decisions resolved in `NEXT.md` §20). Foundation
+step 1 is done: the `altium-spec-lang` and `altium-sync` crates are scaffolded and
+wired (`altium-format-types → altium-spec-lang → altium-sync`, with `altium-sync`
+also depending on `altium-format`); the workspace compiles. Next: decouple the
+lossless CST in `altium-format-spec::cst` from the old `lexer`/`ast` modules and
+relocate it (plus its `diagnostic` foundation) into `altium-spec-lang`. The old
+`altium-format-spec` machinery is gutted per-piece as the replacement covers it.
 
 ## Document Type Support
 

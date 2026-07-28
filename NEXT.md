@@ -847,24 +847,61 @@ An optional compile-plan verification mode may dry-run the plan and compare befo
 but that is a parallel report, not part of the semantic change algebra and not proof of correctness by
 itself.
 
-## 20. Immediate next decisions
+## 20. Resolved decisions (2026-06-21)
 
-Before implementation begins, explicitly decide:
+The pre-implementation decisions in §20 (and the gaps raised in `NEXT-review.md`) were
+worked through one by one and resolved as follows. These are the plan of record for the
+first implementation cycle; the original open-question list is preserved in git history.
 
-1. Whether the existing surface syntax is retained, revised, or replaced.
-2. Which lossless CST technology/pattern to use.
-3. Exact `BindingId`, `SourceId`, and resource-path formats.
-4. Embedded metadata carriers per Altium document type, after GUI preservation validation. SchLib is
-   resolved (see §6.1): the only surviving embedded carrier is a real component parameter
-   (`RECORD=41`) at component scope; everything else must use external state. PcbLib/SchDoc/PcbDoc/
-   PrjPcb still need the same validation.
-5. External baseline file name and versioning. §6.1 makes this mandatory rather than optional: any
-   metadata below component scope (pins, primitives) or at document scope cannot be embedded, so the
-   external baseline is the primary carrier, not a fallback.
-6. Whether managed scope is declared in source, project configuration, CLI policy, or a combination.
-7. Saved-plan compatibility/versioning policy.
-8. Conflict-resolution UX and whether the first version only reports conflicts.
-9. Aggregate patch boundaries for each high-level API.
-10. Which current spec-language features belong in the first SchLib vertical slice.
+| # | Decision | Resolution | Consequence |
+| --- | --- | --- | --- |
+| 1 | Spec surface syntax | **Revise** | Keep the existing grammar + the new lossless CST; extend constructs deliberately as the semantics layer demands. Not a rewrite. |
+| 2 | Elaboration semantics (intent → snapshot) | **Phased, minimal-for-SchLib** | Adopt a Dhall-style pass pipeline (resolve imports → type-check → normalize → elaborate), each independently testable. Build only the passes SchLib needs (imports, lets, defaults, overrides, explicit absence) and write the override-precedence + absence rules now. Constraint solving and generators/templates are **deferred** to the PcbDoc/placement slice, designed against a real snapshot. |
+| 3 | Absence/override model (the five meanings of "missing") | **Explicit intent enum + marker keywords** | Intent model carries `Set(v) \| Inherit \| Reset \| Clear` per managed field; "leave unchanged" = the field simply absent at instance scope. Syntax: bare value → `Set`; `null` → `Clear`; new contextual keywords `inherit` / `reset` → those cases; absence → `Unchanged` at instance scope, `Inherit` inside a template body. "Unsupported/unmanaged" is a managed-scope concept (§9, Decision 7), not an absence meaning. |
+| 4 | Identity architecture & id format | **Three-role split + u128 base32** | (a) The CST's current positional `SourceId` is an *ephemeral node locator* (rename to `NodeLocator`/`CstId`), recomputed per parse, never persisted. (b) `BindingId(u128)` is the single durable cross-artifact identity, minted once, persisted on the spec side via the annotation `id` and in the ledger, mapped to Altium via native `UniqueId` or ledger locator. (c) `ResourceAddress` is derived from a `BindingId` each run. The ledger keys on `BindingId` and **never persists positional source paths**. Persisted id format: full u128 as compact base32 (~26 chars). NEXT.md §6's separate persisted `SourceId` is dropped as redundant. |
+| 5 | External baseline | **Per-artifact · `.altium/` dir · JSON+`schema_version` · optimistic** | One baseline file per Altium file (a project is a directory of them; cross-artifact cascade handled by a later project layer). Stored under a project-root `.altium/` state dir. Serialized as human-diffable JSON with a `schema_version`. Concurrency is optimistic: the plan carries artifact + baseline hashes and apply fails on mismatch (no lock). Missing baseline → first-adoption bootstrap. |
+| 6 | Embedded metadata for PcbLib/SchDoc/PcbDoc/PrjPcb | **Defer per-format** | External baseline is the universal carrier now. Keep the proven SchLib component `RECORD=41` embedded id (§6.1, §6.2). Validate each other format's embedded carrier (GUI-save test per §6.1) only when its slice begins. |
+| 7 | Managed-scope declaration location | **Source-declared + authority defaults** | `managed { entity_kinds, fields, allow_delete }` (and/or block markers) live in the spec, defaulting from authority when omitted. The CLI may only *tighten* scope, never broaden; deletes require an explicit in-source opt-in. Reproducible and reviewable. Field-level ownership is **not** modeled now (entity granularity only — Decision 10 makes field-level conflict detection moot anyway). |
+| 8 | Plan serialization | **JSON+`schema_version`, self-contained** | The saved plan is human-reviewable JSON (matching the baseline) that embeds patches, preconditions (artifact + baseline hashes), and the prior-state slice it needs — `apply` requires only the plan + current artifacts. Patch values are *snapshot-shaped* serializable types, materialized through the high-level API at apply (keeps the plan decoupled from internal API serializability). |
+| 9 | Saved-plan versioning | **Strict exact-version gate** | `apply` accepts only known-supported `schema_version`s; anything newer or older is a hard error telling the user to regenerate. No migration code while plans are ephemeral. Plans are explicit `--out`/`--plan` files (no magic discovery). |
+| 10 | Aggregate patch boundary | **Coarse entity-aggregate** | `PatchOp<T>` replaces the largest natural high-level object (SchLib Component with pins/params inline, PcbLib Footprint, …) via methods like `update_component`; no field-by-field executor. Accepted consequence: precondition hash covers the whole entity, so independent edits to different fields of the same entity always register as a Conflict. Escalate to a two-tier (entity + child sub-patch) model only if a domain (likely PcbDoc) makes whole-entity conflicts/patch-size hurt. |
+| 11 | Conflict-resolution UX | **Report-only / block (v1)** | Conflicts are blocking plan diagnostics; `apply` refuses until resolved. Resolution path: converge one side and re-plan. `--accept-source` / `--accept-altium` overrides and interactive resolution come later. |
+| 12 | First SchLib vertical slice | **Full SchLib** | All constructs: component, parts, pins, parameters, aliases, footprint-maps, graphics (Tier-3 keyless, exercises the ledger), swap_groups. The complete reference implementation. |
+| 13 | CST structured-edit mechanism | **Keep byte-splice, migrate if fragile** | Use the existing tested byte-offset splicing (`cst/edit.rs`) through the full-SchLib slice; if structural insert/reorder edits mis-position or corrupt trivia, migrate those paths to tree-based green-node substitution. No speculative rewrite. |
+| 14 | Crate boundaries & snapshots | **`altium-spec-lang` + `altium-sync`; concrete snapshots** | Split the gutted `altium-format-spec` into `altium-spec-lang` (CST, parser, formatter, intent model, imports, compilation) and `altium-sync` (snapshots, identity, baseline, planner, plan/patches, ECO rendering, conflict). `altium-sync` depends on both `altium-format` and `altium-spec-lang`. Snapshot types are concrete per-domain structs/enums now; traits only when a second consumer (the design graph) demands them. |
 
-Until these are settled, do not begin another incremental reconciler/executor patch series.
+### Deferred / implied items (acknowledged, not dropped)
+
+- **Compile-direction identity minting** (review gap #3): follows from Decision 4 — `compile`
+  mints a fresh `BindingId`, writes it to the spec annotation `id` + baseline, and assigns a
+  native Altium `UniqueId` via the existing `altium-format` `generate_unique_id()` (currently
+  `pub(crate)` in `src/util.rs`; expose a typed high-level assignment method per §3 before the
+  compile direction ships).
+- **Multi-file project sync / cascade** (review gap #6): deferred to a future project layer;
+  not needed for single-file SchLib. Per-artifact baselines + a future project manifest
+  accommodate it. Revisit at PrjPcb and the SchDoc+PcbDoc ECO slices.
+- **Constraint solving + generators/templates** (Decision 2): deferred to the PcbDoc/placement
+  slice; design against a real snapshot rather than in a vacuum.
+
+### Implementation sequence
+
+**Foundation** (before the slice):
+
+1. Create `altium-spec-lang` (move CST/parser/formatter in; add the intent model + the four
+   compiler phases) and `altium-sync` (snapshots, identity, baseline, planner, patches, render,
+   conflict). Wire dependencies; gut the old `altium-format-spec` machinery as each piece is
+   replaced.
+2. Plan schema: versioned, self-contained JSON; `ArtifactPrecondition`, `SemanticChange`,
+   `ArtifactPatch` / `PatchOp` traits.
+3. Identity + state: `BindingId` (u128 base32), `NodeLocator` rename, `DocumentLocator`,
+   `LedgerEntry`, baseline JSON `schema_version`, `.altium/` discovery, optimistic hash
+   preconditions.
+4. Filesystem staging + recovery journal (commit via renames).
+
+**Full-SchLib slice** (§16's 10-step checklist, with an independent completeness review after
+each step per `CLAUDE.md`): intent compilation → intent→snapshot elaboration →
+document→snapshot projection → identity binding (resolution ladder + embedded component param +
+Tier-3 ledger for graphics) → three-way semantic diff → coarse SchLib patch lowering →
+structured source-patch lowering → plan rendering → apply (stage → validate → serialize →
+reopen → validate → commit journal → baseline) → review. Plus the §17 laws and §18 layered
+tests.

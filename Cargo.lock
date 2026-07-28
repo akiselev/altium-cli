@@ -140,6 +140,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "altium-spec-lang"
+version = "0.2.0"
+dependencies = [
+ "altium-format-types",
+ "cstree",
+ "indexmap",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "altium-sync"
+version = "0.2.0"
+dependencies = [
+ "altium-format",
+ "altium-format-types",
+ "altium-spec-lang",
+ "indexmap",
+ "proptest",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "anstream"
 version = "0.6.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
