@@ -5,9 +5,6 @@ on:
     branches:
       - agent/bidirectional-sync-v2
 
-permissions:
-  contents: write
-
 concurrency:
   group: agent-sync-v2-validation
   cancel-in-progress: true
@@ -21,33 +18,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt,clippy
-
-      - name: Finalize bidirectional plan execution
-        run: |
-          python3 scripts/finalize_bidirectional.py
-          python3 scripts/plan_status_fix.py
-
-      - name: Format workspace
-        run: cargo fmt --all
-
-      - name: Commit finalized product changes if needed
-        run: |
-          git config user.name "openai-agent"
-          git config user.email "openai-agent@users.noreply.github.com"
-          cargo metadata --format-version 1 >/dev/null
-          git add Cargo.lock crates/altium-cli crates/altium-spec-lang crates/altium-sync
-          if ! git diff --cached --quiet; then
-            git commit -m "Finalize bidirectional saved plan execution"
-            git pull --rebase origin agent/bidirectional-sync-v2
-            git push origin HEAD:agent/bidirectional-sync-v2
-          fi
 
       - name: Fetch fixture corpora
         run: |
