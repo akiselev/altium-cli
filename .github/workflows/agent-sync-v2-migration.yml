@@ -1,52 +1,28 @@
-name: Agent sync-v2 migration
+name: Agent sync-v2 validation
 
 on:
   push:
     branches:
       - agent/bidirectional-sync-v2
 
-permissions:
-  contents: write
-
 concurrency:
-  group: agent-sync-v2-migration
+  group: agent-sync-v2-validation
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  migrate-and-test:
-    if: ${{ !contains(github.event.head_commit.message, '[agent-migrated]') }}
+  validate:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: agent/bidirectional-sync-v2
-          fetch-depth: 0
-
-      - name: Apply deterministic migration
-        run: python3 scripts/apply_sync_v2_migration.py
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt,clippy
-
-      - name: Format workspace
-        run: cargo fmt --all
-
-      - name: Commit migrated CLI and formatted Rust
-        run: |
-          git config user.name "openai-agent"
-          git config user.email "openai-agent@users.noreply.github.com"
-          git add crates/altium-cli/src/main.rs crates/altium-cli/src/sync_v2.rs crates/altium-spec-lang crates/altium-sync Cargo.lock
-          if ! git diff --cached --quiet; then
-            git commit -m "Implement bidirectional sync v2 [agent-migrated]"
-            git pull --rebase origin agent/bidirectional-sync-v2
-            git push origin HEAD:agent/bidirectional-sync-v2
-          fi
 
       - name: Check formatting
         run: cargo fmt --all -- --check
