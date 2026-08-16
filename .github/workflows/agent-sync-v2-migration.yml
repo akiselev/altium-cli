@@ -30,8 +30,8 @@ jobs:
       - name: Test synchronization crates
         run: cargo test -p altium-spec-lang -p altium-sync -p altium-cli
 
-      - name: Clippy synchronization crates
-        run: cargo clippy -p altium-spec-lang -p altium-sync -p altium-cli --all-targets -- -D warnings
-
       - name: Test workspace
         run: cargo test --workspace
+
+      - name: Clippy synchronization crates
+        run: cargo clippy -p altium-spec-lang -p altium-sync -p altium-cli --all-targets --no-deps -- -D warnings
