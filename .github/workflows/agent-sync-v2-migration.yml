@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: agent-sync-v2-migration
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -40,6 +44,7 @@ jobs:
           git add crates/altium-cli/src/main.rs crates/altium-cli/src/sync_v2.rs crates/altium-spec-lang crates/altium-sync Cargo.lock
           if ! git diff --cached --quiet; then
             git commit -m "Implement bidirectional sync v2 [agent-migrated]"
+            git pull --rebase origin agent/bidirectional-sync-v2
             git push origin HEAD:agent/bidirectional-sync-v2
           fi
 
