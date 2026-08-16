@@ -8,9 +8,10 @@ use altium_format_spec::{
 };
 use altium_sync::{
     ArtifactKind, ArtifactSnapshot, JournalState, PlanBundle, PlanDirection, TransactionJournal,
-    atomic_write_text, default_baseline_path, document_patch, load_baseline, load_plan, plan_compile,
-    plan_dump, render_plan, save_baseline, save_plan, source_patch, verify_baseline_precondition,
-    verify_document_precondition, verify_ready, verify_source_precondition, write_journal,
+    atomic_write_text, default_baseline_path, document_patch, load_baseline, load_plan,
+    plan_compile, plan_dump, render_plan, save_baseline, save_plan, source_patch,
+    verify_baseline_precondition, verify_document_precondition, verify_ready,
+    verify_source_precondition, write_journal,
 };
 
 use super::{
@@ -139,10 +140,7 @@ pub(crate) fn run_dump(
     Ok(())
 }
 
-fn build_compile_plan(
-    spec_file: &PathBuf,
-    target: Option<&PathBuf>,
-) -> anyhow::Result<PlanBundle> {
+fn build_compile_plan(spec_file: &PathBuf, target: Option<&PathBuf>) -> anyhow::Result<PlanBundle> {
     let legacy_domain = detect_spec_domain(spec_file)?;
     let kind = kind_from_domain(&legacy_domain)
         .ok_or_else(|| anyhow::anyhow!("sync v2 does not manage PrjPcb yet"))?;
@@ -158,8 +156,7 @@ fn build_compile_plan(
     } else {
         String::new()
     };
-    let desired_document_source =
-        materialize_desired(kind, &compiled, spec_file, &document_path)?;
+    let desired_document_source = materialize_desired(kind, &compiled, spec_file, &document_path)?;
 
     let source_snapshot = ArtifactSnapshot::from_source(kind, &source)?;
     let current_document = ArtifactSnapshot::from_source(kind, &current_document_source)?;
