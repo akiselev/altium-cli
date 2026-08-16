@@ -64,11 +64,18 @@ pub struct ArtifactPrecondition {
     pub baseline_digest: Option<Digest>,
 }
 
+/// Exact mutation payload produced by planning.
+///
+/// Document patches contain the already-materialized, validated Altium CFB file.
+/// Apply never invokes the compiler/reconciler/executor again: it stages these
+/// exact bytes, reopens them through `altium-format`, verifies the semantic
+/// postcondition, and commits them transactionally.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "target", rename_all = "snake_case")]
 pub enum ArtifactPatch {
     Document {
-        concrete_spec: String,
+        /// Base64-encoded final Altium document bytes.
+        document_base64: String,
         expected_semantic_digest: Digest,
     },
     Source {
