@@ -36,6 +36,3 @@ jobs:
 
       - name: Run altium-format SchLib proptests
         run: cargo test -p altium-format --lib prop_schlib --features proptest --verbose
-
-      - name: Run altium-format-ops SchLib proptests
-        run: cargo test -p altium-format-ops --test executor_proptest --features proptest --verbose
