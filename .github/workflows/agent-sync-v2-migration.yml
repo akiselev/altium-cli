@@ -40,7 +40,9 @@ jobs:
           git clone --depth 1 https://github.com/akiselev/altium-cli-test-intlib data/intlib
 
       - name: Finalize bidirectional plan execution
-        run: python3 scripts/finalize_bidirectional.py
+        run: |
+          python3 scripts/finalize_bidirectional.py
+          python3 scripts/plan_status_fix.py
 
       - name: Format workspace
         run: cargo fmt --all
