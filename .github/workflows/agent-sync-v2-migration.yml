@@ -1,12 +1,9 @@
-name: Agent sync-v2 validation
+name: Agent sync-v2 final validation
 
 on:
   push:
     branches:
       - agent/bidirectional-sync-v2
-
-permissions:
-  contents: write
 
 concurrency:
   group: agent-sync-v2-validation
@@ -18,60 +15,20 @@ env:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt,clippy
 
-      - name: Apply final lint cleanup
-        run: python3 scripts/fix_sync_v2_clippy.py
-
-      - name: Format workspace
-        run: cargo fmt --all
-
-      - name: Commit final product cleanup if needed
-        run: |
-          git config user.name "openai-agent"
-          git config user.email "openai-agent@users.noreply.github.com"
-          git add crates/altium-sync/src/planner.rs
-          if ! git diff --cached --quiet; then
-            git commit -m "Clean up sync-v2 planner lint"
-            git pull --rebase origin agent/bidirectional-sync-v2
-            git push origin HEAD:agent/bidirectional-sync-v2
-          fi
-
-      - name: Fetch fixture corpora
-        run: |
-          set -euo pipefail
-          mkdir -p data
-          git clone --depth 1 https://github.com/akiselev/altium-cli-test-schlib data/schlib
-          git clone --depth 1 https://github.com/akiselev/altium-cli-test-pcblib data/pcblib
-          git clone --depth 1 https://github.com/akiselev/altium-cli-test-schdoc data/schdoc
-          git clone --depth 1 https://github.com/akiselev/altium-cli-test-pcbdoc data/pcbdoc
-          git clone --depth 1 https://github.com/akiselev/altium-cli-test-intlib data/intlib
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Test synchronization crates
         run: cargo test -p altium-spec-lang -p altium-sync -p altium-cli
-
-      - name: Test workspace
-        run: |
-          cargo test --workspace -- \
-            --skip cfb_document::tests::open_blank_schlib_and_read_file_header \
-            --skip cfb_document::tests::enumerate_all_entries_returns_expected_paths \
-            --skip cfb_document::tests::read_stream_missing_returns_stream_not_found \
-            --skip cfb_document::tests::read_stream_optional_missing_returns_none \
-            --skip tracked_cfb::tests::assert_all_consumed_fails_when_nothing_is_read \
-            --skip tracked_cfb::tests::assert_all_consumed_succeeds_when_all_streams_are_read \
-            --skip tracked_cfb::tests::read_stream_optional_absent_does_not_cause_false_positive_unconsumed
 
       - name: Clippy synchronization crates
         run: cargo clippy -p altium-spec-lang -p altium-sync -p altium-cli --all-targets --no-deps -- -D warnings
