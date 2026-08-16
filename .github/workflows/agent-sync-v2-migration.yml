@@ -33,11 +33,11 @@ jobs:
       - name: Format workspace
         run: cargo fmt --all
 
-      - name: Commit migrated CLI and lockfile inputs
+      - name: Commit migrated CLI and formatted Rust
         run: |
           git config user.name "openai-agent"
           git config user.email "openai-agent@users.noreply.github.com"
-          git add crates/altium-cli/src/main.rs .github/workflows/proptest-schlib.yml crates scripts .github/workflows/agent-sync-v2-migration.yml
+          git add crates/altium-cli/src/main.rs crates/altium-cli/src/sync_v2.rs crates/altium-spec-lang crates/altium-sync Cargo.lock
           if ! git diff --cached --quiet; then
             git commit -m "Implement bidirectional sync v2 [agent-migrated]"
             git push origin HEAD:agent/bidirectional-sync-v2
