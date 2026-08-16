@@ -143,7 +143,7 @@ impl PlanBundle {
     }
 
     pub fn has_changes(&self) -> bool {
-        !matches!(self.patch, ArtifactPatch::None)
+        !self.changes.is_empty() || !matches!(self.patch, ArtifactPatch::None)
     }
 
     pub fn conflicts(&self) -> impl Iterator<Item = &SemanticChange> {
