@@ -39,16 +39,20 @@ jobs:
           git clone --depth 1 https://github.com/akiselev/altium-cli-test-pcbdoc data/pcbdoc
           git clone --depth 1 https://github.com/akiselev/altium-cli-test-intlib data/intlib
 
+      - name: Refine exact document plans
+        run: python3 scripts/refine_exact_plan.py
+
       - name: Format workspace
         run: cargo fmt --all
 
-      - name: Commit formatting if needed
+      - name: Commit generated product changes if needed
         run: |
           git config user.name "openai-agent"
           git config user.email "openai-agent@users.noreply.github.com"
-          git add crates/altium-cli/src/sync_v2.rs crates/altium-spec-lang crates/altium-sync crates/altium-cli/src/main.rs
+          cargo metadata --format-version 1 >/dev/null
+          git add Cargo.lock crates/altium-cli crates/altium-spec-lang crates/altium-sync
           if ! git diff --cached --quiet; then
-            git commit -m "Format sync v2 implementation"
+            git commit -m "Make saved document plans exact binary patches"
             git pull --rebase origin agent/bidirectional-sync-v2
             git push origin HEAD:agent/bidirectional-sync-v2
           fi
