@@ -27,8 +27,8 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
-      - name: Run parser proptests
-        run: cargo test -p altium-format-ops --lib prop_ --features proptest --verbose
+      - name: Run language and synchronization tests
+        run: cargo test -p altium-spec-lang -p altium-sync --verbose
 
       - name: Run CLI proptests
         run: cargo test -p altium-cli --lib --features proptest --verbose

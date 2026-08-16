@@ -42,6 +42,3 @@ jobs:
 
       - name: Run altium-format PcbDoc proptests
         run: cargo test -p altium-format --lib prop_pcbdoc --features proptest --verbose
-
-      - name: Run altium-format-ops PCB proptests
-        run: cargo test -p altium-format-ops --test executor_pcb_proptest --features proptest --verbose

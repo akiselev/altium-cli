@@ -40,5 +40,5 @@ jobs:
           rm -rf data/schdoc
           git clone --depth 1 https://github.com/akiselev/altium-cli-test-schdoc data/schdoc
 
-      - name: Run executor integration tests
-        run: cargo test -p altium-format-ops --test executor_integration --features test-fixtures --verbose
+      - name: Run synchronization integration tests
+        run: cargo test -p altium-spec-lang -p altium-sync -p altium-cli --verbose

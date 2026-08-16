@@ -36,6 +36,3 @@ jobs:
 
       - name: Run altium-format SchDoc proptests
         run: cargo test -p altium-format --lib prop_schdoc --features proptest --verbose
-
-      - name: Run altium-format-ops SchDoc proptests
-        run: cargo test -p altium-format-ops --test executor_schdoc_proptest --features proptest --verbose

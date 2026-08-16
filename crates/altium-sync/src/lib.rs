@@ -1,20 +1,36 @@
 //! # altium-sync
 //!
-//! The synchronization layer of the Altium spec toolchain: it compares the
-//! authored spec (via [`altium_spec_lang`]) against a concrete Altium document
-//! (via [`altium_format`]) and a recorded baseline, then produces a versioned,
-//! self-contained plan of typed patches that `apply` executes exactly.
+//! Three-way bidirectional synchronization kernel for Altium documents.
 //!
-//! This crate is being populated as part of the clean-slate plan/apply rebuild
-//! (see `NEXT.md`). It depends on both `altium-format` and `altium-spec-lang`;
-//! neither depends on it.
-//!
-//! Planned modules (per `NEXT.md` §§6–12, 14):
-//! - `snapshot` — concrete per-domain artifact snapshots (concrete types, not traits yet)
-//! - `identity` — `BindingId` (u128, base32), `DocumentLocator`, the resolution ladder
-//! - `baseline` — per-artifact `.altium/` JSON baseline (`schema_version`), the keyless ledger
-//! - `plan` — versioned self-contained plan, `ArtifactPrecondition`, `SemanticChange`,
-//!   `ArtifactPatch` / `PatchOp` (coarse entity-aggregate replacement)
-//! - `planner` — three-way diff (`ChangeDisposition`) and conflict classification
-//! - `apply` — staging, validation, reopen, and the filesystem recovery journal
-//! - `render` — the semantic ECO view over a plan
+//! The planner consumes authored-source, current-document, and last-synchronized
+//! snapshots and produces a versioned self-contained [`PlanBundle`]. The ECO is
+//! only a rendered view; apply executes the exact typed patch stored in the plan.
+//! Baselines are committed only after staged output is validated and reopened.
+
+pub mod apply;
+pub mod baseline;
+pub mod digest;
+pub mod identity;
+pub mod plan;
+pub mod planner;
+pub mod render;
+pub mod snapshot;
+
+pub use apply::{
+    ApplyError, JournalState, TransactionJournal, atomic_write, atomic_write_text, document_patch,
+    load_plan, save_plan, source_patch, verify_baseline_precondition, verify_document_precondition,
+    verify_ready, verify_source_precondition, write_journal,
+};
+pub use baseline::{
+    BASELINE_SCHEMA_VERSION, BaselineError, SyncBaseline, default_baseline_path, load_baseline,
+    save_baseline,
+};
+pub use digest::Digest;
+pub use identity::{BindingId, BindingRecord, DocumentLocator};
+pub use plan::{
+    ArtifactPatch, ArtifactPrecondition, ChangeDisposition, ChangeKind, PLAN_SCHEMA_VERSION,
+    PlanBundle, PlanDirection, PlanStatus, SemanticChange,
+};
+pub use planner::{plan_compile, plan_dump};
+pub use render::{PlanSummary, render_plan};
+pub use snapshot::{ArtifactKind, ArtifactSnapshot, SnapshotResource};
