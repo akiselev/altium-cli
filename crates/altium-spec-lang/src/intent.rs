@@ -6,19 +6,14 @@ use crate::source::{LosslessSpec, SourceNodeId, SpecDomain};
 ///
 /// This removes the old ambiguity where `Option::None` was forced to mean
 /// inherit, leave-unchanged, clear, and reset depending on the executor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "intent", content = "value", rename_all = "snake_case")]
 pub enum FieldIntent<T> {
+    #[default]
     Inherit,
     Set(T),
     Clear,
     Reset,
-}
-
-impl<T> Default for FieldIntent<T> {
-    fn default() -> Self {
-        Self::Inherit
-    }
 }
 
 /// Structural authored resource retained before semantic elaboration.
