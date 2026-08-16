@@ -14,7 +14,7 @@ pub fn plan_compile(
     current_document: &ArtifactSnapshot,
     desired_document: &ArtifactSnapshot,
     baseline: Option<&SyncBaseline>,
-    concrete_spec: String,
+    document_base64: String,
 ) -> Result<PlanBundle, serde_json::Error> {
     assert_eq!(source.kind, current_document.kind);
     assert_eq!(source.kind, desired_document.kind);
@@ -45,7 +45,7 @@ pub fn plan_compile(
         ArtifactPatch::None
     } else {
         ArtifactPatch::Document {
-            concrete_spec,
+            document_base64,
             expected_semantic_digest: desired_document.semantic_digest.clone(),
         }
     };

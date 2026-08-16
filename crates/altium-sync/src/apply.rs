@@ -131,9 +131,9 @@ pub fn source_patch(plan: &PlanBundle) -> Result<Option<(&str, &Digest)>, ApplyE
 pub fn document_patch(plan: &PlanBundle) -> Result<Option<(&str, &Digest)>, ApplyError> {
     match &plan.patch {
         ArtifactPatch::Document {
-            concrete_spec,
+            document_base64,
             expected_semantic_digest,
-        } => Ok(Some((concrete_spec.as_str(), expected_semantic_digest))),
+        } => Ok(Some((document_base64.as_str(), expected_semantic_digest))),
         ArtifactPatch::None => Ok(None),
         ArtifactPatch::Source { .. } => Err(ApplyError::WrongPatchTarget),
     }

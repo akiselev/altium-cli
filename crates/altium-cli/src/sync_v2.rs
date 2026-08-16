@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use altium_format::{PcbDoc, PcbLib, SchDoc, SchLib};
@@ -8,11 +7,12 @@ use altium_format_spec::{
 };
 use altium_sync::{
     ArtifactKind, ArtifactSnapshot, JournalState, PlanBundle, PlanDirection, TransactionJournal,
-    atomic_write_text, default_baseline_path, document_patch, load_baseline, load_plan,
-    plan_compile, plan_dump, render_plan, save_baseline, save_plan, source_patch,
+    atomic_write, atomic_write_text, default_baseline_path, document_patch, load_baseline,
+    load_plan, plan_compile, plan_dump, render_plan, save_baseline, save_plan, source_patch,
     verify_baseline_precondition, verify_document_precondition, verify_ready,
     verify_source_precondition, write_journal,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 use super::{
     CompileResult, build_pad_net_map, compile_and_resolve, default_output_for_spec,
@@ -156,11 +156,11 @@ fn build_compile_plan(spec_file: &PathBuf, target: Option<&PathBuf>) -> anyhow::
     } else {
         String::new()
     };
-    let desired_document_source = materialize_desired(kind, &compiled, spec_file, &document_path)?;
+    let desired = materialize_desired(kind, &compiled, spec_file, &document_path)?;
 
     let source_snapshot = ArtifactSnapshot::from_source(kind, &source)?;
     let current_document = ArtifactSnapshot::from_source(kind, &current_document_source)?;
-    let desired_document = ArtifactSnapshot::from_source(kind, &desired_document_source)?;
+    let desired_document = ArtifactSnapshot::from_source(kind, &desired.dump)?;
     let baseline_path = default_baseline_path(&document_path);
     let baseline = load_baseline(&baseline_path, kind)?;
 
@@ -169,9 +169,14 @@ fn build_compile_plan(spec_file: &PathBuf, target: Option<&PathBuf>) -> anyhow::
         &current_document,
         &desired_document,
         baseline.as_ref(),
-        desired_document_source,
+        BASE64.encode(&desired.bytes),
     )?
     .with_paths(Some(spec_file.clone()), Some(document_path)))
+}
+
+struct MaterializedDocument {
+    dump: String,
+    bytes: Vec<u8>,
 }
 
 fn materialize_desired(
@@ -179,7 +184,7 @@ fn materialize_desired(
     compiled: &CompileResult,
     spec_file: &PathBuf,
     document_path: &PathBuf,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<MaterializedDocument> {
     match (&compiled.model, kind) {
         (altium_format_spec::model::SpecModel::SchLib(spec), ArtifactKind::SchLib) => {
             let mut doc = if document_path.exists() {
@@ -192,7 +197,7 @@ fn materialize_desired(
             apply_spec_schlib(spec, &mut doc)
                 .map_err(|error| anyhow::anyhow!("apply failed while planning: {error}"))?;
             doc.validate_invariants()?;
-            Ok(dump_schlib(&doc)?)
+            persist_schlib(&mut doc)
         }
         (altium_format_spec::model::SpecModel::PcbLib(spec), ArtifactKind::PcbLib) => {
             let mut doc = if document_path.exists() {
@@ -203,7 +208,7 @@ fn materialize_desired(
             apply_spec_pcblib(spec, &mut doc)
                 .map_err(|error| anyhow::anyhow!("apply failed while planning: {error}"))?;
             doc.validate_invariants()?;
-            Ok(dump_pcblib(&doc)?)
+            persist_pcblib(&mut doc)
         }
         (altium_format_spec::model::SpecModel::SchDoc(spec), ArtifactKind::SchDoc) => {
             let mut doc = if document_path.exists() {
@@ -214,7 +219,7 @@ fn materialize_desired(
             apply_spec_schdoc(spec, &mut doc, &compiled.imported_components)
                 .map_err(|error| anyhow::anyhow!("apply failed while planning: {error}"))?;
             doc.validate_invariants()?;
-            Ok(dump_schdoc(&doc)?)
+            persist_schdoc(&mut doc)
         }
         (altium_format_spec::model::SpecModel::PcbDoc(spec), ArtifactKind::PcbDoc) => {
             if !document_path.exists() {
@@ -234,10 +239,54 @@ fn materialize_desired(
                 &compiled.imported_components,
             )?;
             doc.validate_invariants()?;
-            Ok(dump_pcbdoc(&doc)?)
+            persist_pcbdoc(&mut doc)
         }
         _ => anyhow::bail!("compiled spec domain does not match sync artifact kind"),
     }
+}
+
+fn persist_schlib(doc: &mut SchLib) -> anyhow::Result<MaterializedDocument> {
+    let file = tempfile::NamedTempFile::new()?;
+    doc.save(file.path())?;
+    let reopened = SchLib::open(file.path())?;
+    reopened.validate_invariants()?;
+    Ok(MaterializedDocument {
+        dump: dump_schlib(&reopened)?,
+        bytes: std::fs::read(file.path())?,
+    })
+}
+
+fn persist_pcblib(doc: &mut PcbLib) -> anyhow::Result<MaterializedDocument> {
+    let file = tempfile::NamedTempFile::new()?;
+    doc.save(file.path())?;
+    let reopened = PcbLib::open(file.path())?;
+    reopened.validate_invariants()?;
+    Ok(MaterializedDocument {
+        dump: dump_pcblib(&reopened)?,
+        bytes: std::fs::read(file.path())?,
+    })
+}
+
+fn persist_schdoc(doc: &mut SchDoc) -> anyhow::Result<MaterializedDocument> {
+    let file = tempfile::NamedTempFile::new()?;
+    doc.save(file.path())?;
+    let reopened = SchDoc::open(file.path())?;
+    reopened.validate_invariants()?;
+    Ok(MaterializedDocument {
+        dump: dump_schdoc(&reopened)?,
+        bytes: std::fs::read(file.path())?,
+    })
+}
+
+fn persist_pcbdoc(doc: &mut PcbDoc) -> anyhow::Result<MaterializedDocument> {
+    let file = tempfile::NamedTempFile::new()?;
+    doc.save(file.path())?;
+    let reopened = PcbDoc::open(file.path())?;
+    reopened.validate_invariants()?;
+    Ok(MaterializedDocument {
+        dump: dump_pcbdoc(&reopened)?,
+        bytes: std::fs::read(file.path())?,
+    })
 }
 
 fn execute_document_plan(
@@ -273,14 +322,17 @@ fn execute_document_plan(
     let baseline = load_baseline(&baseline_path, plan.artifact_kind)?;
     verify_baseline_precondition(plan, baseline.as_ref())?;
 
-    let Some((concrete_spec, expected_digest)) = document_patch(plan)? else {
+    let Some((document_base64, expected_digest)) = document_patch(plan)? else {
         save_baseline(&default_baseline_path(&output), &plan.next_baseline)?;
         println!("Already converged: {}", output.display());
         return Ok(());
     };
 
     let stage = stage_path(&output, &plan.plan_id, plan.artifact_kind);
-    apply_concrete_spec(plan.artifact_kind, concrete_spec, &target, &stage)?;
+    let document_bytes = BASE64
+        .decode(document_base64)
+        .map_err(|error| anyhow::anyhow!("invalid document payload in saved plan: {error}"))?;
+    atomic_write(&stage, &document_bytes)?;
     let reopened = dump_document(plan.artifact_kind, &stage)?;
     let reopened_snapshot = ArtifactSnapshot::from_source(plan.artifact_kind, &reopened)?;
     if &reopened_snapshot.semantic_digest != expected_digest {
@@ -295,68 +347,6 @@ fn execute_document_plan(
     commit_stage(plan, &stage, &output)?;
     save_baseline(&default_baseline_path(&output), &plan.next_baseline)?;
     println!("Saved: {}", output.display());
-    Ok(())
-}
-
-fn apply_concrete_spec(
-    kind: ArtifactKind,
-    concrete_spec: &str,
-    target: &Path,
-    stage: &Path,
-) -> anyhow::Result<()> {
-    let synthetic_spec = stage.with_extension(kind.spec_extension());
-    let legacy_domain = domain_from_kind(kind);
-    let compiled = compile_and_resolve(concrete_spec, &synthetic_spec, &legacy_domain)?;
-    let empty_imports: HashMap<String, altium_format_spec::model::ComponentSpec> = HashMap::new();
-
-    match (&compiled.model, kind) {
-        (altium_format_spec::model::SpecModel::SchLib(spec), ArtifactKind::SchLib) => {
-            let mut doc = if target.exists() {
-                SchLib::open(target)?
-            } else {
-                let mut doc = SchLib::new_blank_ad26()?;
-                let _ = doc.remove_component("Component_1");
-                doc
-            };
-            apply_spec_schlib(spec, &mut doc)
-                .map_err(|error| anyhow::anyhow!("applying planned SchLib patch: {error}"))?;
-            doc.validate_invariants()?;
-            doc.save(stage)?;
-        }
-        (altium_format_spec::model::SpecModel::PcbLib(spec), ArtifactKind::PcbLib) => {
-            let mut doc = if target.exists() {
-                PcbLib::open(target)?
-            } else {
-                PcbLib::new_blank_ad26()?
-            };
-            apply_spec_pcblib(spec, &mut doc)
-                .map_err(|error| anyhow::anyhow!("applying planned PcbLib patch: {error}"))?;
-            doc.validate_invariants()?;
-            doc.save(stage)?;
-        }
-        (altium_format_spec::model::SpecModel::SchDoc(spec), ArtifactKind::SchDoc) => {
-            let mut doc = if target.exists() {
-                SchDoc::open(target)?
-            } else {
-                SchDoc::new_blank_ad26()
-            };
-            apply_spec_schdoc(spec, &mut doc, &empty_imports)
-                .map_err(|error| anyhow::anyhow!("applying planned SchDoc patch: {error}"))?;
-            doc.validate_invariants()?;
-            doc.save(stage)?;
-        }
-        (altium_format_spec::model::SpecModel::PcbDoc(spec), ArtifactKind::PcbDoc) => {
-            if !target.exists() {
-                anyhow::bail!("PcbDoc planned apply requires the original target file");
-            }
-            let mut doc = PcbDoc::open(target)?;
-            apply_spec_pcbdoc(spec, &mut doc)
-                .map_err(|error| anyhow::anyhow!("applying planned PcbDoc patch: {error}"))?;
-            doc.validate_invariants()?;
-            doc.save(stage)?;
-        }
-        _ => anyhow::bail!("planned concrete spec has the wrong document domain"),
-    }
     Ok(())
 }
 
@@ -430,14 +420,5 @@ pub(crate) fn kind_from_domain(domain: &SpecDomain) -> Option<ArtifactKind> {
         SpecDomain::SchDoc => Some(ArtifactKind::SchDoc),
         SpecDomain::PcbDoc => Some(ArtifactKind::PcbDoc),
         SpecDomain::PrjPcb => None,
-    }
-}
-
-fn domain_from_kind(kind: ArtifactKind) -> SpecDomain {
-    match kind {
-        ArtifactKind::SchLib => SpecDomain::SchLib,
-        ArtifactKind::PcbLib => SpecDomain::PcbLib,
-        ArtifactKind::SchDoc => SpecDomain::SchDoc,
-        ArtifactKind::PcbDoc => SpecDomain::PcbDoc,
     }
 }
