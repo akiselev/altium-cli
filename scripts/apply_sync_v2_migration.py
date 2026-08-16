@@ -55,11 +55,3 @@ replace(
 )
 
 MAIN.write_text(text)
-
-# Remove the stale CI invocation of the deleted altium-format-ops package.
-workflow = Path(".github/workflows/proptest-schlib.yml")
-workflow_text = workflow.read_text()
-stale = '''\n      - name: Run altium-format-ops SchLib proptests\n        run: cargo test -p altium-format-ops --test executor_proptest --features proptest --verbose\n'''
-if stale not in workflow_text:
-    raise SystemExit("stale altium-format-ops CI block not found")
-workflow.write_text(workflow_text.replace(stale, "\n"))
