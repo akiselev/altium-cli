@@ -29,16 +29,6 @@ jobs:
         with:
           components: rustfmt,clippy
 
-      - name: Fetch fixture corpora
-        run: |
-          set -euo pipefail
-          mkdir -p data
-          git clone --depth 1 https://github.com/akiselev/altium-cli-test-schlib data/schlib
-          git clone --depth 1 https://github.com/akiselev/altium-cli-test-pcblib data/pcblib
-          git clone --depth 1 https://github.com/akiselev/altium-cli-test-schdoc data/schdoc
-          git clone --depth 1 https://github.com/akiselev/altium-cli-test-pcbdoc data/pcbdoc
-          git clone --depth 1 https://github.com/akiselev/altium-cli-test-intlib data/intlib
-
       - name: Finalize bidirectional plan execution
         run: |
           python3 scripts/finalize_bidirectional.py
@@ -58,6 +48,16 @@ jobs:
             git pull --rebase origin agent/bidirectional-sync-v2
             git push origin HEAD:agent/bidirectional-sync-v2
           fi
+
+      - name: Fetch fixture corpora
+        run: |
+          set -euo pipefail
+          mkdir -p data
+          git clone --depth 1 https://github.com/akiselev/altium-cli-test-schlib data/schlib
+          git clone --depth 1 https://github.com/akiselev/altium-cli-test-pcblib data/pcblib
+          git clone --depth 1 https://github.com/akiselev/altium-cli-test-schdoc data/schdoc
+          git clone --depth 1 https://github.com/akiselev/altium-cli-test-pcbdoc data/pcbdoc
+          git clone --depth 1 https://github.com/akiselev/altium-cli-test-intlib data/intlib
 
       - name: Check formatting
         run: cargo fmt --all -- --check
