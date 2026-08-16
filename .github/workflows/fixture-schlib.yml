@@ -34,5 +34,5 @@ jobs:
           rm -rf data/schlib
           git clone --depth 1 https://github.com/akiselev/altium-cli-test-schlib data/schlib
 
-      - name: Run SchLib e2e ops tests
-        run: cargo test -p altium-format-ops --test ops_e2e_schlib --features test-fixtures --verbose
+      - name: Run altium-format SchLib fixture tests
+        run: cargo test -p altium-format --lib schlib --features test-fixtures --verbose
