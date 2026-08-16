@@ -28,6 +28,7 @@ altium-format-spec = { version = "0.2.0", path = "../altium-format-spec", featur
 altium-format-render-svg = { version = "0.2.0", path = "../altium-format-render-svg" }
 altium-format-render-png = { version = "0.2.0", path = "../altium-format-render-png" }
 altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
+altium-sync = { version = "0.2.0", path = "../altium-sync" }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 serde = { version = "1.0", features = ["derive"] }
