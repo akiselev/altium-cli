@@ -179,6 +179,11 @@ struct MaterializedDocument {
     bytes: Vec<u8>,
 }
 
+struct MaterializedDocument {
+    dump: String,
+    bytes: Vec<u8>,
+}
+
 fn materialize_desired(
     kind: ArtifactKind,
     compiled: &CompileResult,
@@ -303,10 +308,12 @@ fn execute_document_plan(
     let output = output_override.cloned().unwrap_or_else(|| target.clone());
 
     if let Some(source_path) = &plan.source_path {
-        if source_path.exists() {
-            let source = std::fs::read_to_string(source_path)?;
-            verify_source_precondition(plan, Some(&source))?;
-        }
+        let source = if source_path.exists() {
+            Some(std::fs::read_to_string(source_path)?)
+        } else {
+            None
+        };
+        verify_source_precondition(plan, source.as_deref())?;
     }
 
     let current_document_source = if target.exists() {
@@ -323,7 +330,12 @@ fn execute_document_plan(
     verify_baseline_precondition(plan, baseline.as_ref())?;
 
     let Some((document_base64, expected_digest)) = document_patch(plan)? else {
-        save_baseline(&default_baseline_path(&output), &plan.next_baseline)?;
+        // Existing baselines only advance when this operation actually resolves
+        // a side. Otherwise opposite-side drift could be silently accepted.
+        // Initial no-op adoption is safe because there is no prior baseline.
+        if baseline.is_none() && plan.conflicts().next().is_none() {
+            save_baseline(&default_baseline_path(&output), &plan.next_baseline)?;
+        }
         println!("Already converged: {}", output.display());
         return Ok(());
     };

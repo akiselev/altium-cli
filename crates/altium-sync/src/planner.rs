@@ -269,11 +269,11 @@ fn classify(
 
     match direction {
         PlanDirection::Compile => {
-            if document_changed && target_changed {
+            if document_changed {
                 return (
                     ChangeDisposition::Conflict,
                     Some(
-                        "compile would overwrite a document-only edit; dump/reconcile it first or force the reviewed plan"
+                        "the Altium document changed since the last synchronized baseline; dump/reconcile it before compiling so the change is not silently absorbed"
                             .to_string(),
                     ),
                 );
@@ -281,25 +281,19 @@ fn classify(
             if source_changed || target_changed {
                 return (ChangeDisposition::SourceOnly, None);
             }
-            if document_changed {
-                return (ChangeDisposition::DocumentOnly, None);
-            }
         }
         PlanDirection::Dump => {
-            if source_changed && target_changed {
+            if source_changed {
                 return (
                     ChangeDisposition::Conflict,
                     Some(
-                        "dump would overwrite a source-only edit; compile/reconcile it first or force the reviewed plan"
+                        "the authored spec changed since the last synchronized baseline; compile/reconcile it before dumping so the change is not silently absorbed"
                             .to_string(),
                     ),
                 );
             }
             if document_changed || target_changed {
                 return (ChangeDisposition::DocumentOnly, None);
-            }
-            if source_changed {
-                return (ChangeDisposition::SourceOnly, None);
             }
         }
     }
@@ -399,6 +393,26 @@ mod tests {
             desired.resources[0].text.clone(),
         )
         .unwrap();
+        assert!(plan.conflicts().next().is_some());
+    }
+
+    #[test]
+    fn compile_blocks_document_only_drift_even_when_source_does_not_touch_it() {
+        let source0 = snap("component R {\n  description: \"old\"\n}\n");
+        let doc0 = source0.clone();
+        let base = SyncBaseline::from_snapshots(None, &source0, &doc0);
+        let doc1 = snap("component R {\n  description: \"gui\"\n}\n");
+        let plan = plan_compile(&source0, &doc1, &doc1, Some(&base), String::new()).unwrap();
+        assert!(plan.conflicts().next().is_some());
+    }
+
+    #[test]
+    fn dump_blocks_source_only_drift() {
+        let source0 = snap("component R {\n  description: \"old\"\n}\n");
+        let doc0 = source0.clone();
+        let base = SyncBaseline::from_snapshots(None, &source0, &doc0);
+        let source1 = snap("component R {\n  description: \"authored\"\n}\n");
+        let plan = plan_dump(&source1, &doc0, &doc0, Some(&base), String::new()).unwrap();
         assert!(plan.conflicts().next().is_some());
     }
 
