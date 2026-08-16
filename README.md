@@ -1,22 +1,21 @@
 # altium-cli
 
-Rust CLI and crates to query and modify Altium files.
+> **Experimental.** The 0.2.0 line is an unreleased rewrite and the file-format implementation is still being validated against real-world Altium files.
 
-As of 2/24/26 this crate is in the middle of an unreleased massive rewrite for 0.2.0
+Rust CLI and crates for reading, validating, rendering, querying, and modifying Altium files.
 
-## WARNING
+## Warning
 
-These are complex file formats full of domain knowledge and decades of legacy cruft. I do my best to validate and test the CLI against thousands of real world files available on Github, but at the end of the day this software was built on millions of lines of vibe-reverse engineered Delphi and C# code so there WILL be subtle bugs.
+Altium file formats contain substantial domain knowledge and decades of legacy behavior. The implementation is validated against thousands of real-world files where possible, but much of the format behavior was reconstructed from Delphi and C# implementations. Subtle compatibility bugs should be expected.
 
-This software is provided as-is without warranty. YOU area responsible for anything you send to the fab. Make sure your fab runs their own design rule checks.
+This software is provided as-is without warranty. You are responsible for anything you send to fabrication. Make sure your fab performs its own design-rule checks.
 
-## KNOWN LIMITATIONS
+## Known limitations
 
-* Although `altium-cli` supports older file formats when reading, all mutations RESAVE THE FILE IN THE LATEST FORMAT (Altium/DXP 26 as of the time of this writing). If you are stuck on an older version of Altium, you may have problems opening the files afterwards.
-* Our implementation is more strict than Altium's because of ambiguity in the reverse engineered implementation.
-* This is mostly developed as a tool for agents to use, so expect lots of breaking changes.
-* Only supports CFB format Altium files. Legacy ASCII PcbDocs are not supported.
-
+* Although `altium-cli` supports older file formats when reading, all mutations resave the file in the latest format (Altium/DXP 26 at the time of writing). Older Altium versions may not be able to reopen the result.
+* The implementation is stricter than Altium in some places where reverse-engineered behavior is ambiguous.
+* The public API and CLI may change substantially while the 0.2.0 rewrite is in progress.
+* Only CFB-format Altium files are supported. Legacy ASCII PcbDocs are not supported.
 
 ## Workspace crates
 
@@ -28,16 +27,16 @@ This software is provided as-is without warranty. YOU area responsible for anyth
 
 ## Current CLI commands
 
-- `new {schdoc,schlib,pcblib,prjpcb} <output>` — create blank Altium documents
-- `validate <path>` — validate Altium files (.SchLib, .PcbLib, .SchDoc, .PcbDoc, .PrjPcb, .IntLib)
-- `save-as <input> <output>` — roundtrip parse and re-save
-- `render <path> [-o dir] [--format svg|png]` — render SchLib/PcbLib/SchDoc to SVG/PNG
-- `plan <spec>` — preview changes (ECO dry run)
-- `apply <spec>` — apply spec file to create/update Altium document
-- `dump <document>` — reverse-generate spec from Altium file
-- `info <path>` — document summary
-- `query <path> "<AQL>"` — query with Altium Query Language
-- `cfb ls|dump|blocks|diff|cat ...` — CFB/OLE container inspection
+- `new {schdoc,schlib,pcblib,prjpcb} <output>`: create blank Altium documents
+- `validate <path>`: validate Altium files (.SchLib, .PcbLib, .SchDoc, .PcbDoc, .PrjPcb, .IntLib)
+- `save-as <input> <output>`: roundtrip parse and re-save
+- `render <path> [-o dir] [--format svg|png]`: render SchLib/PcbLib/SchDoc to SVG/PNG
+- `plan <spec>`: preview changes (ECO dry run)
+- `apply <spec>`: apply a spec file to create or update an Altium document
+- `dump <document>`: reverse-generate a spec from an Altium file
+- `info <path>`: print a document summary
+- `query <path> "<AQL>"`: query with Altium Query Language
+- `cfb ls|dump|blocks|diff|cat ...`: inspect CFB/OLE containers
 
 Spec files use explicit document extensions: `.schlib-spec`, `.pcblib-spec`,
 `.schdoc-spec`, `.pcbdoc-spec`, and `.prjpcb-spec`.
@@ -55,8 +54,7 @@ altium-cli dump vendor.IntLib        # produces vendor.schlib-spec + vendor.pcbl
 ## Roadmap
 
 - Gerber output
-- Rendering parts, footprints, and documents to image/pdf
-
+- Rendering parts, footprints, and documents to image/PDF
 
 ## License
 
