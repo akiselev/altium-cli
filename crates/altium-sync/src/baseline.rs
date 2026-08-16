@@ -55,7 +55,10 @@ impl SyncBaseline {
         source: &ArtifactSnapshot,
         document: &ArtifactSnapshot,
     ) -> Self {
-        assert_eq!(source.kind, document.kind, "baseline snapshots must share a domain");
+        assert_eq!(
+            source.kind, document.kind,
+            "baseline snapshots must share a domain"
+        );
         let mut source_used = HashSet::new();
         let mut document_used = HashSet::new();
         let mut records = Vec::new();
@@ -83,7 +86,11 @@ impl SyncBaseline {
                 }
 
                 if source_match.is_some() || document_match.is_some() {
-                    records.push(record_from_resources(old.binding, source_match, document_match));
+                    records.push(record_from_resources(
+                        old.binding,
+                        source_match,
+                        document_match,
+                    ));
                 }
             }
         }
@@ -101,7 +108,13 @@ impl SyncBaseline {
                     !document_used.contains(&resource.address)
                         && resource.address == source_resource.address
                 })
-                .or_else(|| unique_fingerprint_match(&document.resources, &source_resource.fingerprint, &document_used));
+                .or_else(|| {
+                    unique_fingerprint_match(
+                        &document.resources,
+                        &source_resource.fingerprint,
+                        &document_used,
+                    )
+                });
 
             source_used.insert(source_resource.address.clone());
             if let Some(resource) = document_match {
@@ -186,9 +199,9 @@ fn unique_fingerprint_match<'a>(
     fingerprint: &Digest,
     used: &HashSet<String>,
 ) -> Option<&'a SnapshotResource> {
-    let mut matches = resources
-        .iter()
-        .filter(|resource| resource.fingerprint == *fingerprint && !used.contains(&resource.address));
+    let mut matches = resources.iter().filter(|resource| {
+        resource.fingerprint == *fingerprint && !used.contains(&resource.address)
+    });
     let first = matches.next()?;
     matches.next().is_none().then_some(first)
 }
@@ -213,10 +226,11 @@ pub fn load_baseline(
         path: path.to_path_buf(),
         source,
     })?;
-    let baseline: SyncBaseline = serde_json::from_slice(&bytes).map_err(|source| BaselineError::Parse {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let baseline: SyncBaseline =
+        serde_json::from_slice(&bytes).map_err(|source| BaselineError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?;
     if baseline.schema_version != BASELINE_SCHEMA_VERSION {
         return Err(BaselineError::UnsupportedVersion(baseline.schema_version));
     }
@@ -266,7 +280,13 @@ mod tests {
         // Fingerprints include the header, so this is intentionally a new source
         // binding until a native/embedded id is available. The old document side
         // still retains its binding without any similarity guess.
-        let rebased = SyncBaseline::from_snapshots(Some(&baseline), &after_source, &before_document);
-        assert!(rebased.resources.iter().any(|record| record.binding == binding && record.document_key.is_some()));
+        let rebased =
+            SyncBaseline::from_snapshots(Some(&baseline), &after_source, &before_document);
+        assert!(
+            rebased
+                .resources
+                .iter()
+                .any(|record| record.binding == binding && record.document_key.is_some())
+        );
     }
 }

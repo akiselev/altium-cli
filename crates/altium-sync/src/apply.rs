@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::baseline::SyncBaseline;
 use crate::digest::Digest;
-use crate::plan::{ArtifactPatch, PlanBundle, PlanStatus, PLAN_SCHEMA_VERSION};
+use crate::plan::{ArtifactPatch, PLAN_SCHEMA_VERSION, PlanBundle, PlanStatus};
 
 #[derive(Debug, Error)]
 pub enum ApplyError {
@@ -210,10 +210,18 @@ mod tests {
 
     #[test]
     fn stale_source_is_rejected() {
-        let source = ArtifactSnapshot::from_source(ArtifactKind::SchLib, "component R {\n}\n").unwrap();
+        let source =
+            ArtifactSnapshot::from_source(ArtifactKind::SchLib, "component R {\n}\n").unwrap();
         let doc = ArtifactSnapshot::empty(ArtifactKind::SchLib);
         let desired = source.clone();
-        let plan = plan_compile(&source, &doc, &desired, None, source.resources[0].text.clone()).unwrap();
+        let plan = plan_compile(
+            &source,
+            &doc,
+            &desired,
+            None,
+            source.resources[0].text.clone(),
+        )
+        .unwrap();
         assert!(matches!(
             verify_source_precondition(&plan, Some("component X {\n}\n")),
             Err(ApplyError::StaleSource)
@@ -222,7 +230,8 @@ mod tests {
 
     #[test]
     fn baseline_precondition_detects_revision_change() {
-        let source = ArtifactSnapshot::from_source(ArtifactKind::SchLib, "component R {\n}\n").unwrap();
+        let source =
+            ArtifactSnapshot::from_source(ArtifactKind::SchLib, "component R {\n}\n").unwrap();
         let doc = source.clone();
         let baseline = SyncBaseline::from_snapshots(None, &source, &doc);
         let plan = plan_compile(&source, &doc, &doc, Some(&baseline), String::new()).unwrap();

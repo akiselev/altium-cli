@@ -132,7 +132,11 @@ pub(crate) fn run_dump(
         }
     }
     save_baseline(&baseline_path, &plan.next_baseline)?;
-    println!("Synchronized: {} -> {}", document.display(), spec_path.display());
+    println!(
+        "Synchronized: {} -> {}",
+        document.display(),
+        spec_path.display()
+    );
     Ok(())
 }
 
@@ -152,8 +156,7 @@ fn build_compile_plan(spec_file: &PathBuf, target: Option<&PathBuf>) -> anyhow::
     } else {
         String::new()
     };
-    let desired_document_source =
-        materialize_desired(kind, &compiled, spec_file, &document_path)?;
+    let desired_document_source = materialize_desired(kind, &compiled, spec_file, &document_path)?;
 
     let source_snapshot = ArtifactSnapshot::from_source(kind, &source)?;
     let current_document = ArtifactSnapshot::from_source(kind, &current_document_source)?;
@@ -262,7 +265,8 @@ fn execute_document_plan(
     } else {
         String::new()
     };
-    let current_document = ArtifactSnapshot::from_source(plan.artifact_kind, &current_document_source)?;
+    let current_document =
+        ArtifactSnapshot::from_source(plan.artifact_kind, &current_document_source)?;
     verify_document_precondition(plan, Some(&current_document.semantic_digest))?;
 
     let baseline_path = default_baseline_path(&target);
@@ -364,7 +368,10 @@ fn commit_stage(plan: &PlanBundle, stage: &Path, destination: &Path) -> anyhow::
     let backup = destination.exists().then(|| {
         parent.join(format!(
             ".{}.{}.backup",
-            destination.file_name().and_then(|name| name.to_str()).unwrap_or("artifact"),
+            destination
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("artifact"),
             plan.plan_id
         ))
     });

@@ -101,7 +101,9 @@ fn scan_top_level_resources(source: &str) -> Result<Vec<ResourceBlock>, SourceEr
     let mut ordinal = 0usize;
 
     for line_with_newline in source.split_inclusive('\n') {
-        let line = line_with_newline.strip_suffix('\n').unwrap_or(line_with_newline);
+        let line = line_with_newline
+            .strip_suffix('\n')
+            .unwrap_or(line_with_newline);
         let trimmed = line.trim_start();
 
         if depth == 0 && block_start.is_none() {
@@ -158,7 +160,10 @@ fn top_level_header(line: &str) -> Option<(String, String)> {
     ];
 
     for kind in KINDS {
-        if line == *kind || line.starts_with(&format!("{kind} ")) || line.starts_with(&format!("{kind}{{")) {
+        if line == *kind
+            || line.starts_with(&format!("{kind} "))
+            || line.starts_with(&format!("{kind}{{"))
+        {
             let rest = line[kind.len()..].trim_start();
             let key = parse_header_key(rest).unwrap_or_else(|| (*kind).to_string());
             return Some(((*kind).to_string(), key));
@@ -247,7 +252,8 @@ mod tests {
 
     #[test]
     fn scans_named_and_anonymous_resources_losslessly() {
-        let source = "// lead\ncomponent \"U Part\" {\n  description: \"{literal}\"\n}\n\nboard {\n}\n";
+        let source =
+            "// lead\ncomponent \"U Part\" {\n  description: \"{literal}\"\n}\n\nboard {\n}\n";
         let spec = LosslessSpec::parse(source).unwrap();
         assert_eq!(spec.source(), source);
         assert_eq!(spec.resources().len(), 2);

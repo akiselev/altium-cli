@@ -61,7 +61,10 @@ impl ArtifactSnapshot {
         Self::from_source(kind, "").expect("empty source is structurally valid")
     }
 
-    pub fn from_source(kind: ArtifactKind, source: &str) -> Result<Self, altium_spec_lang::SourceError> {
+    pub fn from_source(
+        kind: ArtifactKind,
+        source: &str,
+    ) -> Result<Self, altium_spec_lang::SourceError> {
         let lossless = LosslessSpec::parse(source.to_string())?;
         let canonical = canonicalize_semantic_text(source);
         let mut resources = Vec::new();
@@ -103,7 +106,9 @@ impl ArtifactSnapshot {
     }
 
     pub fn resource(&self, address: &str) -> Option<&SnapshotResource> {
-        self.resources.iter().find(|resource| resource.address == address)
+        self.resources
+            .iter()
+            .find(|resource| resource.address == address)
     }
 }
 

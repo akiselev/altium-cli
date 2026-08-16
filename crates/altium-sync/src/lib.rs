@@ -28,8 +28,8 @@ pub use baseline::{
 pub use digest::Digest;
 pub use identity::{BindingId, BindingRecord, DocumentLocator};
 pub use plan::{
-    ArtifactPatch, ArtifactPrecondition, ChangeDisposition, ChangeKind, PlanBundle, PlanDirection,
-    PlanStatus, SemanticChange, PLAN_SCHEMA_VERSION,
+    ArtifactPatch, ArtifactPrecondition, ChangeDisposition, ChangeKind, PLAN_SCHEMA_VERSION,
+    PlanBundle, PlanDirection, PlanStatus, SemanticChange,
 };
 pub use planner::{plan_compile, plan_dump};
 pub use render::{PlanSummary, render_plan};

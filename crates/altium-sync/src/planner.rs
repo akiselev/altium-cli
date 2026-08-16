@@ -35,11 +35,7 @@ pub fn plan_compile(
             desired_document,
         )
     } else {
-        bootstrap_changes(
-            PlanDirection::Compile,
-            current_document,
-            desired_document,
-        )
+        bootstrap_changes(PlanDirection::Compile, current_document, desired_document)
     };
 
     let current_alignment = SyncBaseline::from_snapshots(baseline, source, current_document);
@@ -168,16 +164,12 @@ fn three_way_changes(
 
     // For compile the desired target is the document; for dump it is the source.
     let final_alignment = match direction {
-        PlanDirection::Compile => SyncBaseline::from_snapshots(
-            Some(&current_alignment),
-            current_source,
-            desired_target,
-        ),
-        PlanDirection::Dump => SyncBaseline::from_snapshots(
-            Some(&current_alignment),
-            desired_target,
-            current_document,
-        ),
+        PlanDirection::Compile => {
+            SyncBaseline::from_snapshots(Some(&current_alignment), current_source, desired_target)
+        }
+        PlanDirection::Dump => {
+            SyncBaseline::from_snapshots(Some(&current_alignment), desired_target, current_document)
+        }
     };
 
     let base_records = records_by_binding(base);
@@ -210,12 +202,8 @@ fn three_way_changes(
             PlanDirection::Dump => source_current != source_final,
         };
 
-        let (disposition, reason) = classify(
-            direction,
-            source_changed,
-            document_changed,
-            target_changed,
-        );
+        let (disposition, reason) =
+            classify(direction, source_changed, document_changed, target_changed);
 
         if disposition == ChangeDisposition::Unchanged {
             continue;
@@ -383,7 +371,14 @@ mod tests {
         let base = SyncBaseline::from_snapshots(None, &source0, &doc0);
         let source1 = snap("component R {\n  description: \"new\"\n}\n");
         let desired = source1.clone();
-        let plan = plan_compile(&source1, &doc0, &desired, Some(&base), desired.resources[0].text.clone()).unwrap();
+        let plan = plan_compile(
+            &source1,
+            &doc0,
+            &desired,
+            Some(&base),
+            desired.resources[0].text.clone(),
+        )
+        .unwrap();
         assert!(plan.conflicts().next().is_none());
         assert!(plan.has_changes());
     }
@@ -396,7 +391,14 @@ mod tests {
         let source1 = snap("component R {\n  description: \"source\"\n}\n");
         let doc1 = snap("component R {\n  description: \"document\"\n}\n");
         let desired = source1.clone();
-        let plan = plan_compile(&source1, &doc1, &desired, Some(&base), desired.resources[0].text.clone()).unwrap();
+        let plan = plan_compile(
+            &source1,
+            &doc1,
+            &desired,
+            Some(&base),
+            desired.resources[0].text.clone(),
+        )
+        .unwrap();
         assert!(plan.conflicts().next().is_some());
     }
 
@@ -406,7 +408,14 @@ mod tests {
         let doc0 = source0.clone();
         let base = SyncBaseline::from_snapshots(None, &source0, &doc0);
         let doc1 = snap("component R {\n  description: \"gui\"\n}\n");
-        let plan = plan_dump(&source0, &doc1, &doc1, Some(&base), doc1.resources[0].text.clone()).unwrap();
+        let plan = plan_dump(
+            &source0,
+            &doc1,
+            &doc1,
+            Some(&base),
+            doc1.resources[0].text.clone(),
+        )
+        .unwrap();
         assert!(plan.conflicts().next().is_none());
         assert!(plan.has_changes());
     }

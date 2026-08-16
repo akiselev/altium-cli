@@ -35,7 +35,10 @@ impl PlanSummary {
                 ChangeDisposition::SameChange => summary.same_change += 1,
                 ChangeDisposition::Unchanged => {}
             }
-            *summary.by_resource_kind.entry(change.resource_kind.clone()).or_default() += 1;
+            *summary
+                .by_resource_kind
+                .entry(change.resource_kind.clone())
+                .or_default() += 1;
         }
         summary
     }
