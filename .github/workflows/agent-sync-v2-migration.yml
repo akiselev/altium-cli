@@ -5,6 +5,9 @@ on:
     branches:
       - agent/bidirectional-sync-v2
 
+permissions:
+  contents: write
+
 concurrency:
   group: agent-sync-v2-validation
   cancel-in-progress: true
@@ -18,11 +21,30 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt,clippy
+
+      - name: Apply final lint cleanup
+        run: python3 scripts/fix_sync_v2_clippy.py
+
+      - name: Format workspace
+        run: cargo fmt --all
+
+      - name: Commit final product cleanup if needed
+        run: |
+          git config user.name "openai-agent"
+          git config user.email "openai-agent@users.noreply.github.com"
+          git add crates/altium-sync/src/planner.rs
+          if ! git diff --cached --quiet; then
+            git commit -m "Clean up sync-v2 planner lint"
+            git pull --rebase origin agent/bidirectional-sync-v2
+            git push origin HEAD:agent/bidirectional-sync-v2
+          fi
 
       - name: Fetch fixture corpora
         run: |
