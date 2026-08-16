@@ -150,26 +150,45 @@ fn scan_top_level_resources(source: &str) -> Result<Vec<ResourceBlock>, SourceEr
 }
 
 fn top_level_header(line: &str) -> Option<(String, String)> {
-    const KINDS: &[&str] = &[
-        "component",
-        "footprint",
-        "sheet",
-        "board",
-        "project",
-        "placement",
-    ];
+    let mut declaration = line.trim_start();
+    if declaration.is_empty()
+        || declaration.starts_with("//")
+        || declaration.starts_with('#')
+        || !line_contains_open_brace(declaration)
+    {
+        return None;
+    }
 
-    for kind in KINDS {
-        if line == *kind
-            || line.starts_with(&format!("{kind} "))
-            || line.starts_with(&format!("{kind}{{"))
+    // A top-level declaration may bind its block: `body = component R { ... }`.
+    // Strip only an identifier-like binding prefix; expressions containing `=`
+    // remain untouched and conservatively fall back to whole-file coverage.
+    if let Some((binding, rest)) = declaration.split_once('=') {
+        let binding = binding.trim();
+        if !binding.is_empty()
+            && binding
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
         {
-            let rest = line[kind.len()..].trim_start();
-            let key = parse_header_key(rest).unwrap_or_else(|| (*kind).to_string());
-            return Some(((*kind).to_string(), key));
+            declaration = rest.trim_start();
         }
     }
-    None
+
+    let kind_end = declaration
+        .find(|ch: char| ch.is_whitespace() || ch == '{')
+        .unwrap_or(declaration.len());
+    if kind_end == 0 {
+        return None;
+    }
+    let kind = &declaration[..kind_end];
+    if !kind
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return None;
+    }
+    let rest = declaration[kind_end..].trim_start();
+    let key = parse_header_key(rest).unwrap_or_else(|| kind.to_string());
+    Some((kind.to_string(), key))
 }
 
 fn parse_header_key(rest: &str) -> Option<String> {
@@ -260,6 +279,17 @@ mod tests {
         assert_eq!(spec.resources()[0].kind, "component");
         assert_eq!(spec.resources()[0].key, "U Part");
         assert_eq!(spec.resources()[1].key, "board");
+    }
+
+    #[test]
+    fn scans_arbitrary_top_level_blocks_and_bound_declarations() {
+        let source = "net N1 {\n}\nwire W {\n}\nbody = component U1 {\n}\n";
+        let spec = LosslessSpec::parse(source).unwrap();
+        assert_eq!(spec.resources().len(), 3);
+        assert_eq!(spec.resources()[0].kind, "net");
+        assert_eq!(spec.resources()[1].kind, "wire");
+        assert_eq!(spec.resources()[2].kind, "component");
+        assert_eq!(spec.resources()[2].key, "U1");
     }
 
     #[test]

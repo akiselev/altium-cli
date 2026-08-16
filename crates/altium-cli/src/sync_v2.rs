@@ -184,6 +184,11 @@ struct MaterializedDocument {
     bytes: Vec<u8>,
 }
 
+struct MaterializedDocument {
+    dump: String,
+    bytes: Vec<u8>,
+}
+
 fn materialize_desired(
     kind: ArtifactKind,
     compiled: &CompileResult,

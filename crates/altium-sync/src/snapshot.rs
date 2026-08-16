@@ -84,14 +84,16 @@ impl ArtifactSnapshot {
             *occurrence += 1;
         }
 
-        // A future syntax construct that the structural scanner does not know
-        // must still participate in drift detection. Treat the full file as one
-        // conservative resource rather than silently dropping it.
-        if resources.is_empty() && !canonical.trim().is_empty() {
+        // Whole-file coverage is intentional, even when fine-grained resources
+        // were discovered. Imports, bindings, scalar lets, comments with semantic
+        // annotations, or future syntax must never evade three-way drift checks.
+        // This conservative sentinel also makes simultaneous edits in different
+        // resource kinds conflict instead of being silently merged.
+        if !canonical.trim().is_empty() {
             resources.push(SnapshotResource {
-                address: "$document#0".to_string(),
-                kind: "$document".to_string(),
-                key: "$document".to_string(),
+                address: "$file#0".to_string(),
+                kind: "$file".to_string(),
+                key: "$file".to_string(),
                 fingerprint: Digest::text(&canonical),
                 text: source.to_string(),
             });
@@ -125,6 +127,23 @@ mod tests {
         assert_ne!(a.raw_digest, b.raw_digest);
         assert_eq!(a.semantic_digest, b.semantic_digest);
         assert_eq!(a.resources[0].fingerprint, b.resources[0].fingerprint);
+    }
+
+    #[test]
+    fn whole_file_resource_covers_non_block_source_changes() {
+        let a = ArtifactSnapshot::from_source(
+            ArtifactKind::SchLib,
+            "import \"a.schlib-spec\"\ncomponent R {\n}\n",
+        )
+        .unwrap();
+        let b = ArtifactSnapshot::from_source(
+            ArtifactKind::SchLib,
+            "import \"b.schlib-spec\"\ncomponent R {\n}\n",
+        )
+        .unwrap();
+        let file_a = a.resource("$file#0").unwrap();
+        let file_b = b.resource("$file#0").unwrap();
+        assert_ne!(file_a.fingerprint, file_b.fingerprint);
     }
 
     #[test]
