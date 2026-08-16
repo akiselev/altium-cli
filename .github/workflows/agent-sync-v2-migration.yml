@@ -39,8 +39,10 @@ jobs:
           git clone --depth 1 https://github.com/akiselev/altium-cli-test-pcbdoc data/pcbdoc
           git clone --depth 1 https://github.com/akiselev/altium-cli-test-intlib data/intlib
 
-      - name: Refine exact document plans
-        run: python3 scripts/refine_exact_plan.py
+      - name: Apply architecture refinements
+        run: |
+          python3 scripts/refine_exact_plan.py
+          python3 scripts/safety_fix.py
 
       - name: Format workspace
         run: cargo fmt --all
@@ -52,7 +54,7 @@ jobs:
           cargo metadata --format-version 1 >/dev/null
           git add Cargo.lock crates/altium-cli crates/altium-spec-lang crates/altium-sync
           if ! git diff --cached --quiet; then
-            git commit -m "Make saved document plans exact binary patches"
+            git commit -m "Harden sync baseline conflict semantics"
             git pull --rebase origin agent/bidirectional-sync-v2
             git push origin HEAD:agent/bidirectional-sync-v2
           fi
