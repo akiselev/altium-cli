@@ -55,17 +55,16 @@ pub(crate) fn run_apply(
         )?,
     };
 
-    if plan.direction != PlanDirection::Compile {
-        anyhow::bail!("saved plan is a dump/source plan, not a compile/document plan");
-    }
-
     if report_json {
         println!("{}", serde_json::to_string_pretty(&plan)?);
     } else {
         println!("{}", render_plan(&plan));
     }
 
-    execute_document_plan(&plan, target, output, force)
+    match plan.direction {
+        PlanDirection::Compile => execute_document_plan(&plan, target, output, force),
+        PlanDirection::Dump => execute_source_plan(&plan, target, output, force),
+    }
 }
 
 pub(crate) fn run_dump(
@@ -83,12 +82,13 @@ pub(crate) fn run_dump(
         .unwrap_or_else(|| default_spec_for_document(document, &legacy_domain));
 
     let document_source = dump_document(kind, document)?;
-    let current_source = if spec_path.exists() {
+    let source_existed = spec_path.exists();
+    let current_source = if source_existed {
         std::fs::read_to_string(&spec_path)?
     } else {
         String::new()
     };
-    let desired_source = if spec_path.exists() {
+    let desired_source = if source_existed {
         merge_dump(&current_source, &document_source)
             .map_err(|error| anyhow::anyhow!("structured dump merge failed: {error}"))?
     } else {
@@ -100,7 +100,7 @@ pub(crate) fn run_dump(
     let desired_source_snapshot = ArtifactSnapshot::from_source(kind, &desired_source)?;
     let baseline_path = default_baseline_path(document);
     let baseline = load_baseline(&baseline_path, kind)?;
-    let plan = plan_dump(
+    let mut plan = plan_dump(
         &current_source_snapshot,
         &document_snapshot,
         &desired_source_snapshot,
@@ -108,6 +108,9 @@ pub(crate) fn run_dump(
         desired_source,
     )?
     .with_paths(Some(spec_path.clone()), Some(document.clone()));
+    if !source_existed {
+        plan.precondition.source_raw_digest = None;
+    }
 
     println!("{}", render_plan(&plan));
     if let Some(path) = out_plan {
@@ -118,26 +121,7 @@ pub(crate) fn run_dump(
         return Ok(());
     }
 
-    verify_ready(&plan, force)?;
-    verify_source_precondition(&plan, Some(&current_source))?;
-    verify_document_precondition(&plan, Some(&document_snapshot.semantic_digest))?;
-    verify_baseline_precondition(&plan, baseline.as_ref())?;
-
-    if let Some((text, expected_digest)) = source_patch(&plan)? {
-        atomic_write_text(&spec_path, text)?;
-        let actual = std::fs::read_to_string(&spec_path)?;
-        let actual_digest = altium_sync::Digest::text(&actual);
-        if &actual_digest != expected_digest {
-            anyhow::bail!("source postcondition failed after atomic write");
-        }
-    }
-    save_baseline(&baseline_path, &plan.next_baseline)?;
-    println!(
-        "Synchronized: {} -> {}",
-        document.display(),
-        spec_path.display()
-    );
-    Ok(())
+    execute_source_plan(&plan, Some(document), Some(&spec_path), force)
 }
 
 fn build_compile_plan(spec_file: &PathBuf, target: Option<&PathBuf>) -> anyhow::Result<PlanBundle> {
@@ -151,7 +135,8 @@ fn build_compile_plan(spec_file: &PathBuf, target: Option<&PathBuf>) -> anyhow::
         .cloned()
         .unwrap_or_else(|| default_output_for_spec(spec_file, &legacy_domain));
 
-    let current_document_source = if document_path.exists() {
+    let document_existed = document_path.exists();
+    let current_document_source = if document_existed {
         dump_document(kind, &document_path)?
     } else {
         String::new()
@@ -164,14 +149,18 @@ fn build_compile_plan(spec_file: &PathBuf, target: Option<&PathBuf>) -> anyhow::
     let baseline_path = default_baseline_path(&document_path);
     let baseline = load_baseline(&baseline_path, kind)?;
 
-    Ok(plan_compile(
+    let mut plan = plan_compile(
         &source_snapshot,
         &current_document,
         &desired_document,
         baseline.as_ref(),
         BASE64.encode(&desired.bytes),
     )?
-    .with_paths(Some(spec_file.clone()), Some(document_path)))
+    .with_paths(Some(spec_file.clone()), Some(document_path));
+    if !document_existed {
+        plan.precondition.document_semantic_digest = None;
+    }
+    Ok(plan)
 }
 
 struct MaterializedDocument {
@@ -289,6 +278,64 @@ fn persist_pcbdoc(doc: &mut PcbDoc) -> anyhow::Result<MaterializedDocument> {
     })
 }
 
+fn execute_source_plan(
+    plan: &PlanBundle,
+    document_override: Option<&PathBuf>,
+    source_override: Option<&PathBuf>,
+    force: bool,
+) -> anyhow::Result<()> {
+    verify_ready(plan, force)?;
+    let document = document_override
+        .cloned()
+        .or_else(|| plan.document_path.clone())
+        .ok_or_else(|| {
+            anyhow::anyhow!("saved dump plan does not identify a document; pass --target")
+        })?;
+    let source_path = source_override
+        .cloned()
+        .or_else(|| plan.source_path.clone())
+        .ok_or_else(|| {
+            anyhow::anyhow!("saved dump plan does not identify a source; pass --output")
+        })?;
+
+    let current_source = if source_path.exists() {
+        Some(std::fs::read_to_string(&source_path)?)
+    } else {
+        None
+    };
+    verify_source_precondition(plan, current_source.as_deref())?;
+
+    let document_digest = if document.exists() {
+        let dumped = dump_document(plan.artifact_kind, &document)?;
+        Some(ArtifactSnapshot::from_source(plan.artifact_kind, &dumped)?.semantic_digest)
+    } else {
+        None
+    };
+    verify_document_precondition(plan, document_digest.as_ref())?;
+
+    let baseline_path = default_baseline_path(&document);
+    let baseline = load_baseline(&baseline_path, plan.artifact_kind)?;
+    verify_baseline_precondition(plan, baseline.as_ref())?;
+
+    let Some((text, expected_digest)) = source_patch(plan)? else {
+        if baseline.is_none() && plan.conflicts().next().is_none() {
+            save_baseline(&baseline_path, &plan.next_baseline)?;
+        }
+        println!("Already converged: {}", source_path.display());
+        return Ok(());
+    };
+
+    atomic_write_text(&source_path, text)?;
+    let actual = std::fs::read_to_string(&source_path)?;
+    let actual_digest = altium_sync::Digest::text(&actual);
+    if &actual_digest != expected_digest {
+        anyhow::bail!("source postcondition failed after atomic write");
+    }
+    save_baseline(&baseline_path, &plan.next_baseline)?;
+    println!("Saved: {}", source_path.display());
+    Ok(())
+}
+
 fn execute_document_plan(
     plan: &PlanBundle,
     target_override: Option<&PathBuf>,
@@ -311,14 +358,13 @@ fn execute_document_plan(
         verify_source_precondition(plan, source.as_deref())?;
     }
 
-    let current_document_source = if target.exists() {
-        dump_document(plan.artifact_kind, &target)?
+    let current_document_digest = if target.exists() {
+        let dumped = dump_document(plan.artifact_kind, &target)?;
+        Some(ArtifactSnapshot::from_source(plan.artifact_kind, &dumped)?.semantic_digest)
     } else {
-        String::new()
+        None
     };
-    let current_document =
-        ArtifactSnapshot::from_source(plan.artifact_kind, &current_document_source)?;
-    verify_document_precondition(plan, Some(&current_document.semantic_digest))?;
+    verify_document_precondition(plan, current_document_digest.as_ref())?;
 
     let baseline_path = default_baseline_path(&target);
     let baseline = load_baseline(&baseline_path, plan.artifact_kind)?;

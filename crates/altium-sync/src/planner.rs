@@ -258,13 +258,13 @@ fn classify(
     target_changed: bool,
 ) -> (ChangeDisposition, Option<String>) {
     if source_changed && document_changed {
-        if target_changed {
-            return (
-                ChangeDisposition::Conflict,
-                Some("both artifacts changed since the last synchronized baseline".to_string()),
-            );
-        }
-        return (ChangeDisposition::SameChange, None);
+        return (
+            ChangeDisposition::Conflict,
+            Some(
+                "both artifacts changed since the last synchronized baseline; the current aggregate model cannot prove the edits are semantically identical"
+                    .to_string(),
+            ),
+        );
     }
 
     match direction {
@@ -393,6 +393,17 @@ mod tests {
             desired.resources[0].text.clone(),
         )
         .unwrap();
+        assert!(plan.conflicts().next().is_some());
+    }
+
+    #[test]
+    fn simultaneous_drift_is_conflict_even_when_target_is_already_converged() {
+        let source0 = snap("component R {\n  description: \"old\"\n}\n");
+        let doc0 = source0.clone();
+        let base = SyncBaseline::from_snapshots(None, &source0, &doc0);
+        let source1 = snap("component R {\n  description: \"changed\"\n}\n");
+        let doc1 = source1.clone();
+        let plan = plan_compile(&source1, &doc1, &doc1, Some(&base), String::new()).unwrap();
         assert!(plan.conflicts().next().is_some());
     }
 
