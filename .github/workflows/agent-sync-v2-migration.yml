@@ -43,6 +43,7 @@ jobs:
         run: |
           python3 scripts/refine_exact_plan.py
           python3 scripts/safety_fix.py
+          python3 scripts/coverage_fix.py
 
       - name: Format workspace
         run: cargo fmt --all
@@ -54,7 +55,7 @@ jobs:
           cargo metadata --format-version 1 >/dev/null
           git add Cargo.lock crates/altium-cli crates/altium-spec-lang crates/altium-sync
           if ! git diff --cached --quiet; then
-            git commit -m "Harden sync baseline conflict semantics"
+            git commit -m "Complete sync-v2 source drift coverage"
             git pull --rebase origin agent/bidirectional-sync-v2
             git push origin HEAD:agent/bidirectional-sync-v2
           fi
