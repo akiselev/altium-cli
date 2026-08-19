@@ -19,7 +19,7 @@ pub mod snapshot;
 pub use apply::{
     ApplyError, JournalState, TransactionJournal, atomic_write, atomic_write_text, document_patch,
     load_plan, save_plan, source_patch, verify_baseline_precondition, verify_document_precondition,
-    verify_ready, verify_source_precondition, write_journal,
+    verify_document_raw_precondition, verify_ready, verify_source_precondition, write_journal,
 };
 pub use baseline::{
     BASELINE_SCHEMA_VERSION, BaselineError, SyncBaseline, default_baseline_path, load_baseline,
