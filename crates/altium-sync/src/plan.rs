@@ -7,7 +7,7 @@ use crate::digest::Digest;
 use crate::identity::BindingId;
 use crate::snapshot::ArtifactKind;
 
-pub const PLAN_SCHEMA_VERSION: u32 = 1;
+pub const PLAN_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,6 +60,10 @@ pub struct SemanticChange {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactPrecondition {
     pub source_raw_digest: Option<Digest>,
+    /// Exact digest of the native Altium document bytes. This is separate from
+    /// the semantic digest because the semantic projection intentionally omits
+    /// opaque/native content that still must never be overwritten by a stale plan.
+    pub document_raw_digest: Option<Digest>,
     pub document_semantic_digest: Option<Digest>,
     pub baseline_digest: Option<Digest>,
 }
