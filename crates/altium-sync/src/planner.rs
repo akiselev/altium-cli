@@ -22,6 +22,7 @@ pub fn plan_compile(
     let baseline_digest = baseline.map(SyncBaseline::digest).transpose()?;
     let precondition = ArtifactPrecondition {
         source_raw_digest: Some(source.raw_digest.clone()),
+        document_raw_digest: None,
         document_semantic_digest: Some(current_document.semantic_digest.clone()),
         baseline_digest,
     };
@@ -73,6 +74,7 @@ pub fn plan_dump(
     let baseline_digest = baseline.map(SyncBaseline::digest).transpose()?;
     let precondition = ArtifactPrecondition {
         source_raw_digest: Some(current_source.raw_digest.clone()),
+        document_raw_digest: None,
         document_semantic_digest: Some(current_document.semantic_digest.clone()),
         baseline_digest,
     };
@@ -163,7 +165,6 @@ fn three_way_changes(
     let current_alignment =
         SyncBaseline::from_snapshots(Some(base), current_source, current_document);
 
-    // For compile the desired target is the document; for dump it is the source.
     let final_alignment = match direction {
         PlanDirection::Compile => {
             SyncBaseline::from_snapshots(Some(&current_alignment), current_source, desired_target)
@@ -202,9 +203,18 @@ fn three_way_changes(
             PlanDirection::Compile => document_current != document_final,
             PlanDirection::Dump => source_current != source_final,
         };
+        let converged = source_changed
+            && document_changed
+            && source_current.is_some()
+            && source_current == document_current;
 
-        let (disposition, reason) =
-            classify(direction, source_changed, document_changed, target_changed);
+        let (disposition, reason) = classify(
+            direction,
+            source_changed,
+            document_changed,
+            target_changed,
+            converged,
+        );
 
         if disposition == ChangeDisposition::Unchanged {
             continue;
@@ -257,12 +267,19 @@ fn classify(
     source_changed: bool,
     document_changed: bool,
     target_changed: bool,
+    converged: bool,
 ) -> (ChangeDisposition, Option<String>) {
+    if converged {
+        return (
+            ChangeDisposition::SameChange,
+            Some("both artifacts independently reached the same semantic value".to_string()),
+        );
+    }
     if source_changed && document_changed {
         return (
             ChangeDisposition::Conflict,
             Some(
-                "both artifacts changed since the last synchronized baseline; the current aggregate model cannot prove the edits are semantically identical"
+                "both artifacts changed since the last synchronized baseline and differ semantically"
                     .to_string(),
             ),
         );
@@ -398,14 +415,18 @@ mod tests {
     }
 
     #[test]
-    fn simultaneous_drift_is_conflict_even_when_target_is_already_converged() {
+    fn simultaneous_identical_drift_is_same_change() {
         let source0 = snap("component R {\n  description: \"old\"\n}\n");
         let doc0 = source0.clone();
         let base = SyncBaseline::from_snapshots(None, &source0, &doc0);
         let source1 = snap("component R {\n  description: \"changed\"\n}\n");
         let doc1 = source1.clone();
         let plan = plan_compile(&source1, &doc1, &doc1, Some(&base), String::new()).unwrap();
-        assert!(plan.conflicts().next().is_some());
+        assert!(plan.conflicts().next().is_none());
+        assert!(plan
+            .changes
+            .iter()
+            .any(|change| change.disposition == ChangeDisposition::SameChange));
     }
 
     #[test]
