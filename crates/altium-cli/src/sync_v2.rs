@@ -6,11 +6,11 @@ use altium_format_spec::{
     dump_pcbdoc, dump_pcblib, dump_schdoc, dump_schlib, merge_dump,
 };
 use altium_sync::{
-    ArtifactKind, ArtifactSnapshot, JournalState, PlanBundle, PlanDirection, TransactionJournal,
-    atomic_write, atomic_write_text, default_baseline_path, document_patch, load_baseline,
-    load_plan, plan_compile, plan_dump, render_plan, save_baseline, save_plan, source_patch,
-    verify_baseline_precondition, verify_document_precondition, verify_ready,
-    verify_source_precondition, write_journal,
+    ArtifactKind, ArtifactSnapshot, Digest, JournalState, PlanBundle, PlanDirection,
+    TransactionJournal, atomic_write, atomic_write_text, default_baseline_path, document_patch,
+    load_baseline, load_plan, plan_compile, plan_dump, render_plan, save_baseline, save_plan,
+    source_patch, verify_baseline_precondition, verify_document_precondition,
+    verify_document_raw_precondition, verify_ready, verify_source_precondition, write_journal,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
@@ -81,6 +81,7 @@ pub(crate) fn run_dump(
         .cloned()
         .unwrap_or_else(|| default_spec_for_document(document, &legacy_domain));
 
+    let document_bytes = std::fs::read(document)?;
     let document_source = dump_document(kind, document)?;
     let source_existed = spec_path.exists();
     let current_source = if source_existed {
@@ -108,6 +109,7 @@ pub(crate) fn run_dump(
         desired_source,
     )?
     .with_paths(Some(spec_path.clone()), Some(document.clone()));
+    plan.precondition.document_raw_digest = Some(Digest::bytes(&document_bytes));
     if !source_existed {
         plan.precondition.source_raw_digest = None;
     }
@@ -136,6 +138,11 @@ fn build_compile_plan(spec_file: &PathBuf, target: Option<&PathBuf>) -> anyhow::
         .unwrap_or_else(|| default_output_for_spec(spec_file, &legacy_domain));
 
     let document_existed = document_path.exists();
+    let current_document_bytes = if document_existed {
+        Some(std::fs::read(&document_path)?)
+    } else {
+        None
+    };
     let current_document_source = if document_existed {
         dump_document(kind, &document_path)?
     } else {
@@ -157,6 +164,7 @@ fn build_compile_plan(spec_file: &PathBuf, target: Option<&PathBuf>) -> anyhow::
         BASE64.encode(&desired.bytes),
     )?
     .with_paths(Some(spec_file.clone()), Some(document_path));
+    plan.precondition.document_raw_digest = current_document_bytes.as_deref().map(Digest::bytes);
     if !document_existed {
         plan.precondition.document_semantic_digest = None;
     }
@@ -285,18 +293,8 @@ fn execute_source_plan(
     force: bool,
 ) -> anyhow::Result<()> {
     verify_ready(plan, force)?;
-    let document = document_override
-        .cloned()
-        .or_else(|| plan.document_path.clone())
-        .ok_or_else(|| {
-            anyhow::anyhow!("saved dump plan does not identify a document; pass --target")
-        })?;
-    let source_path = source_override
-        .cloned()
-        .or_else(|| plan.source_path.clone())
-        .ok_or_else(|| {
-            anyhow::anyhow!("saved dump plan does not identify a source; pass --output")
-        })?;
+    let document = resolve_planned_path(plan.document_path.as_ref(), document_override, "document")?;
+    let source_path = resolve_planned_path(plan.source_path.as_ref(), source_override, "source")?;
 
     let current_source = if source_path.exists() {
         Some(std::fs::read_to_string(&source_path)?)
@@ -305,6 +303,12 @@ fn execute_source_plan(
     };
     verify_source_precondition(plan, current_source.as_deref())?;
 
+    let document_bytes = if document.exists() {
+        Some(std::fs::read(&document)?)
+    } else {
+        None
+    };
+    verify_document_raw_precondition(plan, document_bytes.as_deref())?;
     let document_digest = if document.exists() {
         let dumped = dump_document(plan.artifact_kind, &document)?;
         Some(ArtifactSnapshot::from_source(plan.artifact_kind, &dumped)?.semantic_digest)
@@ -318,16 +322,14 @@ fn execute_source_plan(
     verify_baseline_precondition(plan, baseline.as_ref())?;
 
     let Some((text, expected_digest)) = source_patch(plan)? else {
-        if baseline.is_none() && plan.conflicts().next().is_none() {
-            save_baseline(&baseline_path, &plan.next_baseline)?;
-        }
+        save_baseline(&baseline_path, &plan.next_baseline)?;
         println!("Already converged: {}", source_path.display());
         return Ok(());
     };
 
     atomic_write_text(&source_path, text)?;
     let actual = std::fs::read_to_string(&source_path)?;
-    let actual_digest = altium_sync::Digest::text(&actual);
+    let actual_digest = Digest::text(&actual);
     if &actual_digest != expected_digest {
         anyhow::bail!("source postcondition failed after atomic write");
     }
@@ -343,11 +345,8 @@ fn execute_document_plan(
     force: bool,
 ) -> anyhow::Result<()> {
     verify_ready(plan, force)?;
-    let target = target_override
-        .cloned()
-        .or_else(|| plan.document_path.clone())
-        .ok_or_else(|| anyhow::anyhow!("saved plan does not identify a target; pass --target"))?;
-    let output = output_override.cloned().unwrap_or_else(|| target.clone());
+    let target = resolve_planned_path(plan.document_path.as_ref(), target_override, "target")?;
+    let output = resolve_planned_path(plan.document_path.as_ref(), output_override, "output")?;
 
     if let Some(source_path) = &plan.source_path {
         let source = if source_path.exists() {
@@ -358,6 +357,12 @@ fn execute_document_plan(
         verify_source_precondition(plan, source.as_deref())?;
     }
 
+    let current_document_bytes = if target.exists() {
+        Some(std::fs::read(&target)?)
+    } else {
+        None
+    };
+    verify_document_raw_precondition(plan, current_document_bytes.as_deref())?;
     let current_document_digest = if target.exists() {
         let dumped = dump_document(plan.artifact_kind, &target)?;
         Some(ArtifactSnapshot::from_source(plan.artifact_kind, &dumped)?.semantic_digest)
@@ -371,12 +376,7 @@ fn execute_document_plan(
     verify_baseline_precondition(plan, baseline.as_ref())?;
 
     let Some((document_base64, expected_digest)) = document_patch(plan)? else {
-        // Existing baselines only advance when this operation actually resolves
-        // a side. Otherwise opposite-side drift could be silently accepted.
-        // Initial no-op adoption is safe because there is no prior baseline.
-        if baseline.is_none() && plan.conflicts().next().is_none() {
-            save_baseline(&default_baseline_path(&output), &plan.next_baseline)?;
-        }
+        save_baseline(&baseline_path, &plan.next_baseline)?;
         println!("Already converged: {}", output.display());
         return Ok(());
     };
@@ -397,13 +397,43 @@ fn execute_document_plan(
         );
     }
 
-    commit_stage(plan, &stage, &output)?;
-    save_baseline(&default_baseline_path(&output), &plan.next_baseline)?;
+    let receipt = commit_stage(plan, &stage, &output)?;
+    if let Err(error) = save_baseline(&baseline_path, &plan.next_baseline) {
+        rollback_commit(&receipt)?;
+        return Err(error.into());
+    }
+    finalize_commit(receipt)?;
     println!("Saved: {}", output.display());
     Ok(())
 }
 
-fn commit_stage(plan: &PlanBundle, stage: &Path, destination: &Path) -> anyhow::Result<()> {
+fn resolve_planned_path(
+    planned: Option<&PathBuf>,
+    requested: Option<&PathBuf>,
+    role: &str,
+) -> anyhow::Result<PathBuf> {
+    let planned = planned
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("saved plan does not identify its {role} path"))?;
+    if let Some(requested) = requested {
+        if requested != &planned {
+            anyhow::bail!(
+                "saved plan {role} is {}; refusing unplanned path {}",
+                planned.display(),
+                requested.display()
+            );
+        }
+    }
+    Ok(planned)
+}
+
+struct CommitReceipt {
+    destination: PathBuf,
+    journal_path: PathBuf,
+    backup: Option<PathBuf>,
+}
+
+fn commit_stage(plan: &PlanBundle, stage: &Path, destination: &Path) -> anyhow::Result<CommitReceipt> {
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     let altium_dir = parent.join(".altium");
     std::fs::create_dir_all(&altium_dir)?;
@@ -438,10 +468,29 @@ fn commit_stage(plan: &PlanBundle, stage: &Path, destination: &Path) -> anyhow::
     }
     journal.state = JournalState::Committed;
     write_journal(&journal_path, &journal)?;
-    if let Some(backup) = backup {
+    Ok(CommitReceipt {
+        destination: destination.to_path_buf(),
+        journal_path,
+        backup,
+    })
+}
+
+fn rollback_commit(receipt: &CommitReceipt) -> anyhow::Result<()> {
+    if let Some(backup) = &receipt.backup {
+        let _ = std::fs::remove_file(&receipt.destination);
+        std::fs::rename(backup, &receipt.destination)?;
+    } else {
+        let _ = std::fs::remove_file(&receipt.destination);
+    }
+    let _ = std::fs::remove_file(&receipt.journal_path);
+    Ok(())
+}
+
+fn finalize_commit(receipt: CommitReceipt) -> anyhow::Result<()> {
+    if let Some(backup) = receipt.backup {
         let _ = std::fs::remove_file(backup);
     }
-    let _ = std::fs::remove_file(journal_path);
+    let _ = std::fs::remove_file(receipt.journal_path);
     Ok(())
 }
 
