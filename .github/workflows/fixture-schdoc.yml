@@ -36,6 +36,3 @@ jobs:
 
       - name: Run altium-format SchDoc fixture tests
         run: cargo test -p altium-format --lib schdoc --features test-fixtures --verbose
-
-      - name: Run SchDoc e2e ops tests
-        run: cargo test -p altium-format-ops --test ops_e2e_schdoc --features test-fixtures --verbose

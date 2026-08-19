@@ -17,6 +17,7 @@ workspace = true
 altium-format = { version = "0.2.0", path = "../altium-format" }
 altium-format-types = { version = "0.2.0", path = "../altium-format-types" }
 altium-spec-lang = { version = "0.2.0", path = "../altium-spec-lang" }
+blake3 = "1"
 indexmap = { version = "2", features = ["serde"] }
 rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }

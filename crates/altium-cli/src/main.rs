@@ -21,6 +21,7 @@ use altium_format_spec::{
 use clap::{Parser, Subcommand};
 
 mod cfb;
+mod sync_v2;
 
 #[derive(Parser)]
 #[command(name = "altium", about = "CLI tool for Altium Designer files")]
@@ -88,12 +89,18 @@ enum Commands {
         /// Process this spec and all imported specs (PrjPcb only)
         #[arg(long, default_value_t = false)]
         all: bool,
+        /// Persist the self-contained plan as JSON (sync-v2 formats only)
+        #[arg(long)]
+        out_plan: Option<PathBuf>,
     },
-    /// Apply a spec file to create or update an Altium document
+    /// Apply a spec file or a previously saved synchronization plan
     Apply {
-        /// Path to the spec file (.schlib-spec, .pcblib-spec, .schdoc-spec, .pcbdoc-spec, or .prjpcb-spec)
-        spec_file: PathBuf,
-        /// Existing document to update (optional)
+        /// Path to the spec file. Omit when applying --plan.
+        spec_file: Option<PathBuf>,
+        /// Apply this previously saved self-contained plan
+        #[arg(long, conflicts_with = "spec_file")]
+        plan: Option<PathBuf>,
+        /// Existing document to update (optional for spec apply; overrides saved-plan path)
         #[arg(long)]
         target: Option<PathBuf>,
         /// Output file path (overrides default)
@@ -105,14 +112,26 @@ enum Commands {
         /// Process this spec and all imported specs (PrjPcb only)
         #[arg(long, default_value_t = false)]
         all: bool,
+        /// Apply a reviewed plan even when it contains three-way conflicts
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
-    /// Reverse-generate a spec file from an existing Altium document
+    /// Reverse-synchronize an Altium document into its spec source
     Dump {
         /// Path to a supported Altium document
         document: PathBuf,
         /// Output spec file path (overrides default)
         #[arg(long)]
         output: Option<PathBuf>,
+        /// Plan the structured source update without writing it
+        #[arg(long, default_value_t = false)]
+        plan: bool,
+        /// Persist the self-contained dump plan as JSON
+        #[arg(long)]
+        out_plan: Option<PathBuf>,
+        /// Apply a reviewed plan even when both artifacts changed
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
     /// Show document summary (object counts, net names, hierarchy)
     Info {
@@ -269,10 +288,11 @@ fn main() -> ExitCode {
             target,
             json,
             all,
-        } => match run_plan(&spec_file, target.as_ref(), json, all) {
+            out_plan,
+        } => match run_plan(&spec_file, target.as_ref(), json, all, out_plan.as_ref()) {
             Ok(has_changes) => {
                 if has_changes {
-                    return ExitCode::from(1);
+                    return ExitCode::from(2);
                 }
             }
             Err(e) => {
@@ -282,24 +302,34 @@ fn main() -> ExitCode {
         },
         Commands::Apply {
             spec_file,
+            plan,
             target,
             output,
             report_json,
             all,
+            force,
         } => {
             if let Err(e) = run_apply(
-                &spec_file,
+                spec_file.as_ref(),
+                plan.as_ref(),
                 target.as_ref(),
                 output.as_ref(),
                 report_json,
                 all,
+                force,
             ) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
             }
         }
-        Commands::Dump { document, output } => {
-            if let Err(e) = run_dump(&document, output.as_ref()) {
+        Commands::Dump {
+            document,
+            output,
+            plan,
+            out_plan,
+            force,
+        } => {
+            if let Err(e) = run_dump(&document, output.as_ref(), plan, out_plan.as_ref(), force) {
                 eprintln!("Error: {e}");
                 return ExitCode::FAILURE;
             }
@@ -908,10 +938,17 @@ fn run_plan(
     target: Option<&PathBuf>,
     json: bool,
     all: bool,
+    out_plan: Option<&PathBuf>,
 ) -> anyhow::Result<bool> {
     let domain = detect_spec_domain(spec_file)?;
-    if all && domain != SpecDomain::PrjPcb {
-        anyhow::bail!("--all is only valid for .prjpcb-spec files");
+    if domain != SpecDomain::PrjPcb {
+        if all {
+            anyhow::bail!("--all is only valid for .prjpcb-spec files");
+        }
+        return sync_v2::run_plan(spec_file, target, json, out_plan);
+    }
+    if out_plan.is_some() {
+        anyhow::bail!("saved sync-v2 plans are not yet defined for PrjPcb");
     }
 
     let source = std::fs::read_to_string(spec_file)
@@ -1035,15 +1072,28 @@ fn plan_for_model(
 // ── apply ─────────────────────────────────────────────────────────────────────
 
 fn run_apply(
-    spec_file: &PathBuf,
+    spec_file: Option<&PathBuf>,
+    saved_plan: Option<&PathBuf>,
     target: Option<&PathBuf>,
     output: Option<&PathBuf>,
-    _report_json: bool,
+    report_json: bool,
     all: bool,
+    force: bool,
 ) -> anyhow::Result<()> {
+    if saved_plan.is_some() {
+        if all {
+            anyhow::bail!("--all cannot be combined with --plan");
+        }
+        return sync_v2::run_apply(spec_file, saved_plan, target, output, report_json, force);
+    }
+    let spec_file =
+        spec_file.ok_or_else(|| anyhow::anyhow!("a spec file or --plan is required"))?;
     let domain = detect_spec_domain(spec_file)?;
-    if all && domain != SpecDomain::PrjPcb {
-        anyhow::bail!("--all is only valid for .prjpcb-spec files");
+    if domain != SpecDomain::PrjPcb {
+        if all {
+            anyhow::bail!("--all is only valid for .prjpcb-spec files");
+        }
+        return sync_v2::run_apply(Some(spec_file), None, target, output, report_json, force);
     }
 
     let source = std::fs::read_to_string(spec_file)
@@ -1601,7 +1651,13 @@ fn write_spec_merged(
     Ok(())
 }
 
-fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> {
+fn run_dump(
+    document: &PathBuf,
+    output: Option<&PathBuf>,
+    plan_only: bool,
+    out_plan: Option<&PathBuf>,
+    force: bool,
+) -> anyhow::Result<()> {
     // IntLib can contain both SchLib and PcbLib data, so it bypasses the
     // single-domain path and dumps separate spec files.
     let ext = document
@@ -1610,10 +1666,19 @@ fn run_dump(document: &PathBuf, output: Option<&PathBuf>) -> anyhow::Result<()> 
         .unwrap_or("")
         .to_ascii_lowercase();
     if ext == "intlib" {
+        if plan_only || out_plan.is_some() || force {
+            anyhow::bail!("sync-v2 plan flags are not supported for IntLib");
+        }
         return run_dump_intlib(document, output);
     }
 
     let domain = detect_document_domain(document)?;
+    if domain != SpecDomain::PrjPcb {
+        return sync_v2::run_dump(document, output, plan_only, out_plan, force);
+    }
+    if plan_only || out_plan.is_some() || force {
+        anyhow::bail!("sync-v2 plan flags are not yet defined for PrjPcb");
+    }
     let out_path = output
         .cloned()
         .unwrap_or_else(|| default_spec_for_document(document, &domain));
