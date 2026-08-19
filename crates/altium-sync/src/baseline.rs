@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -95,8 +96,6 @@ impl SyncBaseline {
             }
         }
 
-        // Bootstrap/new resources: pair exact aggregate addresses first. This is
-        // conservative and deterministic; fuzzy similarity is never used.
         for source_resource in &source.resources {
             if source_used.contains(&source_resource.address) {
                 continue;
@@ -251,10 +250,65 @@ pub fn save_baseline(path: &Path, baseline: &SyncBaseline) -> Result<(), Baselin
         })?;
     }
     let bytes = serde_json::to_vec_pretty(baseline)?;
-    fs::write(path, bytes).map_err(|source| BaselineError::Write {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("baseline");
+    let staged = parent.join(format!(".{name}.{}.tmp", rand::random::<u64>()));
+    let mut file = fs::File::create(&staged).map_err(|source| BaselineError::Write {
+        path: staged.clone(),
+        source,
+    })?;
+    file.write_all(&bytes).map_err(|source| BaselineError::Write {
+        path: staged.clone(),
+        source,
+    })?;
+    file.sync_all().map_err(|source| BaselineError::Write {
+        path: staged.clone(),
+        source,
+    })?;
+    drop(file);
+
+    #[cfg(unix)]
+    fs::rename(&staged, path).map_err(|source| BaselineError::Write {
         path: path.to_path_buf(),
         source,
-    })
+    })?;
+
+    #[cfg(not(unix))]
+    {
+        let backup = parent.join(format!(".{name}.{}.bak", rand::random::<u64>()));
+        let existed = path.exists();
+        if existed {
+            fs::rename(path, &backup).map_err(|source| BaselineError::Write {
+                path: backup.clone(),
+                source,
+            })?;
+        }
+        if let Err(source) = fs::rename(&staged, path) {
+            if existed {
+                let _ = fs::rename(&backup, path);
+            }
+            return Err(BaselineError::Write {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+        if existed {
+            let _ = fs::remove_file(backup);
+        }
+    }
+
+    #[cfg(unix)]
+    fs::File::open(parent)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|source| BaselineError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -277,9 +331,6 @@ mod tests {
             "component New {\n  description: \"same\"\n}\n",
         )
         .unwrap();
-        // Fingerprints include the header, so this is intentionally a new source
-        // binding until a native/embedded id is available. The old document side
-        // still retains its binding without any similarity guess.
         let rebased =
             SyncBaseline::from_snapshots(Some(&baseline), &after_source, &before_document);
         assert!(
