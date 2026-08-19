@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -96,6 +97,17 @@ pub fn verify_source_precondition(
     Ok(())
 }
 
+pub fn verify_document_raw_precondition(
+    plan: &PlanBundle,
+    actual_bytes: Option<&[u8]>,
+) -> Result<(), ApplyError> {
+    let actual = actual_bytes.map(Digest::bytes);
+    if actual != plan.precondition.document_raw_digest {
+        return Err(ApplyError::StaleDocument);
+    }
+    Ok(())
+}
+
 pub fn verify_document_precondition(
     plan: &PlanBundle,
     actual_semantic_digest: Option<&Digest>,
@@ -161,10 +173,19 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ApplyError> {
         .and_then(|name| name.to_str())
         .unwrap_or("artifact");
     let staged = parent.join(format!(".{file_name}.{}.tmp", rand::random::<u64>()));
-    fs::write(&staged, bytes).map_err(|source| ApplyError::Write {
+    let mut file = fs::File::create(&staged).map_err(|source| ApplyError::Write {
         path: staged.clone(),
         source,
     })?;
+    file.write_all(bytes).map_err(|source| ApplyError::Write {
+        path: staged.clone(),
+        source,
+    })?;
+    file.sync_all().map_err(|source| ApplyError::Write {
+        path: staged.clone(),
+        source,
+    })?;
+    drop(file);
 
     #[cfg(unix)]
     {
@@ -198,6 +219,14 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ApplyError> {
         }
     }
 
+    #[cfg(unix)]
+    fs::File::open(parent)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|source| ApplyError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+
     Ok(())
 }
 
@@ -225,6 +254,18 @@ mod tests {
         assert!(matches!(
             verify_source_precondition(&plan, Some("component X {\n}\n")),
             Err(ApplyError::StaleSource)
+        ));
+    }
+
+    #[test]
+    fn raw_document_precondition_detects_opaque_drift() {
+        let source = ArtifactSnapshot::empty(ArtifactKind::SchLib);
+        let mut plan = plan_compile(&source, &source, &source, None, String::new()).unwrap();
+        plan.precondition.document_raw_digest = Some(Digest::bytes(b"native-a"));
+        assert!(verify_document_raw_precondition(&plan, Some(b"native-a")).is_ok());
+        assert!(matches!(
+            verify_document_raw_precondition(&plan, Some(b"native-b")),
+            Err(ApplyError::StaleDocument)
         ));
     }
 
