@@ -692,6 +692,9 @@ mod tests {
         for body in [
             "VariationCount=2\r\nVariation1=Designator=R1|UniqueId=x|Kind=1|AlternatePart=\r\n",
             "Variation1=Designator=R1|UniqueId=x|Kind=9|AlternatePart=\r\n",
+            // A2: Kind 0 and Kind 2 are unverified.
+            "Variation1=Designator=R1|UniqueId=x|Kind=0|AlternatePart=\r\n",
+            "Variation1=Designator=R1|UniqueId=x|Kind=2|AlternatePart=R2\r\n",
             "Variation1=Designator=R1|UniqueId=x|Kind=one|AlternatePart=\r\n",
             "Variation1=Designator=R1|Kind=1\r\n",
             "Variation1=Designator=R1|UniqueId=x|Kind=1|AlternatePart=|Extra=1\r\n",
@@ -701,6 +704,12 @@ mod tests {
             "Mystery=1\r\n",
         ] {
             assert!(bad_variant(body).contains("ProjectVariant1"), "{body}");
+        }
+        for kind in [0, 2] {
+            let msg = bad_variant(&format!(
+                "Variation1=Designator=R1|UniqueId=x|Kind={kind}|AlternatePart=\r\n"
+            ));
+            assert!(msg.contains("unverified VariationKind"), "{msg}");
         }
     }
 

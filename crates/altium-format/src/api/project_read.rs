@@ -554,6 +554,18 @@ fn parse_variants(proj: &AltiumProject) -> crate::Result<Vec<ProjectVariant>> {
                     let kind = VariationKind::try_from(kind_int)
                         .map_err(AltiumFormatError::InvalidEnumValue)
                         .with_context(|| line.clone())?;
+                    // Only Kind=1 (not fitted) is corroborated (KiCad's importer agrees);
+                    // 0 and 2 disagree between sources and no decompiled reader or real
+                    // PrjPcb settles them (batch 5 A2), so they are refused.
+                    if kind != VariationKind::NotFitted {
+                        return Err(AltiumFormatError::InvalidParamValue {
+                            key: line.clone(),
+                            detail: format!(
+                                "unverified VariationKind Kind={kind_int}, see the A2 request \
+                                 (only Kind=1, not fitted, is verified)"
+                            ),
+                        });
+                    }
                     variations.push(ComponentVariation {
                         designator: required_pipe(&pairs, &line, "Designator")?.to_owned(),
                         unique_id: required_pipe(&pairs, &line, "UniqueId")?.to_owned(),
