@@ -1,4 +1,4 @@
-# Report: altium-format R1–R7 for ecadabra (cloud batch 1, lane C)
+# Report: altium-format R1–R11 for ecadabra (cloud batch 1, lane C)
 
 Date: 2026-10-23. Lane brief: `docs/handoff/ecad-r1-r7-cloud-lane.md`. Previous handoff:
 `docs/handoff/ecad-r1-r7.md`.
@@ -7,7 +7,9 @@ Date: 2026-10-23. Lane brief: `docs/handoff/ecad-r1-r7-cloud-lane.md`. Previous 
 
 - Branch `claude/ecad-b1-altium-r1-r7`. Base `08dca3e` (lane brief) on top of `d7fef24` (R2 WIP)
   and `18062d6` (the rev ecadabra pins). No rebase, no pull request.
-- Last code commit `382fd35`. This report is the commit after it, the branch head.
+- R1–R7 were finished at `382fd35`. The coordinator then added R8 (ecadabra lane A) and R9–R11
+  (lane B's schematic import); those followed. The last code commit is `b327bde`; this report
+  update is the commit after it, the branch head.
 - Commits, oldest first (each item, then its review fixes):
 
 | Commit | Item |
@@ -20,11 +22,16 @@ Date: 2026-10-23. Lane brief: `docs/handoff/ecad-r1-r7-cloud-lane.md`. Previous 
 | `187b361`, `b7bc2a2` | R6 layer identity; review fixes |
 | `3e7f1e3`, `41e45e8` | R5 pad expansion modes; review fixes |
 | `a1fda26`, `382fd35` | R7 region contours; review fixes |
+| `df371df`, `d14bb09` | R8 designators without SOURCEDESIGNATOR; review fixes |
+| `ce41a3d`, `6e59f48`, `3462b4c` | R9 placed display mode; graphic display modes; second-round fixes |
+| `6aa7165`, `3462b4c` | R10 reproducible filler UniqueIDs; review nits |
+| `381b197`, `b327bde` | R11 PrjPcb legacy code pages; review fixes |
 
 ## State per request
 
-All seven are done. Each item has unit tests, a filtered corpus test and an independent review,
-and the review findings were fixed or are listed below as open.
+All eleven are done. Each item has unit tests, a filtered corpus test (R11 has only unit tests: no
+GBK project is in the corpora) and an independent review, and the review findings were fixed or
+are listed below as open.
 
 | Request | State |
 |---|---|
@@ -35,6 +42,10 @@ and the review findings were fixed or are listed below as open.
 | R6 layer identity | Done. Returns `V6Layer`, not `CopperLayer` |
 | R5 pad expansion modes | Done. Uses `MaskExpansionMode`, not `PadExpansionMode` |
 | R7 region arcs | Done |
+| R8 designators without SOURCEDESIGNATOR | Done. `designator` stays SOURCEDESIGNATOR-first, see Q6 |
+| R9 placed display mode | Done, plus display modes on every component graphic. Spec syntax open, see Q7 |
+| R10 reproducible UniqueIDs | Done (deterministic filler, not `Option`), see Q8 |
+| R11 PrjPcb code pages | Done as an explicit `open_with_code_page`; Altium's own choice unverified, see Q9 |
 
 ### Public API added
 
@@ -97,6 +108,18 @@ impl MaskExpansionMode { pub fn pad_cache_state(self) -> Option<TCacheState>; }
 // R7: Region
 pub outline_contour: PcbContour,    // arcs kept (ShapeBasedRegions6)
 pub hole_contours: Vec<PcbContour>, // holes are stored as vertices only
+
+// R8: PcbDocComponent
+pub source_designator: Option<String>, // stored SOURCEDESIGNATOR; `designator` falls back to the
+                                       // component's one designator Text when absent
+
+// R9: SchDocComponent
+pub display_mode: i32,              // placed DisplayMode, 0 <= mode < max(display_mode_count, 1)
+// R9: every schematic graphic (LineGraphic, ..., TextFrameGraphic), SchDoc and SchLib
+pub owner_part_display_mode: i32,   // + Graphic::owner_part_display_mode()
+
+// R11: altium_format::project
+impl AltiumProject { pub fn open_with_code_page(path, code_page: &str) -> Result<Self>; }
 ```
 
 Departures from the request texts, and why:
@@ -131,6 +154,11 @@ Departures from the request texts, and why:
 | R5 | PcbDoc: 44,614 pads on readable boards, 5,192 manual solder / 3,597 manual paste, 5 separate bottom expansions. Cache states and masks are unchanged by `update_board`, and inserting a pad does not shift the others (`corpus_r5_pad_modes`). PcbLib: 80,866 pads, 19,844 manual solder / 5,954 manual paste. No pad has an ExtendedPrimitiveInformation entry, and states are unchanged by `update_footprint` (`corpus_r5_pcblib_pad_modes`). |
 | R7 | 192 regions with 1,017 arc edges on readable boards. Every region contour is unchanged by `update_board`, and a moved outline is written (`corpus_r7_region_contours`). |
 
+| R8 | 603 components lack SOURCEDESIGNATOR (565 ebaz4205-fpga, 12 nanjing-linecard, 2 nanjing-linecard-nfc, 7 heron-payload-ssm, 7 stlink-v3-mb1367c, 9 tvws-agc-calib, 1 test-footprint-no-desig); each has exactly one designator text. ebaz4205: 1,912 pads → 565 distinct owner indices, 565 distinct designators. Designators unchanged by `update_board`; a rename without the stored key fails, with it reads back (`corpus_r8_designators`). |
+| R9 | SchDoc corpus `6d0ff22`: 1,202 of 1,617 SchDocs open, 1,130 sheets read; all 33,816 components have a valid DisplayMode; 137 on readable sheets are placed in an alternate mode. All 30 such sheets survive `update_sheet` with every component's and child's (8,674 alternate-mode children) display mode unchanged (`corpus_r9_display_mode`). |
+| R10 | 1,202 SchDocs opened twice: 1,713,743 record ids identical (`corpus_r10_unique_ids_reproducible`). |
+| R11 | Unit tests: strict GBK decode, refused labels, a GBK project with a Chinese document path opens with `open_with_code_page` and `open` points to it. |
+
 ### Defects found and fixed on the way
 
 These go beyond the request texts but were needed for correct round trips. All are covered by
@@ -152,27 +180,33 @@ the corpus tests above.
 - **Pad matching.** PcbLib `update_footprint` matched every repeated pad name to the first pad.
   PcbDoc pad fields were preserved by position, so inserting a pad shifted them.
 - **Pad modes.** Both writers ignored the pad mask mode.
+- **Source designators.** The writer wrote SOURCEDESIGNATOR for every component (adding a key
+  absent from 603 records), and a component rename was silently dropped.
+- **Schematic display modes.** The SchDoc writer stored DisplayMode 0 for every component and
+  OwnerPartDisplayMode 0 for every graphic, merging all modes' bodies (SchLib graphics too).
+- **Filler ids.** SchDoc load filled missing UniqueIDs with random ids.
 
 ## Tests run (exact commands, counts)
 
 - **Unit tests, final run.** Command:
   `CARGO_TARGET_DIR=/tmp/target-altium CARGO_PROFILE_DEV_DEBUG=0 cargo test --no-fail-fast -p altium-format -p altium-format-spec -p altium-cli -p altium-format-query -p altium-format-types`
-  - altium-format lib: 518 passed, 4 failed. The four are `intlib::tests::*`; they read
+  - altium-format lib: 525 passed, 4 failed. The four are `intlib::tests::*`; they read
     `data/intlib`, which was not cloned, and are not gated behind `test-fixtures`. They already
     failed in this lane's first run (`d7fef24` plus the R2 unit tests), so this is
     pre-existing.
   - altium-format-spec: 248 passed. altium-format-query: 73 passed. altium-format-types: 20
     passed. altium-cli: 0 + 1 + 1 passed.
-- **Corpus tests.** Each ran filtered to its own name, with the `data/pcbdoc` and `data/pcblib`
-  symlinks pointing at the clones. Command:
+- **Corpus tests.** Each ran filtered to its own name, with the `data/pcbdoc`, `data/pcblib` and
+  `data/schdoc` symlinks pointing at the clones. Command:
   `CARGO_TARGET_DIR=/tmp/target-altium-opt CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_OPT_LEVEL=2 cargo test -p altium-format --features test-fixtures --lib <name>`
   - Names: `corpus_board_reads`, `corpus_r1_board_outline`, `corpus_r2_polygons`,
     `corpus_r3_polygon_membership`, `corpus_r4_identity`, `corpus_r5_pad_modes`,
-    `corpus_r5_pcblib_pad_modes`, `corpus_r6_layer_identity`, `corpus_r7_region_contours`.
-  - Final run on `382fd35`: 9 of 9 passed (counts as in the table above).
+    `corpus_r5_pcblib_pad_modes`, `corpus_r6_layer_identity`, `corpus_r7_region_contours`,
+    `corpus_r8_designators`, `corpus_r9_display_mode`, `corpus_r10_unique_ids_reproducible`.
+  - Final run on `b327bde`: in progress when this was written; see the next report commit.
   - Opt-level 2 was used because the debug build takes 440 s per test.
   - Temporary survey tests were run and then deleted before commit: V6/V7 pairs, region forms,
-    pad cache states and pad separate expansions.
+    pad cache states, pad separate expansions, designator texts and SchDoc display modes.
 - **Other checks.**
   - `cargo check -p altium-format -p altium-format-spec -p altium-cli -p altium-format-query --tests`
     is clean.
@@ -194,12 +228,17 @@ the corpus tests above.
 | R6 | **incomplete** (silent layer fallbacks) | fixed: writer and reader errors, stack check, `LayerRef::is_*`, constants, species high byte. Re-review: complete with nits (PcbLib writer has the same fallback, open) |
 | R5 | complete with nits | fixed: spec apply sets Manual, changed rule value → Invalid, pad matching by unique id, bottom/hole-edge exposed, pad ExtendedPrimitiveInformation entries rejected |
 | R7 | complete with nits | fixed: wrong STATUS line, open contours closed, ISSHAPEBASED for new regions, unit test. Open: listed under gaps |
+| R8 | complete with nits | fixed: silent rename now an error, merge drops an old SOURCEDESIGNATOR, PrimitiveParameters header key, ebaz asserts. Open: Q6 |
+| R9 | **incomplete** (graphics lost their display mode) | fixed: display mode on every graphic, child check. Second review **incomplete** (spec loses modes; children unchecked against the count): count checked in both writers, SchLib count derived. Open: spec syntax (Q7) |
+| R10 | complete with nits | fixed: doc, test. Open: `update_sheet` re-mints ids of re-synthesized records (Q8) |
+| R11 | complete with nits | fixed: UTF-16 and non-text labels refused, keys before the first section are an error, doc. Open: CLI flag (Q9) |
 
 ## API breaks
 
 - **Struct literals.** These public structs gained fields, so struct literals of them break:
   Polygon, Track, Arc, Via, Pad (PcbDocPad), Fill, Text (PcbDocText), Region, ComponentBody,
-  PcbDocComponent, BoardSettings, and the PcbLib `Pad`.
+  PcbDocComponent, BoardSettings, the PcbLib `Pad`, SchDocComponent and all 13 schematic graphic
+  structs.
 - **Filled in this repo.** Literals were filled with defaults in
   - altium-format-spec: `executor.rs`, `reconciler.rs`, `dump.rs`;
   - altium-cli: `main.rs`, where footprint instantiation now also sets `component_index`;
@@ -213,7 +252,10 @@ the corpus tests above.
   - a malformed or repeated component unique id;
   - NoMask on a pad;
   - arcs where a section stores vertices only;
-  - an ExtendedPrimitiveInformation entry for a pad.
+  - an ExtendedPrimitiveInformation entry for a pad;
+  - a component designator that differs from what the record would store (R8);
+  - a schematic display mode outside the component's modes, for the component or a child (R9);
+  - a project key line before the first section header (R11).
 - **Signature change.** `PcbLib::add_footprint`/`update_footprint` keep their signatures, but
   their internal conversion is now fallible.
 - **Spec.** A spec pad with an explicit mask expansion is written Manual. Before, it was
@@ -254,6 +296,30 @@ the corpus tests above.
 5. **`AREATHRESHOLD` precision.** Altium stores it from an 80-bit Extended, and some values
    (e.g. `250015000224.999968`) lose their last digit through f64. Recommendation: accept this,
    as with every other Altium float this crate parses to f64. It is documented and tested.
+6. **R8: which designator is `designator`?** It stays SOURCEDESIGNATOR when present (the
+   behaviour ecadabra and the spec code rely on), the designator text only as a fallback. But
+   about 93 components (heron 71, tvws-agc 21, one test file) print a different designator on
+   the board than their SOURCEDESIGNATOR: the board text is what Altium shows on the PCB.
+   Recommendation: switch `designator` to the board designator text when exactly one exists
+   (keep `source_designator`), as a deliberate change with a spec check, in a follow-up.
+7. **R9: display modes in the spec language.** Dump writes no mode for pins or graphics and
+   apply builds everything in mode 0, so a dump→apply of a DeMorgan part collapses its modes
+   (pins already did before this lane). Recommendation: add `mode N { … }` blocks to the spec
+   grammar (a spec-lane task); until then the dump should refuse alternate-mode children.
+8. **R10: filler ids.** Fillers are reproducible now, but they are stored in the same `String`
+   as stored ids and `save` writes them; and `update_sheet` gives re-synthesized records
+   (Designator, SheetName/SheetFileName, Implementation, ImplementationMap,
+   HarnessConnectorType) a fresh random id on every write. Recommendation: carry the existing
+   ids through `update_sheet` next; expose `Option<String>` only if ecadabra needs to tell
+   filled ids from stored ones.
+9. **R11: Altium's code page.** A PrjPcb does not record its code page and AD26's project
+   reader could not be checked here, so the caller names it (`gbk` for the three GBK
+   projects). Recommendation: confirm on the dev machine whether AD26 reads non-BOM projects
+   with `GetACP()`; add an altium-cli `--code-page` flag if the CLI must open them.
+10. **Pre-existing BOM data loss.** The board reader never fills `PcbDocComponent::parameters`,
+    and the writer rebuilds PrimitiveParameters from them, so every `update_board` empties the
+    BOM section. Recommendation: read PrimitiveParameters into `parameters` before the next
+    writer change.
 
 ## What ecadabra's importer must change (per field)
 
@@ -278,6 +344,15 @@ the corpus tests above.
   `api.pad-expansion-mode`.
 - **R7.** Build region and keep-out shapes from `outline_contour`/`hole_contours` (arcs kept). Use
   `board_region` to recognise the board shape region.
+- **R8.** Read owners through `component_index` (ebaz4205 now has 565 distinct owners) and use
+  `designator`, which is no longer empty for components without SOURCEDESIGNATOR.
+- **R9.** Use `SchDocComponent::display_mode` to pick the placed mode, and keep only children
+  whose `owner_part_display_mode` (graphics and pins alike) equals it.
+- **R10.** Ids of records without a stored UniqueID are now stable across loads; no change
+  needed beyond dropping any workaround.
+- **R11.** Open the three GBK projects with
+  `AltiumProject::open_with_code_page(path, "gbk")`; `open` errors on non-UTF-8 files and says
+  so.
 
 ## Setup as it ran
 
@@ -285,6 +360,7 @@ the corpus tests above.
 - **Toolchain.** rustc 1.97.0 (2d8144b78 2026-07-07), cargo 1.97.0.
 - **Corpora.**
   - pcbdoc: cloned to `/tmp/corpus/pcbdoc` at `6bc5aa7`, linked as `data/pcbdoc`.
+  - schdoc: cloned to `/tmp/corpus/schdoc` at `6d0ff22`, linked as `data/schdoc` (R9, R10).
   - pcblib: cloned to `/tmp/corpus/pcblib` at `c5dfdc7`, linked as `data/pcblib` (`data/` is
     ignored; no corpus file is committed).
 - **Baseline.** A worktree of `18062d6` at `/tmp/base-18062d6`, with a probe crate under `/tmp/probe`
