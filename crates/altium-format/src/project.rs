@@ -131,6 +131,23 @@ fn decode_code_page(bytes: &[u8], code_page: &str) -> crate::Result<String> {
     };
     let encoding = encoding_rs::Encoding::for_label(code_page.as_bytes())
         .ok_or_else(|| error(format!("unknown code page label {code_page:?}")))?;
+    // Only legacy ANSI/DBCS code pages: UTF-8 is `open`, UTF-16 keeps a BOM
+    // that hides the first section header, and the others are not text code
+    // pages a project could be saved in.
+    let refused = [
+        encoding_rs::UTF_8,
+        encoding_rs::UTF_16LE,
+        encoding_rs::UTF_16BE,
+        encoding_rs::REPLACEMENT,
+        encoding_rs::X_USER_DEFINED,
+        encoding_rs::ISO_2022_JP,
+    ];
+    if refused.contains(&encoding) {
+        return Err(error(format!(
+            "code page {} is not a legacy ANSI code page a project is saved in",
+            encoding.name()
+        )));
+    }
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return Err(error(
             "the file starts with a UTF-8 BOM; open it as UTF-8".to_owned(),
@@ -181,8 +198,12 @@ impl AltiumProject {
 
     /// Open a project file saved in a legacy code page instead of UTF-8.
     ///
-    /// `code_page` is a WHATWG encoding label (`"gbk"`, `"gb18030"`,
-    /// `"shift_jis"`, `"windows-1252"`, …). A PrjPcb file does not record its
+    /// `code_page` is a WHATWG label of a legacy ANSI/DBCS code page (`"gbk"`,
+    /// `"gb18030"`, `"big5"`, `"shift_jis"`, `"euc-kr"`, `"windows-1252"`, …);
+    /// UTF-8, UTF-16 and non-text labels are refused. `"gbk"` uses the
+    /// GB18030 decoder (a superset of CP936). A single-byte code page such as
+    /// windows-1252 decodes any bytes, so naming the wrong one gives wrong
+    /// text without an error. A PrjPcb file does not record its
     /// code page (non-UTF-8 projects are in the Windows ANSI code page of the
     /// machine that saved them), so the caller has to know it; nothing is
     /// guessed. Decoding is strict: a byte sequence invalid in that code page is
@@ -261,7 +282,15 @@ impl AltiumProject {
                 let value = line[eq_pos + 1..].to_owned();
 
                 match &current_section {
-                    Section::None | Section::Unknown => {}
+                    // A key before the first section header (e.g. behind a BOM the
+                    // decoder kept) would otherwise vanish.
+                    Section::None => {
+                        return Err(crate::AltiumFormatError::InvalidParamValue {
+                            key: key.clone(),
+                            detail: "key line before the first [section] header".to_owned(),
+                        });
+                    }
+                    Section::Unknown => {}
                     Section::Design => {
                         design.insert(key, value);
                     }
@@ -564,6 +593,18 @@ mod tests {
         assert!(super::decode_code_page(&[b'A', 0x81], "gbk").is_err());
         assert!(super::decode_code_page(b"x", "no-such-code-page").is_err());
         assert!(super::decode_code_page(b"\xEF\xBB\xBFx", "gbk").is_err());
+        for refused in [
+            "utf-8",
+            "utf-16le",
+            "utf-16be",
+            "x-user-defined",
+            "iso-2022-jp",
+        ] {
+            assert!(
+                super::decode_code_page(b"[Design]", refused).is_err(),
+                "{refused}"
+            );
+        }
     }
 
     #[test]
