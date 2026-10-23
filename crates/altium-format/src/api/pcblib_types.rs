@@ -8,7 +8,7 @@ use super::pcb_common::{PadStack, PcbContour};
 use altium_format_types::color::Color;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    LayerRef, PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle, RegionKind,
+    LayerRef, MaskExpansionMode, PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle, RegionKind,
 };
 
 // ── Footprint ────────────────────────────────────────────────────────────────
@@ -47,8 +47,15 @@ pub struct Pad {
     pub is_plated: bool,
     pub layer: LayerRef,
     pub pad_mode: PadStackMode,
+    /// The manual expansion when `solder_mask_mode` is `Manual`, else the
+    /// cached rule value.
     pub solder_mask_expansion: Coord,
+    /// Same as `solder_mask_expansion`, for the paste mask.
     pub paste_mask_expansion: Coord,
+    /// `Manual` or `Rule` (from the pad's cache state); never `NoMask`.
+    pub solder_mask_mode: MaskExpansionMode,
+    /// `Manual` or `Rule` (from the pad's cache state); never `NoMask`.
+    pub paste_mask_mode: MaskExpansionMode,
     pub plane_connection: PlaneConnectionStyle,
     pub relief_conductor_width: Coord,
     pub relief_entries: i32,

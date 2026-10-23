@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use crate::AltiumFormatError;
 use crate::api::pcb_common::{
-    ContourSegment, PcbContour, contour_to_pcb_contour, extract_pad_stack,
+    ContourSegment, PcbContour, contour_to_pcb_contour, extract_pad_stack, mask_mode_from_cache,
 };
 use crate::api::pcbdoc_types::*;
 use crate::board_config::PcbBoardConfig;
@@ -1617,6 +1617,8 @@ fn pad_from_internal(idx: usize, p: &PcbPad, ctx: &ConvertContext) -> Result<Pad
         pad_mode: p.pad_mode,
         solder_mask_expansion: p.cache.solder_mask_expansion,
         paste_mask_expansion: p.cache.paste_mask_expansion,
+        solder_mask_mode: mask_mode_from_cache(p.cache.solder_mask_expansion_valid),
+        paste_mask_mode: mask_mode_from_cache(p.cache.paste_mask_expansion_valid),
         plane_connection: p.cache.plane_connection_style,
         relief_conductor_width: p.cache.relief_conductor_width,
         relief_entries: p.cache.relief_entries as i32,

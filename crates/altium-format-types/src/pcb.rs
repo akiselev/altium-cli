@@ -1589,6 +1589,31 @@ impl TryFrom<u8> for TCacheState {
     }
 }
 
+impl TCacheState {
+    /// The mask expansion mode a pad's solder/paste cache state stands for:
+    /// `Manual` is a manual expansion; `Valid` (cached rule value) and
+    /// `Invalid` (not yet computed) mean the expansion comes from the rule.
+    pub fn mask_expansion_mode(self) -> MaskExpansionMode {
+        match self {
+            Self::Manual => MaskExpansionMode::Manual,
+            Self::Valid | Self::Invalid => MaskExpansionMode::Rule,
+        }
+    }
+}
+
+impl MaskExpansionMode {
+    /// The pad cache state to store for this mode: `Manual`, or `Invalid`
+    /// (recompute from the rule) for `Rule`; `None` for `NoMask`, which a pad
+    /// cache cannot express.
+    pub fn pad_cache_state(self) -> Option<TCacheState> {
+        match self {
+            Self::Manual => Some(TCacheState::Manual),
+            Self::Rule => Some(TCacheState::Invalid),
+            Self::NoMask => None,
+        }
+    }
+}
+
 /// Tenting mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]

@@ -7,7 +7,44 @@
 use crate::pcblib::{Contour, PcbPad, PolySegment};
 use altium_format_types::PolySegmentKind;
 use altium_format_types::coord::{Coord, CoordPoint};
-use altium_format_types::pcb::{HoleType, PadShape};
+use altium_format_types::pcb::{HoleType, MaskExpansionMode, PadShape, TCacheState};
+
+// ── Pad mask expansion modes ─────────────────────────────────────────────────
+
+/// A pad's solder/paste mask expansion mode from its cache state: `Manual`
+/// is a manual expansion; `Valid` (cached rule value) and `Invalid` (not yet
+/// computed) both mean the expansion comes from the design rule. Pads store
+/// no "no mask" state; the test corpora have no ExtendedPrimitiveInformation
+/// entries for pads (PcbDoc 94 boards, PcbLib 40 libraries).
+pub(crate) fn mask_mode_from_cache(state: TCacheState) -> MaskExpansionMode {
+    state.mask_expansion_mode()
+}
+
+/// The cache state to write for a pad's mask expansion mode: `Manual` for a
+/// manual expansion, `Invalid` (recompute from the rule) for `Rule`. A pad
+/// cannot store `NoMask`, so that is an error.
+pub(crate) fn mask_cache_state_for_write(
+    key: &str,
+    mode: MaskExpansionMode,
+) -> crate::Result<TCacheState> {
+    mode.pad_cache_state()
+        .ok_or_else(|| crate::AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("a pad cannot store mask expansion mode {mode:?}"),
+        })
+}
+
+/// Merge the written cache state with the old record's: the API mode decides
+/// Manual vs rule; for a rule-driven pad the old Valid/Invalid state is kept.
+pub(crate) fn merge_mask_cache_state(new: TCacheState, old: TCacheState) -> TCacheState {
+    if new == TCacheState::Manual {
+        TCacheState::Manual
+    } else if old == TCacheState::Manual {
+        TCacheState::Invalid
+    } else {
+        old
+    }
+}
 
 // ── Contour types ─────────────────────────────────────────────────────────────
 
@@ -270,5 +307,56 @@ pub(crate) fn pcb_contour_to_internal(contour: &PcbContour) -> Contour {
             })
             .collect();
         Contour::Legacy(pts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pad_mask_modes_and_cache_states() {
+        assert_eq!(
+            mask_mode_from_cache(TCacheState::Manual),
+            MaskExpansionMode::Manual
+        );
+        assert_eq!(
+            mask_mode_from_cache(TCacheState::Valid),
+            MaskExpansionMode::Rule
+        );
+        assert_eq!(
+            mask_mode_from_cache(TCacheState::Invalid),
+            MaskExpansionMode::Rule
+        );
+        assert_eq!(
+            mask_cache_state_for_write("K", MaskExpansionMode::Manual).unwrap(),
+            TCacheState::Manual
+        );
+        assert_eq!(
+            mask_cache_state_for_write("K", MaskExpansionMode::Rule).unwrap(),
+            TCacheState::Invalid
+        );
+        assert!(mask_cache_state_for_write("K", MaskExpansionMode::NoMask).is_err());
+        // The API mode decides Manual vs rule; a rule pad keeps Valid/Invalid.
+        for (new, old, merged) in [
+            (TCacheState::Manual, TCacheState::Valid, TCacheState::Manual),
+            (
+                TCacheState::Invalid,
+                TCacheState::Manual,
+                TCacheState::Invalid,
+            ),
+            (TCacheState::Invalid, TCacheState::Valid, TCacheState::Valid),
+            (
+                TCacheState::Invalid,
+                TCacheState::Invalid,
+                TCacheState::Invalid,
+            ),
+        ] {
+            assert_eq!(
+                merge_mask_cache_state(new, old),
+                merged,
+                "{new:?} over {old:?}"
+            );
+        }
     }
 }

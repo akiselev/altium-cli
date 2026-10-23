@@ -714,7 +714,8 @@ impl PcbLib {
         let description = fp.description.clone();
         let name = fp.display_name.clone();
 
-        let internal = crate::api::pcblib_write::footprint_to_internal(&fp, &cfb_key);
+        let internal = crate::api::pcblib_write::footprint_to_internal(&fp, &cfb_key)
+            .with_context(|| format!("adding footprint '{}'", fp.display_name))?;
         self.footprints.push(internal);
 
         self.component_toc.push(PcbLibComponentTocEntry {
@@ -744,7 +745,8 @@ impl PcbLib {
             })?;
 
         let existing = &self.footprints[idx];
-        let updated = crate::api::pcblib_write::update_footprint_internal(fp, existing);
+        let updated = crate::api::pcblib_write::update_footprint_internal(fp, existing)
+            .with_context(|| format!("updating footprint '{}'", fp.display_name))?;
 
         // Update TOC entry
         if let Some(toc) = self
@@ -2235,6 +2237,8 @@ mod tests {
                 pad_mode: PadStackMode::Simple,
                 solder_mask_expansion: Coord::ZERO,
                 paste_mask_expansion: Coord::ZERO,
+                solder_mask_mode: altium_format_types::pcb::MaskExpansionMode::Rule,
+                paste_mask_mode: altium_format_types::pcb::MaskExpansionMode::Rule,
                 plane_connection: PlaneConnectionStyle::default(),
                 relief_conductor_width: Coord::ZERO,
                 relief_entries: 4,
@@ -2317,6 +2321,8 @@ mod tests {
             pad_mode: PadStackMode::Simple,
             solder_mask_expansion: Coord::ZERO,
             paste_mask_expansion: Coord::ZERO,
+            solder_mask_mode: altium_format_types::pcb::MaskExpansionMode::Rule,
+            paste_mask_mode: altium_format_types::pcb::MaskExpansionMode::Rule,
             plane_connection: PlaneConnectionStyle::default(),
             relief_conductor_width: Coord::ZERO,
             relief_entries: 4,

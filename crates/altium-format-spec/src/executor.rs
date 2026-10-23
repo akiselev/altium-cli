@@ -1643,6 +1643,13 @@ fn resolve_layer_spec_opt(spec: &Option<LayerSpec>, default: V6Layer) -> LayerRe
     }
 }
 
+fn mask_mode_for(expansion: Option<Coord>) -> altium_format_types::pcb::MaskExpansionMode {
+    match expansion {
+        Some(_) => altium_format_types::pcb::MaskExpansionMode::Manual,
+        None => altium_format_types::pcb::MaskExpansionMode::Rule,
+    }
+}
+
 fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
     let shape = spec.shape.unwrap_or(PadShape::Rectangular);
     let x_size = spec
@@ -1665,6 +1672,9 @@ fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
         pad_mode: spec.pad_mode.unwrap_or_default(),
         solder_mask_expansion: spec.solder_mask_expansion.unwrap_or(Coord::ZERO),
         paste_mask_expansion: spec.paste_mask_expansion.unwrap_or(Coord::ZERO),
+        // A spec that states an expansion sets it manually; otherwise the rule applies.
+        solder_mask_mode: mask_mode_for(spec.solder_mask_expansion),
+        paste_mask_mode: mask_mode_for(spec.paste_mask_expansion),
         plane_connection: spec.plane_connection.unwrap_or_default(),
         relief_conductor_width: spec.relief_conductor_width.unwrap_or(Coord::ZERO),
         relief_entries: spec.relief_entries.unwrap_or(4),

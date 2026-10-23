@@ -1,6 +1,6 @@
 //! Read path: convert internal PcbLib types → public API types.
 
-use crate::api::pcb_common::{contour_to_pcb_contour, extract_pad_stack};
+use crate::api::pcb_common::{contour_to_pcb_contour, extract_pad_stack, mask_mode_from_cache};
 use crate::api::pcblib_types::*;
 use crate::pcblib::{
     PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPrimitive, PcbRegion, PcbText,
@@ -69,6 +69,8 @@ fn pad_from_internal(p: &PcbPad) -> Pad {
         pad_mode: p.pad_mode,
         solder_mask_expansion: p.cache.solder_mask_expansion,
         paste_mask_expansion: p.cache.paste_mask_expansion,
+        solder_mask_mode: mask_mode_from_cache(p.cache.solder_mask_expansion_valid),
+        paste_mask_mode: mask_mode_from_cache(p.cache.paste_mask_expansion_valid),
         plane_connection: p.cache.plane_connection_style,
         relief_conductor_width: p.cache.relief_conductor_width,
         relief_entries: p.cache.relief_entries as i32,
@@ -186,5 +188,93 @@ fn body_from_internal(b: &PcbComponentBody) -> ComponentBodyGraphic {
         body_opacity_3d: b.body_opacity_3d,
         model_name: b.model_name.clone(),
         outline: contour_to_pcb_contour(&b.outline),
+    }
+}
+
+/// R5 corpus check on akiselev/altium-cli-test-pcblib `c5dfdc7` (`data/pcblib`).
+#[cfg(all(test, feature = "test-fixtures"))]
+mod corpus_tests {
+    use crate::pcblib::{PcbLib, PcbPrimitive};
+    use altium_format_types::PcbObjectId;
+    use altium_format_types::pcb::{MaskExpansionMode, TCacheState};
+    use std::path::Path;
+
+    /// Pad modes come from the cache states (no corpus pad has an
+    /// ExtendedPrimitiveInformation entry), and `update_footprint` with the
+    /// footprint read back keeps every pad's cache states.
+    #[test]
+    fn corpus_r5_pcblib_pad_modes() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/pcblib");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+            .map(|e| e.expect("dir entry").path())
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("pcblib"))
+            })
+            .collect();
+        paths.sort();
+        let (mut libs, mut pads, mut solder_manual, mut paste_manual) = (0, 0, 0, 0);
+        for path in &paths {
+            let mut lib = PcbLib::open(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            libs += 1;
+            let states = |lib: &PcbLib| -> Vec<(TCacheState, TCacheState)> {
+                lib.footprints
+                    .iter()
+                    .flat_map(|fp| fp.primitives.iter())
+                    .filter_map(|p| match p {
+                        PcbPrimitive::Pad(p) => Some((
+                            p.cache.solder_mask_expansion_valid,
+                            p.cache.paste_mask_expansion_valid,
+                        )),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            for fp in &lib.footprints {
+                assert!(
+                    fp.extended_primitive_info
+                        .iter()
+                        .all(|e| e.primitive_object_id != PcbObjectId::Pad),
+                    "{}: pad ExtendedPrimitiveInformation entry",
+                    fp.display_name
+                );
+            }
+            let before = states(&lib);
+            let footprints = lib.footprints();
+            let api_pads: Vec<_> = footprints.iter().flat_map(|f| f.pads.iter()).collect();
+            assert_eq!(api_pads.len(), before.len());
+            for (p, (solder, paste)) in api_pads.iter().zip(&before) {
+                pads += 1;
+                assert_eq!(
+                    p.solder_mask_mode == MaskExpansionMode::Manual,
+                    *solder == TCacheState::Manual
+                );
+                assert_eq!(
+                    p.paste_mask_mode == MaskExpansionMode::Manual,
+                    *paste == TCacheState::Manual
+                );
+                solder_manual += usize::from(p.solder_mask_mode == MaskExpansionMode::Manual);
+                paste_manual += usize::from(p.paste_mask_mode == MaskExpansionMode::Manual);
+            }
+            for fp in &footprints {
+                lib.update_footprint(fp)
+                    .unwrap_or_else(|e| panic!("{}: {}: {e}", path.display(), fp.display_name));
+            }
+            assert_eq!(
+                states(&lib),
+                before,
+                "{}: pad cache states changed",
+                path.display()
+            );
+        }
+        eprintln!(
+            "corpus_r5_pcblib_pad_modes: {libs} libraries, {pads} pads, {solder_manual} manual \
+             solder mask, {paste_manual} manual paste mask"
+        );
+        assert_eq!(libs, 40);
+        assert_eq!(pads, 80_866);
+        assert_eq!(solder_manual, 19_844);
+        assert_eq!(paste_manual, 5_954);
     }
 }

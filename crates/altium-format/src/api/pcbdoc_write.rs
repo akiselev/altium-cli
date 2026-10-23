@@ -16,7 +16,9 @@ use altium_format_types::pcb::{
 };
 use altium_format_types::{BarcodeKind, PcbObjectId};
 
-use crate::api::pcb_common::{ContourSegment, PcbContour};
+use crate::api::pcb_common::{
+    ContourSegment, PcbContour, mask_cache_state_for_write, merge_mask_cache_state,
+};
 use crate::api::pcbdoc_read::{
     hatch_style_to_param_value, layer_to_param_value, polygon_type_to_param_value,
     strip_param_contour, validate_unique_id,
@@ -1010,8 +1012,16 @@ fn build_pad_records(pads: &[Pad], ctx: &WriteContext) -> Result<Vec<ParsedPrimi
                         relief_entries_valid: TCacheState::Valid,
                         relief_air_gap_valid: TCacheState::Valid,
                         power_plane_relief_expansion_valid: TCacheState::default(),
-                        paste_mask_expansion_valid: TCacheState::Valid,
-                        solder_mask_expansion_valid: TCacheState::Valid,
+                        paste_mask_expansion_valid: mask_cache_state_for_write(
+                            "PASTEMASKEXPANSIONMODE",
+                            p.paste_mask_mode,
+                        )
+                        .with_context(|| format!("pad {}", p.id))?,
+                        solder_mask_expansion_valid: mask_cache_state_for_write(
+                            "SOLDERMASKEXPANSIONMODE",
+                            p.solder_mask_mode,
+                        )
+                        .with_context(|| format!("pad {}", p.id))?,
                         power_plane_clearance_valid: TCacheState::default(),
                         planes_valid: TCacheState::default(),
                     },
@@ -1404,8 +1414,14 @@ fn preserve_pad_fields(new: &mut PcbPad, old: &PcbPad) {
     new.cache.relief_entries_valid = old.cache.relief_entries_valid;
     new.cache.relief_air_gap_valid = old.cache.relief_air_gap_valid;
     new.cache.power_plane_relief_expansion_valid = old.cache.power_plane_relief_expansion_valid;
-    new.cache.paste_mask_expansion_valid = old.cache.paste_mask_expansion_valid;
-    new.cache.solder_mask_expansion_valid = old.cache.solder_mask_expansion_valid;
+    new.cache.paste_mask_expansion_valid = merge_mask_cache_state(
+        new.cache.paste_mask_expansion_valid,
+        old.cache.paste_mask_expansion_valid,
+    );
+    new.cache.solder_mask_expansion_valid = merge_mask_cache_state(
+        new.cache.solder_mask_expansion_valid,
+        old.cache.solder_mask_expansion_valid,
+    );
     new.cache.power_plane_clearance_valid = old.cache.power_plane_clearance_valid;
     new.cache.planes_valid = old.cache.planes_valid;
     new.selection_memory_flags = old.selection_memory_flags;

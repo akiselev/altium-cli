@@ -1428,6 +1428,8 @@ fn instantiate_footprint_primitives(
                     pad_mode: fp_pad.pad_mode,
                     solder_mask_expansion: fp_pad.solder_mask_expansion,
                     paste_mask_expansion: fp_pad.paste_mask_expansion,
+                    solder_mask_mode: fp_pad.solder_mask_mode,
+                    paste_mask_mode: fp_pad.paste_mask_mode,
                     plane_connection: fp_pad.plane_connection,
                     relief_conductor_width: fp_pad.relief_conductor_width,
                     relief_entries: fp_pad.relief_entries,

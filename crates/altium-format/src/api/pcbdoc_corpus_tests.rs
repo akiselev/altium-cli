@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use super::*;
+use altium_format_types::pcb::TCacheState;
 
 /// CFB PcbDocs in `data/pcbdoc` that `PcbDoc::open` reads (ASCII PcbDocs and
 /// the CFB files `open` rejects are not part of these checks).
@@ -527,6 +528,67 @@ fn corpus_r6_layer_identity() {
     eprintln!(
         "corpus_r6_layer_identity: {pairs} V6/V7 layer pairs ({full_form} in full V7 form), \
          {stack_layers} stack copper layers; {boards_round_tripped} boards written and re-read"
+    );
+    assert_eq!(boards_round_tripped, 79);
+}
+
+/// R5: pad mask expansion modes on every corpus board come from the pad cache
+/// states, and survive `update_board` → `board()` (with the cache states
+/// themselves unchanged).
+#[test]
+fn corpus_r5_pad_modes() {
+    use altium_format_types::pcb::MaskExpansionMode;
+    let (mut pads, mut solder_manual, mut paste_manual, mut boards_round_tripped) = (0, 0, 0, 0);
+    for (name, mut doc) in corpus_docs() {
+        let states = |doc: &PcbDoc| -> Vec<(TCacheState, TCacheState)> {
+            doc.sections
+                .iter()
+                .filter_map(|s| match s {
+                    PcbDocSection::Primitive(p) if p.kind == PrimitiveSectionKind::Pads6 => Some(p),
+                    _ => None,
+                })
+                .flat_map(|p| p.records.iter())
+                .filter_map(|r| match &r.primitive {
+                    PcbPrimitive::Pad(p) => Some((
+                        p.cache.solder_mask_expansion_valid,
+                        p.cache.paste_mask_expansion_valid,
+                    )),
+                    _ => None,
+                })
+                .collect()
+        };
+        let before_states = states(&doc);
+        let Ok(board) = doc.board() else {
+            assert!(BOARDS_FAILING_AT_BASE.contains(&name.as_str()), "{name}");
+            continue;
+        };
+        assert_eq!(board.pads.len(), before_states.len(), "{name}");
+        for (p, (solder, paste)) in board.pads.iter().zip(&before_states) {
+            pads += 1;
+            assert_eq!(
+                p.solder_mask_mode == MaskExpansionMode::Manual,
+                *solder == TCacheState::Manual
+            );
+            assert_eq!(
+                p.paste_mask_mode == MaskExpansionMode::Manual,
+                *paste == TCacheState::Manual
+            );
+            assert_ne!(p.solder_mask_mode, MaskExpansionMode::NoMask);
+            solder_manual += usize::from(p.solder_mask_mode == MaskExpansionMode::Manual);
+            paste_manual += usize::from(p.paste_mask_mode == MaskExpansionMode::Manual);
+        }
+        doc.update_board(&board)
+            .unwrap_or_else(|e| panic!("{name}: update_board: {e}"));
+        assert_eq!(
+            states(&doc),
+            before_states,
+            "{name}: pad cache states changed"
+        );
+        boards_round_tripped += 1;
+    }
+    eprintln!(
+        "corpus_r5_pad_modes: {pads} pads on readable boards, {solder_manual} manual solder \
+         mask, {paste_manual} manual paste mask; {boards_round_tripped} boards written"
     );
     assert_eq!(boards_round_tripped, 79);
 }

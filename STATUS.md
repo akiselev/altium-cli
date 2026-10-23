@@ -566,6 +566,12 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   (was NoLayer; via layers were TopLayer/BottomLayer). The reader rejects a Track/Arc/Fill whose
   stored V6 and V7 layers disagree, and a stack copper id it cannot map. `LayerRef::is_signal`
   and friends now see full V7 ids.
+- Pad expansion modes (R5): `solder_mask_mode` / `paste_mask_mode` (`MaskExpansionMode`, Manual
+  or Rule from the pad cache state; no corpus pad has an ExtendedPrimitiveInformation entry) on
+  PcbDoc and PcbLib pads. Writers store the mode (Manual, or the old Valid/Invalid state for a
+  rule pad; NoMask is an error); before, both writers wrote Valid or the old record's state.
+  PcbLib `update_footprint` matches repeated pad names by occurrence (was always the first).
+  Known gap: the PcbLib writer still writes NoLayer / Top / Bottom for layers without a V6 form.
 - Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
   boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
 

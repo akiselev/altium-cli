@@ -1,12 +1,15 @@
 //! Write path: convert public API types → internal PcbLib types.
 
-use crate::api::pcb_common::pcb_contour_to_internal;
+use crate::api::pcb_common::{
+    mask_cache_state_for_write, merge_mask_cache_state, pcb_contour_to_internal,
+};
 use crate::api::pcblib_types::*;
 use crate::pcblib::{
     PcbArc, PcbComponentBody, PcbFill, PcbFootprint, PcbPad, PcbPadCache, PcbPadStackData,
     PcbPrimitive, PcbPrimitiveCommon, PcbRegion, PcbText, PcbTrack, PcbVia,
 };
 use crate::util::generate_unique_id;
+use crate::{Result, ResultExt};
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
     BarcodeRenderMode, DaisyChainStyle, HoleType, LayerRef, MaskExpansionState, PadShape,
@@ -27,11 +30,13 @@ fn default_primitive_common(layer: &LayerRef, flags: PcbFlags) -> PcbPrimitiveCo
 }
 
 /// Convert a public `Footprint` to a fresh internal `PcbFootprint`.
-pub(crate) fn footprint_to_internal(fp: &Footprint, cfb_key: &str) -> PcbFootprint {
+pub(crate) fn footprint_to_internal(fp: &Footprint, cfb_key: &str) -> Result<PcbFootprint> {
     let mut primitives: Vec<PcbPrimitive> = Vec::new();
 
     for pad in &fp.pads {
-        primitives.push(PcbPrimitive::Pad(pad_to_internal(pad)));
+        primitives.push(PcbPrimitive::Pad(
+            pad_to_internal(pad).with_context(|| format!("pad {}", pad.pad_name))?,
+        ));
     }
 
     for graphic in &fp.graphics {
@@ -48,7 +53,7 @@ pub(crate) fn footprint_to_internal(fp: &Footprint, cfb_key: &str) -> PcbFootpri
         }
     }
 
-    PcbFootprint {
+    Ok(PcbFootprint {
         display_name: fp.display_name.clone(),
         cfb_key: cfb_key.to_owned(),
         pattern: fp.pattern.clone(),
@@ -64,7 +69,7 @@ pub(crate) fn footprint_to_internal(fp: &Footprint, cfb_key: &str) -> PcbFootpri
         custom_mask_shapes: Vec::new(),
         corner_radius_chamfer: Vec::new(),
         shared_unions: Vec::new(),
-    }
+    })
 }
 
 /// Rebuild internal representation from a `Footprint`, preserving format-internal fields
@@ -74,8 +79,11 @@ pub(crate) fn footprint_to_internal(fp: &Footprint, cfb_key: &str) -> PcbFootpri
 /// - Graphics matched by `unique_id`: format-internal fields copied from existing.
 /// - Existing `ComponentBody` primitives are preserved unchanged.
 /// - Footprint-level format fields are copied from existing.
-pub(crate) fn update_footprint_internal(fp: &Footprint, existing: &PcbFootprint) -> PcbFootprint {
-    let mut updated = footprint_to_internal(fp, &existing.cfb_key);
+pub(crate) fn update_footprint_internal(
+    fp: &Footprint,
+    existing: &PcbFootprint,
+) -> Result<PcbFootprint> {
+    let mut updated = footprint_to_internal(fp, &existing.cfb_key)?;
 
     // Preserve footprint-level format-internal fields
     updated.item_guid = existing.item_guid.clone();
@@ -88,17 +96,24 @@ pub(crate) fn update_footprint_internal(fp: &Footprint, existing: &PcbFootprint)
     updated.corner_radius_chamfer = existing.corner_radius_chamfer.clone();
     updated.shared_unions = existing.shared_unions.clone();
 
-    // Patch pads: match by pad_name and copy format-internal fields
+    // Patch pads: match the n-th pad named X with the n-th existing pad named X
+    // (pad names repeat, e.g. several "0" thermal pads; matching only the first
+    // copied one pad's internal fields onto all of them) and copy
+    // format-internal fields.
+    let mut seen_names: std::collections::HashMap<String, usize> = Default::default();
     for prim in &mut updated.primitives {
         if let PcbPrimitive::Pad(new_pad) = prim {
-            let existing_pad = existing.primitives.iter().find_map(|p| {
-                if let PcbPrimitive::Pad(ep) = p {
-                    if ep.pad_name == new_pad.pad_name {
-                        return Some(ep);
-                    }
-                }
-                None
-            });
+            let occurrence = seen_names.entry(new_pad.pad_name.clone()).or_default();
+            let nth = *occurrence;
+            *occurrence += 1;
+            let existing_pad = existing
+                .primitives
+                .iter()
+                .filter_map(|p| match p {
+                    PcbPrimitive::Pad(ep) if ep.pad_name == new_pad.pad_name => Some(ep),
+                    _ => None,
+                })
+                .nth(nth);
 
             if let Some(ep) = existing_pad {
                 new_pad.unknown_sub1 = ep.unknown_sub1.clone();
@@ -113,8 +128,14 @@ pub(crate) fn update_footprint_internal(fp: &Footprint, existing: &PcbFootprint)
                 new_pad.cache.relief_air_gap_valid = ep.cache.relief_air_gap_valid;
                 new_pad.cache.power_plane_relief_expansion_valid =
                     ep.cache.power_plane_relief_expansion_valid;
-                new_pad.cache.paste_mask_expansion_valid = ep.cache.paste_mask_expansion_valid;
-                new_pad.cache.solder_mask_expansion_valid = ep.cache.solder_mask_expansion_valid;
+                new_pad.cache.paste_mask_expansion_valid = merge_mask_cache_state(
+                    new_pad.cache.paste_mask_expansion_valid,
+                    ep.cache.paste_mask_expansion_valid,
+                );
+                new_pad.cache.solder_mask_expansion_valid = merge_mask_cache_state(
+                    new_pad.cache.solder_mask_expansion_valid,
+                    ep.cache.solder_mask_expansion_valid,
+                );
                 new_pad.cache.power_plane_clearance_valid = ep.cache.power_plane_clearance_valid;
                 new_pad.cache.planes_valid = ep.cache.planes_valid;
                 new_pad.selection_memory_flags = ep.selection_memory_flags;
@@ -232,11 +253,11 @@ pub(crate) fn update_footprint_internal(fp: &Footprint, existing: &PcbFootprint)
         }
     }
 
-    updated
+    Ok(updated)
 }
 
-fn pad_to_internal(pad: &Pad) -> PcbPad {
-    PcbPad {
+fn pad_to_internal(pad: &Pad) -> Result<PcbPad> {
+    Ok(PcbPad {
         common: default_primitive_common(&pad.layer, PcbFlags::default()),
         pad_name: pad.pad_name.clone(),
         unknown_sub1: String::new(),
@@ -270,8 +291,14 @@ fn pad_to_internal(pad: &Pad) -> PcbPad {
             relief_entries_valid: TCacheState::Valid,
             relief_air_gap_valid: TCacheState::Valid,
             power_plane_relief_expansion_valid: TCacheState::default(),
-            paste_mask_expansion_valid: TCacheState::Valid,
-            solder_mask_expansion_valid: TCacheState::Valid,
+            paste_mask_expansion_valid: mask_cache_state_for_write(
+                "PASTEMASKEXPANSIONMODE",
+                pad.paste_mask_mode,
+            )?,
+            solder_mask_expansion_valid: mask_cache_state_for_write(
+                "SOLDERMASKEXPANSIONMODE",
+                pad.solder_mask_mode,
+            )?,
             power_plane_clearance_valid: TCacheState::default(),
             planes_valid: TCacheState::default(),
         },
@@ -295,7 +322,7 @@ fn pad_to_internal(pad: &Pad) -> PcbPad {
         thermal_reliefs: Vec::new(),
         stack_data: stack_data_from_api(&pad.stack),
         unique_id: pad.unique_id.clone(),
-    }
+    })
 }
 
 /// Synthesize the per-layer stack subrecord from the API pad stack.

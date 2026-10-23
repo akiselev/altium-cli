@@ -17,7 +17,7 @@ use altium_format_types::pcb::{
     FanoutDirection, FanoutStyle, NetTopology, PolygonReliefAngle, RouteVia,
 };
 use altium_format_types::pcb::{
-    ClassMemberKind, DimensionKind, LayerRef, PadShape, PadStackMode, PcbFlags,
+    ClassMemberKind, DimensionKind, LayerRef, MaskExpansionMode, PadShape, PadStackMode, PcbFlags,
     PlaneConnectionStyle, PolyHatchStyle, PolygonType, RegionKind, RuleKind,
 };
 use altium_format_types::{
@@ -652,8 +652,15 @@ pub struct Pad {
     pub hole_size: Coord,
     pub is_plated: bool,
     pub pad_mode: PadStackMode,
+    /// The manual expansion when `solder_mask_mode` is `Manual`, else the
+    /// cached rule value (stale until Altium recomputes it).
     pub solder_mask_expansion: Coord,
+    /// Same as `solder_mask_expansion`, for the paste mask.
     pub paste_mask_expansion: Coord,
+    /// `Manual` or `Rule` (from the pad's cache state); never `NoMask`.
+    pub solder_mask_mode: MaskExpansionMode,
+    /// `Manual` or `Rule` (from the pad's cache state); never `NoMask`.
+    pub paste_mask_mode: MaskExpansionMode,
     pub plane_connection: PlaneConnectionStyle,
     pub relief_conductor_width: Coord,
     pub relief_entries: i32,
