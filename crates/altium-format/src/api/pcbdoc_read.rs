@@ -1590,3 +1590,240 @@ pub(crate) fn layer_to_param_value(key: &str, layer: &LayerRef) -> Result<String
         _ => v6.to_string_name().to_ascii_uppercase(),
     })
 }
+
+/// Test hook for the writer's round-trip tests: convert one Polygons6 record
+/// against the given Nets6 names.
+#[cfg(test)]
+pub(crate) fn convert_polygon_for_test(
+    record: &ParameterCollection,
+    net_names: &[&str],
+) -> Result<Polygon> {
+    let ctx = ConvertContext {
+        net_names: net_names.iter().map(|n| (*n).to_owned()).collect(),
+        component_designators: Vec::new(),
+        wide_strings: Vec::new(),
+    };
+    convert_polygon(0, record, &ctx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::param_value::FromParamValue;
+
+    /// A Polygons6 record as stored by Altium (artiq-kasli, shortened to four
+    /// vertices; vertex 1 carries an arc from the corpus).
+    const POLYGON_RECORD: &str = "|SELECTION=FALSE|LAYER=MID1|LOCKED=FALSE|POLYGONOUTLINE=FALSE\
+        |USERROUTED=TRUE|KEEPOUT=FALSE|UNIONINDEX=0|PRIMITIVELOCK=TRUE|POLYGONTYPE=Polygon\
+        |POUROVER=TRUE|REMOVEDEAD=TRUE|GRIDSIZE=19.685mil|TRACKWIDTH=8mil|HATCHSTYLE=Solid\
+        |USEOCTAGONS=FALSE|MINPRIMLENGTH=3mil\
+        |KIND0=0|VX0=7250.904mil|VY0=6378.6mil|CX0=0mil|CY0=0mil\
+        |SA0= 0.00000000000000E+0000|EA0= 0.00000000000000E+0000|R0=0mil\
+        |KIND1=1|VX1=7406.376mil|VY1=6534.072mil|CX1=7250.904mil|CY1=6534.072mil\
+        |SA1= 0.00000000000000E+0000|EA1= 9.00000000000000E+0001|R1=155.472mil\
+        |KIND2=0|VX2=7250.904mil|VY2=6689.544mil|CX2=0mil|CY2=0mil\
+        |SA2= 0.00000000000000E+0000|EA2= 0.00000000000000E+0000|R2=0mil\
+        |KIND3=0|VX3=7250.904mil|VY3=6378.6mil|CX3=0mil|CY3=0mil\
+        |SA3= 0.00000000000000E+0000|EA3= 0.00000000000000E+0000|R3=0mil\
+        |SHELVED=FALSE|RESTORELAYER=UNKNOWN|RESTORENET=P2V5|REMOVEISLANDSBYAREA=TRUE\
+        |REMOVENECKS=TRUE|AREATHRESHOLD=250015000224.999968|ARCRESOLUTION=0.5mil\
+        |NECKWIDTHTHRESHOLD=5mil|POUROVERSTYLE=1|NAME=80,50,86,53|POURINDEX=365\
+        |IGNOREVIOLATIONS=FALSE|AUTONAME=TRUE|NET=1|";
+
+    fn ctx() -> ConvertContext {
+        ConvertContext {
+            net_names: vec!["GND".to_owned(), "P2V5".to_owned()],
+            component_designators: Vec::new(),
+            wide_strings: Vec::new(),
+        }
+    }
+
+    fn params(text: &str) -> ParameterCollection {
+        ParameterCollection::from_str(text).unwrap()
+    }
+
+    fn mil(text: &str) -> Coord {
+        ExactMilCoord::from_param_value("test", text).unwrap().0
+    }
+
+    #[test]
+    fn convert_polygon_reads_every_stored_key() {
+        let poly = convert_polygon(0, &params(POLYGON_RECORD), &ctx()).unwrap();
+        assert_eq!(poly.name, "P2V5");
+        assert_eq!(poly.id, "P2V5");
+        assert_eq!(poly.net.as_deref(), Some("P2V5"));
+        assert_eq!(poly.layer, LayerRef::from_v6(V6Layer::MidLayer1));
+        assert_eq!(poly.polygon_type, PolygonType::SignalLayer);
+        assert_eq!(poly.hatch_style, Some(PolyHatchStyle::Solid));
+        assert_eq!(poly.pour_order, 365);
+        assert_eq!(poly.grid_size, Some(mil("19.685mil")));
+        assert_eq!(poly.track_width, Some(mil("8mil")));
+        assert_eq!(poly.min_prim_length, Some(mil("3mil")));
+        assert_eq!(poly.arc_approximation, Some(mil("0.5mil")));
+        assert_eq!(poly.neck_width_threshold, Some(mil("5mil")));
+        assert_eq!(poly.restore_layer, None);
+        assert_eq!(poly.restore_net.as_deref(), Some("P2V5"));
+        assert_eq!(poly.pour_over_style, Some(1));
+        assert_eq!(
+            poly.area_threshold,
+            Some("250015000224.999968".parse().unwrap())
+        );
+        assert_eq!(poly.remove_dead, Some(true));
+        assert_eq!(poly.use_octagons, Some(false));
+        assert_eq!(poly.auto_name, Some(true));
+        assert!(poly.primitive_lock && poly.user_routed && !poly.locked && !poly.keepout);
+        assert_eq!(poly.contour.segments.len(), 4);
+        assert_eq!(poly.vertices.len(), 4);
+        match &poly.contour.segments[1] {
+            ContourSegment::Arc {
+                endpoint,
+                center,
+                radius,
+                start_angle,
+                end_angle,
+            } => {
+                assert_eq!(
+                    *endpoint,
+                    CoordPoint::new(mil("7406.376mil"), mil("6534.072mil"))
+                );
+                assert_eq!(
+                    *center,
+                    CoordPoint::new(mil("7250.904mil"), mil("6534.072mil"))
+                );
+                assert_eq!(*radius, mil("155.472mil"));
+                assert_eq!((*start_angle, *end_angle), (0.0, 90.0));
+            }
+            other => panic!("expected an arc, got {other:?}"),
+        }
+        assert!(matches!(
+            poly.contour.segments[0],
+            ContourSegment::Line { .. }
+        ));
+    }
+
+    #[test]
+    fn convert_polygon_reads_split_plane_without_pour_settings() {
+        let record = "|SELECTION=FALSE|LAYER=PLANE1|LOCKED=FALSE|POLYGONOUTLINE=FALSE\
+            |USERROUTED=TRUE|KEEPOUT=FALSE|UNIONINDEX=0|PRIMITIVELOCK=TRUE\
+            |POLYGONTYPE=Split Plane\
+            |KIND0=0|VX0=0mil|VY0=0mil|CX0=0mil|CY0=0mil|SA0=0|EA0=0|R0=0mil\
+            |KIND1=0|VX1=10mil|VY1=0mil|CX1=0mil|CY1=0mil|SA1=0|EA1=0|R1=0mil\
+            |KIND2=0|VX2=0mil|VY2=0mil|CX2=0mil|CY2=0mil|SA2=0|EA2=0|R2=0mil|NET=0|";
+        let poly = convert_polygon(3, &params(record), &ctx()).unwrap();
+        assert_eq!(poly.polygon_type, PolygonType::SplitPlane);
+        assert_eq!(poly.layer, LayerRef::from_v6(V6Layer::InternalPlane1));
+        assert_eq!(poly.id, "polygon_3");
+        assert_eq!(poly.net.as_deref(), Some("GND"));
+        assert_eq!(poly.hatch_style, None);
+        assert_eq!(poly.grid_size, None);
+        assert_eq!(poly.pour_order, 0);
+    }
+
+    #[test]
+    fn convert_polygon_rejects_unknown_key_net_and_missing_contour() {
+        let unknown = POLYGON_RECORD.replace("|NET=1|", "|NET=1|NEWKEY=1|");
+        let err = convert_polygon(0, &params(&unknown), &ctx()).unwrap_err();
+        assert!(err.to_string().contains("NEWKEY"), "{err}");
+
+        let bad_net = POLYGON_RECORD.replace("|NET=1|", "|NET=2|");
+        let err = convert_polygon(0, &params(&bad_net), &ctx()).unwrap_err();
+        assert!(err.to_string().contains("net index 2"), "{err}");
+
+        let no_contour: String = POLYGON_RECORD
+            .split('|')
+            .filter(|seg| !is_contour_key(seg.split('=').next().unwrap_or("")))
+            .collect::<Vec<_>>()
+            .join("|");
+        let err = convert_polygon(0, &params(&no_contour), &ctx()).unwrap_err();
+        assert!(err.to_string().contains("VX0"), "{err}");
+
+        let bad_hatch = POLYGON_RECORD.replace("HATCHSTYLE=Solid", "HATCHSTYLE=Diagonal");
+        assert!(convert_polygon(0, &params(&bad_hatch), &ctx()).is_err());
+        let bad_type = POLYGON_RECORD.replace("POLYGONTYPE=Polygon", "POLYGONTYPE=Pour");
+        assert!(convert_polygon(0, &params(&bad_type), &ctx()).is_err());
+    }
+
+    const VERTEX0: &str = "|KIND0=0|VX0=1mil|VY0=2mil|CX0=0mil|CY0=0mil|SA0=0|EA0=0|R0=0mil";
+
+    #[test]
+    fn remove_param_contour_reads_lines_and_arcs() {
+        let text = format!(
+            "{VERTEX0}|KIND1=1|VX1=3mil|VY1=2mil|CX1=2mil|CY1=2mil|SA1=0|EA1=180|R1=1mil|OTHER=1|"
+        );
+        let mut p = params(&text);
+        let contour = remove_param_contour(&mut p).unwrap();
+        assert_eq!(contour.segments.len(), 2);
+        assert!(matches!(
+            contour.segments[1],
+            ContourSegment::Arc { end_angle, .. } if end_angle == 180.0
+        ));
+        // Only the contour keys are consumed.
+        assert_eq!(p.remaining_keys(), vec!["OTHER"]);
+    }
+
+    #[test]
+    fn remove_param_contour_rejects_incomplete_vertex() {
+        let mut p = params("|KIND0=0|VX0=1mil|VY0=2mil|CX0=0mil|CY0=0mil|SA0=0|EA0=0|");
+        let err = remove_param_contour(&mut p).unwrap_err();
+        assert!(err.to_string().contains("R0"), "{err}");
+    }
+
+    #[test]
+    fn remove_param_contour_rejects_gap() {
+        let text =
+            format!("{VERTEX0}|KIND2=0|VX2=1mil|VY2=2mil|CX2=0mil|CY2=0mil|SA2=0|EA2=0|R2=0mil|");
+        let err = remove_param_contour(&mut params(&text)).unwrap_err();
+        assert!(err.to_string().contains("gap"), "{err}");
+    }
+
+    #[test]
+    fn remove_param_contour_rejects_bad_values() {
+        for (from, to) in [
+            ("VX0=1mil", "VX0=1"),
+            ("VX0=1mil", "VX0=1mm"),
+            ("KIND0=0", "KIND0=2"),
+            ("SA0=0", "SA0=NaN"),
+            ("EA0=0", "EA0=inf"),
+            ("R0=0mil", "R0=0.00001mil"),
+        ] {
+            let text = format!("{}|", VERTEX0.replace(from, to));
+            assert!(
+                remove_param_contour(&mut params(&text)).is_err(),
+                "{to} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn layer_param_values_round_trip() {
+        for (text, v6) in [
+            ("TOP", V6Layer::TopLayer),
+            ("BOTTOM", V6Layer::BottomLayer),
+            ("MID1", V6Layer::MidLayer1),
+            ("MID2", V6Layer::MidLayer2),
+            ("MID30", V6Layer::MidLayer30),
+            ("PLANE1", V6Layer::InternalPlane1),
+            ("PLANE16", V6Layer::InternalPlane16),
+            ("MULTILAYER", V6Layer::MultiLayer),
+        ] {
+            let layer = layer_from_param_value("LAYER", text).unwrap();
+            assert_eq!(layer, LayerRef::from_v6(v6), "{text}");
+            assert_eq!(layer_to_param_value("LAYER", &layer).unwrap(), text);
+        }
+        assert_eq!(
+            layer_from_param_value("LAYER", "TopLayer").unwrap(),
+            LayerRef::from_v6(V6Layer::TopLayer)
+        );
+        assert_eq!(
+            layer_from_param_value("LAYER", "2").unwrap(),
+            LayerRef::from_v6(V6Layer::MidLayer1)
+        );
+        for bad in ["MID0", "MID31", "PLANE17", "PLANE", "SIDE", "255", ""] {
+            assert!(layer_from_param_value("LAYER", bad).is_err(), "{bad}");
+        }
+    }
+}
+
+#[cfg(all(test, feature = "test-fixtures"))]
+#[path = "pcbdoc_corpus_tests.rs"]
+mod corpus_tests;

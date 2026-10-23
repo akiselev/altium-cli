@@ -537,6 +537,13 @@ All 40+ record types parsed. Flat OWNERINDEX → nested tree conversion. UniqueI
 ### PcbDoc
 18+ section types parsed. DRC engine with 39 rule classes and 38 violation classes. V2 API: LayerStack, RuleParams, PadStack, BoardGeometry, BoardConnectivity. 94/96 V6 test files passing. PrimitiveParameters (BOM data) pipeline complete.
 
+Board API (`PcbDoc::board()`), branch `claude/ecad-b1-altium-r1-r7` (ecadabra requests R1–R7,
+see `docs/handoff/ecad-r1-r7-cloud-report.md`): 79 of the 94 corpus CFB boards read (the other 15
+fail on Dimensions6 `TEXTX`, as at `18062d6`).
+- Polygons6 (R2): full typed record incl. arc-preserving `contour`; unknown keys, bad vertices,
+  unknown layers and out-of-range net indices are errors. Writer emits the stored form; a
+  write→read round trip is identical except `AREATHRESHOLD` beyond f64 precision.
+
 ### PrjPcb
 INI-style format with indexed sections. Complete roundtrip. Read-only high-level API (internal write exists but not surfaced).
 

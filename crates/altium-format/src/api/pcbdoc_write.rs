@@ -89,19 +89,6 @@ impl WriteContext {
             None => 0xFFFF,
         }
     }
-
-    /// Resolve net name → i32 index for parameter sections (Polygons6).
-    /// Returns -1 for no net.
-    fn resolve_net_param_index(&self, net: &Option<String>) -> i32 {
-        match net {
-            Some(name) => self
-                .net_indices
-                .get(name.as_str())
-                .map(|&i| i as i32)
-                .unwrap_or(-1),
-            None => -1,
-        }
-    }
 }
 
 /// Build a `PcbPrimitiveCommon` for a board context with net/component resolution.
@@ -469,9 +456,14 @@ fn build_polygon_record(poly: &Polygon, ctx: &WriteContext) -> Result<StandardPa
     if poly.relief_air_gap != Coord::from_internal(254_000) {
         params.insert("RELIEFAIRGAP", poly.relief_air_gap.to_param_value());
     }
-    let net = ctx.resolve_net_param_index(&poly.net);
-    if net >= 0 {
-        params.insert("NET", net.to_param_value());
+    if let Some(net) = &poly.net {
+        let index = ctx.net_indices.get(net.as_str()).ok_or_else(|| {
+            crate::AltiumFormatError::InvalidParamValue {
+                key: "NET".to_owned(),
+                detail: format!("polygon net {net:?} is not in the board's nets"),
+            }
+        })?;
+        params.insert("NET", index.to_param_value());
     }
     Ok(StandardParamRecord { params })
 }
@@ -1643,5 +1635,82 @@ fn detect_section_kind(
         modern
     } else {
         legacy
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::pcbdoc_read::convert_polygon_for_test;
+
+    /// A stored Polygons6 record (corpus-shaped, two edges incl. an arc).
+    const RECORD: &str = "|SELECTION=FALSE|LAYER=MID2|LOCKED=FALSE|POLYGONOUTLINE=FALSE\
+        |USERROUTED=TRUE|KEEPOUT=FALSE|UNIONINDEX=0|PRIMITIVELOCK=TRUE|POLYGONTYPE=Polygon\
+        |POUROVER=TRUE|REMOVEDEAD=TRUE|GRIDSIZE=19.685mil|TRACKWIDTH=8mil|HATCHSTYLE=90Degree\
+        |USEOCTAGONS=FALSE|MINPRIMLENGTH=3mil\
+        |KIND0=0|VX0=7250.904mil|VY0=6378.6mil|CX0=0mil|CY0=0mil\
+        |SA0= 0.00000000000000E+0000|EA0= 0.00000000000000E+0000|R0=0mil\
+        |KIND1=1|VX1=7406.376mil|VY1=6534.072mil|CX1=7250.904mil|CY1=6534.072mil\
+        |SA1= 0.00000000000000E+0000|EA1= 9.00000000000000E+0001|R1=155.472mil\
+        |KIND2=0|VX2=7250.904mil|VY2=6378.6mil|CX2=0mil|CY2=0mil\
+        |SA2= 0.00000000000000E+0000|EA2= 0.00000000000000E+0000|R2=0mil\
+        |SHELVED=FALSE|RESTORELAYER=UNKNOWN|RESTORENET=P2V5|REMOVEISLANDSBYAREA=TRUE\
+        |REMOVENECKS=TRUE|AREATHRESHOLD=250000000000.000000|ARCRESOLUTION=0.5mil\
+        |NECKWIDTHTHRESHOLD=5mil|POUROVERSTYLE=1|NAME=80,50,86,53|POURINDEX=365\
+        |IGNOREVIOLATIONS=FALSE|AUTONAME=TRUE|NET=1|";
+
+    fn write_ctx() -> WriteContext {
+        WriteContext {
+            net_indices: HashMap::from([("GND".to_owned(), 0), ("P2V5".to_owned(), 1)]),
+            component_indices: HashMap::new(),
+        }
+    }
+
+    fn sorted_pairs(params: &ParameterCollection) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = params
+            .iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        pairs.sort();
+        pairs
+    }
+
+    #[test]
+    fn polygons6_record_write_read_round_trip_is_identical() {
+        let stored = ParameterCollection::from_str(RECORD).unwrap();
+        let poly = convert_polygon_for_test(&stored, &["GND", "P2V5"]).unwrap();
+        let written = build_polygon_record(&poly, &write_ctx()).unwrap();
+        assert_eq!(sorted_pairs(&written.params), sorted_pairs(&stored));
+        let reread = convert_polygon_for_test(&written.params, &["GND", "P2V5"]).unwrap();
+        assert_eq!(format!("{reread:?}"), format!("{poly:?}"));
+    }
+
+    /// AREATHRESHOLD is stored from an 80-bit Extended with six fractional
+    /// digits; some corpus values (e.g. `250015000224.999968`) have more
+    /// significant digits than an f64 holds, so the written value can differ in
+    /// the last stored digit (here by 1e-6 internal units², relative 4e-18).
+    #[test]
+    fn polygons6_area_threshold_is_written_with_f64_precision() {
+        let stored = ParameterCollection::from_str(
+            &RECORD.replace("250000000000.000000", "250015000224.999968"),
+        )
+        .unwrap();
+        let poly = convert_polygon_for_test(&stored, &["GND", "P2V5"]).unwrap();
+        let written = build_polygon_record(&poly, &write_ctx()).unwrap();
+        assert_eq!(
+            written.params.get("AREATHRESHOLD"),
+            Some("250015000224.999969")
+        );
+    }
+
+    #[test]
+    fn polygons6_writer_rejects_unknown_net() {
+        let stored = ParameterCollection::from_str(RECORD).unwrap();
+        let mut poly = convert_polygon_for_test(&stored, &["GND", "P2V5"]).unwrap();
+        poly.net = Some("NOT_A_NET".to_owned());
+        let err = build_polygon_record(&poly, &write_ctx())
+            .err()
+            .expect("unknown net must fail");
+        assert!(err.to_string().contains("NOT_A_NET"), "{err}");
     }
 }
