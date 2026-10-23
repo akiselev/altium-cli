@@ -866,6 +866,37 @@ fn corpus_r12_component_kinds() {
             b.components.iter().map(|c| c.kind).collect()
         };
         assert_eq!(kinds(&after), kinds(&board), "{name}");
+        // Changing a kind writes the corpus forms; Jumper fails before writing.
+        if !board.components.is_empty() {
+            for (kind, keys) in [
+                (ComponentKind::NetTieNoBom, vec![("COMPONENTKIND", "4")]),
+                (
+                    ComponentKind::StandardNoBom,
+                    vec![("COMPONENTKIND", "0"), ("COMPONENTKINDVERSION2", "5")],
+                ),
+                (ComponentKind::Standard, vec![]),
+            ] {
+                let mut changed = board.clone();
+                changed.components[0].kind = kind;
+                doc.update_board(&changed)
+                    .unwrap_or_else(|e| panic!("{name}: {kind:?}: {e}"));
+                let expected: Vec<(String, String)> = keys
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect();
+                assert_eq!(kind_keys(&doc)[0], expected, "{name}: {kind:?}");
+                assert_eq!(doc.board().unwrap().components[0].kind, kind, "{name}");
+            }
+            let before = kind_keys(&doc);
+            let mut jumper = board.clone();
+            jumper.components[0].kind = ComponentKind::Jumper;
+            assert!(doc.update_board(&jumper).is_err(), "{name}: Jumper");
+            assert_eq!(
+                kind_keys(&doc),
+                before,
+                "{name}: Jumper changed the document"
+            );
+        }
         boards_round_tripped += 1;
     }
     eprintln!("corpus_r12_component_kinds: {counts:?}; {boards_round_tripped} boards written");

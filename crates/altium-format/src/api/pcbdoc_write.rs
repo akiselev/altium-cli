@@ -262,6 +262,19 @@ fn reject_unique_id(kind: &str, unique_id: &Option<String>) -> Result<()> {
 /// scratch. Primitive sections are rebuilt with format-internal fields
 /// preserved from existing records matched by position index.
 pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result<()> {
+    // Checked before anything is written (update_board is not transactional).
+    if let Some(i) = board
+        .components
+        .iter()
+        .position(|c| c.kind == altium_format_types::ComponentKind::Jumper)
+    {
+        return Err(crate::AltiumFormatError::InvalidParamValue {
+            key: "COMPONENTKINDVERSION3".to_owned(),
+            detail: format!(
+                "component #{i}: writing kind Jumper is not supported (storage form unknown)"
+            ),
+        });
+    }
     let ctx = WriteContext::new(board);
     attach_pad_unique_ids(doc).context("UniqueIDPrimitiveInformation")?;
 
@@ -519,6 +532,7 @@ fn write_component_kinds(doc: &mut PcbDoc, components: &[PcbDocComponent]) -> Re
                         .insert("COMPONENTKINDVERSION2", (comp.kind as u8).to_string());
                 }
                 ComponentKind::Jumper => {
+                    // Also rejected before anything is written.
                     return Err(crate::AltiumFormatError::InvalidParamValue {
                         key: "COMPONENTKINDVERSION3".to_owned(),
                         detail: format!("component #{i}: writing kind Jumper is not supported"),

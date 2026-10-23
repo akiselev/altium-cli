@@ -32,6 +32,17 @@ fn default_primitive_common(layer: &LayerRef, flags: PcbFlags) -> PcbPrimitiveCo
 
 /// Convert a public `Footprint` to a fresh internal `PcbFootprint`.
 pub(crate) fn footprint_to_internal(fp: &Footprint, cfb_key: &str) -> Result<PcbFootprint> {
+    // COMPONENTKIND knows kinds 0-4; how a footprint stores StandardNoBom or
+    // Jumper is not known (no corpus footprint stores a kind at all).
+    if fp.kind as u8 > ComponentKind::NetTieNoBom as u8 {
+        return Err(crate::AltiumFormatError::InvalidParamValue {
+            key: "COMPONENTKIND".to_owned(),
+            detail: format!(
+                "footprint {}: writing kind {:?} is not supported",
+                fp.display_name, fp.kind
+            ),
+        });
+    }
     let mut primitives: Vec<PcbPrimitive> = Vec::new();
 
     for pad in &fp.pads {
@@ -636,5 +647,42 @@ fn component_body_to_internal(g: &ComponentBodyGraphic) -> PcbComponentBody {
         outline,
         shape_text_segments: None,
         unique_id: g.unique_id.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn footprint(kind: ComponentKind) -> Footprint {
+        Footprint {
+            display_name: "FP".to_owned(),
+            description: String::new(),
+            pattern: "FP".to_owned(),
+            height: Coord::ZERO,
+            kind,
+            pads: Vec::new(),
+            graphics: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn footprint_kind_is_written_for_known_forms_only() {
+        let standard = footprint_to_internal(&footprint(ComponentKind::Standard), "FP").unwrap();
+        assert_eq!(standard.component_kind, None);
+        let net_tie = footprint_to_internal(&footprint(ComponentKind::NetTieNoBom), "FP").unwrap();
+        assert_eq!(net_tie.component_kind, Some(ComponentKind::NetTieNoBom));
+        assert!(footprint_to_internal(&footprint(ComponentKind::StandardNoBom), "FP").is_err());
+        assert!(footprint_to_internal(&footprint(ComponentKind::Jumper), "FP").is_err());
+        // Updating keeps an explicit stored kind when unchanged, clears it otherwise.
+        let mut existing = standard;
+        existing.component_kind = Some(ComponentKind::Standard);
+        let kept =
+            update_footprint_internal(&footprint(ComponentKind::Standard), &existing).unwrap();
+        assert_eq!(kept.component_kind, Some(ComponentKind::Standard));
+        existing.component_kind = Some(ComponentKind::Mechanical);
+        let cleared =
+            update_footprint_internal(&footprint(ComponentKind::Standard), &existing).unwrap();
+        assert_eq!(cleared.component_kind, None);
     }
 }

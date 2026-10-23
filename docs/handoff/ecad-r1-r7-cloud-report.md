@@ -203,7 +203,8 @@ the corpus tests above.
     `corpus_r3_polygon_membership`, `corpus_r4_identity`, `corpus_r5_pad_modes`,
     `corpus_r5_pcblib_pad_modes`, `corpus_r6_layer_identity`, `corpus_r7_region_contours`,
     `corpus_r8_designators`, `corpus_r9_display_mode`, `corpus_r10_unique_ids_reproducible`.
-  - Final run on `b327bde`: in progress when this was written; see the next report commit.
+  - Final run on `b327bde` (end of R1–R11): 12 of 12 passed, counts as in the table. R7–R10
+    ran from a worktree at `b327bde` because R12 work had started in the main tree.
   - Opt-level 2 was used because the debug build takes 440 s per test.
   - Temporary survey tests were run and then deleted before commit: V6/V7 pairs, region forms,
     pad cache states, pad separate expansions, designator texts and SchDoc display modes.

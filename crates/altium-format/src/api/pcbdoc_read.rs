@@ -561,15 +561,42 @@ pub(crate) fn component_kind_from_params(
     let v1: Option<ComponentKind> = params.remove_optional("COMPONENTKIND")?;
     let v2: Option<ComponentKind> = params.remove_optional("COMPONENTKINDVERSION2")?;
     let v3: Option<ComponentKind> = params.remove_optional("COMPONENTKINDVERSION3")?;
-    if let (Some(v1), Some(v2)) = (v1, v2) {
-        if v1 != legacy_component_kind(v2) {
-            return Err(AltiumFormatError::InvalidParamValue {
-                key: "COMPONENTKIND".to_owned(),
-                detail: format!("{v1:?} disagrees with COMPONENTKINDVERSION2 {v2:?}"),
-            });
+    let error = |key: &str, detail: String| AltiumFormatError::InvalidParamValue {
+        key: key.to_owned(),
+        detail,
+    };
+    // Each key knows the kinds up to its version: 0-4, 0-5, 0-6.
+    if let Some(kind) = v1.filter(|k| *k as u8 > ComponentKind::NetTieNoBom as u8) {
+        return Err(error(
+            "COMPONENTKIND",
+            format!("{kind:?} is not a version-1 kind"),
+        ));
+    }
+    if let Some(kind) = v2.filter(|k| *k as u8 > ComponentKind::StandardNoBom as u8) {
+        return Err(error(
+            "COMPONENTKINDVERSION2",
+            format!("{kind:?} is not a version-2 kind"),
+        ));
+    }
+    // An older key must hold the newest key's legacy form.
+    let newest = v3.or(v2);
+    if let (Some(v1), Some(newest)) = (v1, newest) {
+        if v1 != legacy_component_kind(newest) {
+            return Err(error(
+                "COMPONENTKIND",
+                format!("{v1:?} disagrees with the newer kind key {newest:?}"),
+            ));
         }
     }
-    Ok(v3.or(v2).or(v1).unwrap_or_default())
+    if let (Some(v2), Some(v3)) = (v2, v3) {
+        if v3 != ComponentKind::Jumper && v2 != v3 {
+            return Err(error(
+                "COMPONENTKINDVERSION2",
+                format!("{v2:?} disagrees with COMPONENTKINDVERSION3 {v3:?}"),
+            ));
+        }
+    }
+    Ok(newest.or(v1).unwrap_or_default())
 }
 
 /// The kind stored in `COMPONENTKIND` for a kind (the first key knows 0–4).
@@ -2424,6 +2451,14 @@ mod tests {
         );
         assert!(kind("|COMPONENTKIND=3|COMPONENTKINDVERSION2=5|").is_err());
         assert!(kind("|COMPONENTKIND=9|").is_err());
+        assert!(kind("|COMPONENTKIND=5|").is_err());
+        assert!(kind("|COMPONENTKINDVERSION2=6|").is_err());
+        assert!(kind("|COMPONENTKIND=0|COMPONENTKINDVERSION3=4|").is_err());
+        assert!(kind("|COMPONENTKINDVERSION2=1|COMPONENTKINDVERSION3=2|").is_err());
+        assert_eq!(
+            kind("|COMPONENTKIND=0|COMPONENTKINDVERSION2=5|COMPONENTKINDVERSION3=6|").unwrap(),
+            ComponentKind::Jumper
+        );
     }
 
     #[test]

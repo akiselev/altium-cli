@@ -116,6 +116,12 @@ fn parse_parameters_stream(
         .remove_optional::<String>("REVISIONGUID")?
         .unwrap_or_default();
     let component_kind = params.remove_optional::<ComponentKind>("COMPONENTKIND")?;
+    if let Some(kind) = component_kind.filter(|k| *k as u8 > ComponentKind::NetTieNoBom as u8) {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "COMPONENTKIND".to_owned(),
+            detail: format!("{kind:?} is not a COMPONENTKIND value (0-4)"),
+        });
+    }
     // Known optional metadata parameters in footprint Parameters streams.
     let _area = params.remove_optional::<String>("AREA")?;
     let _title = params.remove_optional::<String>("TITLE")?;
