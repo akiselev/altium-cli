@@ -544,6 +544,11 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   unknown layers and out-of-range net indices are errors. Writer emits the stored form; all
   1,618 corpus records read→write→read to the same typed polygon. Stored-form normalisations:
   stale arc keys on line edges are written as zeros, `AREATHRESHOLD` digits beyond f64 are lost.
+- Identity (R4): primitives carry `unique_id` (pads, from UniqueIDPrimitiveInformation; other
+  kinds have none in the corpus), `component_index` and `flags`; components carry `unique_id`,
+  `locked`, `primitive_lock`. The writer keeps them (an ambiguous or unknown designator without
+  `component_index` is an error). Known pre-existing defect: `update_board` → `board()` adds one
+  region on 65 of 79 corpus boards (also at `18062d6`).
 
 ### PrjPcb
 INI-style format with indexed sections. Complete roundtrip. Read-only high-level API (internal write exists but not surfaced).

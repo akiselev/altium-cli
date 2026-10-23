@@ -1354,7 +1354,7 @@ fn instantiate_footprint_primitives(
             .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", pcblib_path.display()))?;
 
         let components: Vec<_> = board.components.clone();
-        for comp in &components {
+        for (comp_index, comp) in components.iter().enumerate() {
             if comp.pattern.is_empty() {
                 continue;
             }
@@ -1414,6 +1414,9 @@ fn instantiate_footprint_primitives(
                         .get(&(comp.designator.clone(), fp_pad.pad_name.clone()))
                         .cloned(),
                     component: Some(comp.designator.clone()),
+                    unique_id: None,
+                    component_index: Some(comp_index),
+                    flags: altium_format_types::pcb::PcbFlags::default(),
                     location: CoordPoint::new(abs_x, abs_y),
                     shape: fp_pad.shape,
                     x_size: fp_pad.x_size,
@@ -1452,6 +1455,9 @@ fn instantiate_footprint_primitives(
                             layer: track.layer.clone(),
                             net: None,
                             component: Some(comp.designator.clone()),
+                            unique_id: None,
+                            component_index: Some(comp_index),
+                            flags: altium_format_types::pcb::PcbFlags::default(),
                             start,
                             end,
                             width: track.width,
@@ -1466,6 +1472,9 @@ fn instantiate_footprint_primitives(
                             layer: arc.layer.clone(),
                             net: None,
                             component: Some(comp.designator.clone()),
+                            unique_id: None,
+                            component_index: Some(comp_index),
+                            flags: altium_format_types::pcb::PcbFlags::default(),
                             center,
                             radius: arc.radius,
                             start_angle: (arc.start_angle + comp.rotation) % 360.0,
@@ -1484,6 +1493,9 @@ fn instantiate_footprint_primitives(
                             layer: fill.layer.clone(),
                             net: None,
                             component: Some(comp.designator.clone()),
+                            unique_id: None,
+                            component_index: Some(comp_index),
+                            flags: altium_format_types::pcb::PcbFlags::default(),
                             corner1,
                             corner2,
                             rotation: fill.rotation + comp.rotation,
@@ -1502,6 +1514,9 @@ fn instantiate_footprint_primitives(
                             id: format!("{}-text-{}", comp.designator, text_counter),
                             layer: text.layer.clone(),
                             component: Some(comp.designator.clone()),
+                            unique_id: None,
+                            component_index: Some(comp_index),
+                            flags: altium_format_types::pcb::PcbFlags::default(),
                             location,
                             text: text_str,
                             rotation: text.rotation + comp.rotation,
@@ -1532,6 +1547,9 @@ fn instantiate_footprint_primitives(
                             layer: region.layer.clone(),
                             net: None,
                             component: Some(comp.designator.clone()),
+                            unique_id: None,
+                            component_index: Some(comp_index),
+                            flags: altium_format_types::pcb::PcbFlags::default(),
                             kind: region.kind,
                             outline,
                             holes,
@@ -1553,6 +1571,7 @@ fn instantiate_footprint_primitives(
                                 id: format!("{}-body-{}", comp.designator, body_counter),
                                 layer: body.layer.clone(),
                                 component: Some(comp.designator.clone()),
+                                component_index: Some(comp_index),
                                 standoff_height: body.standoff_height,
                                 overall_height: body.overall_height,
                                 body_color_3d: body.body_color_3d,

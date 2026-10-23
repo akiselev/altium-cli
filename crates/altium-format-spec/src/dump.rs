@@ -2404,6 +2404,9 @@ mod tests {
             source_lib_reference: String::new(),
             source_unique_id: String::new(),
             source_hierarchical_path: String::new(),
+            unique_id: String::new(),
+            locked: false,
+            primitive_lock: true,
             parameters: Vec::new(),
         }
     }

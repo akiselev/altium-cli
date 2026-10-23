@@ -46,8 +46,8 @@ use crate::{Result, ResultExt};
 struct WriteContext {
     /// Net name → section index (position in Nets6).
     net_indices: HashMap<String, u16>,
-    /// Component designator → section index (position in Components6).
-    component_indices: HashMap<String, u16>,
+    /// Components6 position → designator (designators need not be unique).
+    component_designators: Vec<String>,
 }
 
 impl WriteContext {
@@ -57,14 +57,13 @@ impl WriteContext {
             net_indices.insert(net.name.clone(), i as u16);
         }
 
-        let mut component_indices = HashMap::with_capacity(board.components.len());
-        for (i, comp) in board.components.iter().enumerate() {
-            component_indices.insert(comp.designator.clone(), i as u16);
-        }
-
         Self {
             net_indices,
-            component_indices,
+            component_designators: board
+                .components
+                .iter()
+                .map(|c| c.designator.clone())
+                .collect(),
         }
     }
 
@@ -79,15 +78,64 @@ impl WriteContext {
         }
     }
 
-    fn resolve_component_index(&self, component: &Option<String>) -> u16 {
-        match component {
-            Some(name) => self
-                .component_indices
-                .get(name.as_str())
-                .copied()
-                .unwrap_or(0xFFFF),
-            None => 0xFFFF,
-        }
+    /// Resolve a primitive's owning component to its Components6 index.
+    ///
+    /// `component_index` wins when set; it must be in range and, if
+    /// `component` is also set, name the same designator. Without an index the
+    /// designator must match exactly one component. Anything else is an error.
+    fn resolve_component_index(
+        &self,
+        component: &Option<String>,
+        component_index: Option<usize>,
+    ) -> Result<u16> {
+        let error = |detail: String| crate::AltiumFormatError::InvalidParamValue {
+            key: "component".to_owned(),
+            detail,
+        };
+        let index = match (component_index, component) {
+            (None, None) => return Ok(0xFFFF),
+            (Some(i), designator) => {
+                let stored = self.component_designators.get(i).ok_or_else(|| {
+                    error(format!(
+                        "component_index {i} outside the board's {} components",
+                        self.component_designators.len()
+                    ))
+                })?;
+                if let Some(name) = designator {
+                    if name != stored {
+                        return Err(error(format!(
+                            "component {name:?} disagrees with component_index {i} ({stored:?})"
+                        )));
+                    }
+                }
+                i
+            }
+            (None, Some(name)) => {
+                let mut matches = self
+                    .component_designators
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, d)| *d == name)
+                    .map(|(i, _)| i);
+                match (matches.next(), matches.next()) {
+                    (Some(i), None) => i,
+                    (None, _) => return Err(error(format!("no component {name:?}"))),
+                    (Some(_), Some(_)) => {
+                        return Err(error(format!(
+                            "designator {name:?} names several components; set component_index"
+                        )));
+                    }
+                }
+            }
+        };
+        u16::try_from(index)
+            .ok()
+            .filter(|&i| i != 0xFFFF)
+            .ok_or_else(|| {
+                error(format!(
+                    "component index {index} does not fit the u16 field"
+                ))
+            })
     }
 }
 
@@ -96,16 +144,30 @@ fn primitive_common_for_board(
     layer: &LayerRef,
     net: &Option<String>,
     component: &Option<String>,
+    component_index: Option<usize>,
+    flags: PcbFlags,
     ctx: &WriteContext,
-) -> PcbPrimitiveCommon {
-    PcbPrimitiveCommon {
+) -> Result<PcbPrimitiveCommon> {
+    Ok(PcbPrimitiveCommon {
         layer: layer.to_v6().unwrap_or(V6Layer::NoLayer),
-        flags: PcbFlags::default(),
+        flags,
         net_index: ctx.resolve_net_index(net),
         polygon_index: 0xFFFF, // polygon membership not tracked in API
-        component_index: ctx.resolve_component_index(component),
+        component_index: ctx.resolve_component_index(component, component_index)?,
         coordinate_index: 0xFFFF,
         dimension_index: 0xFFFF,
+    })
+}
+
+/// The writer stores unique ids for pads only (UniqueIDPrimitiveInformation is
+/// rebuilt from Pads6); an id on another primitive kind is an error, not dropped.
+fn reject_unique_id(kind: &str, unique_id: &Option<String>) -> Result<()> {
+    match unique_id {
+        None => Ok(()),
+        Some(id) => Err(crate::AltiumFormatError::InvalidParamValue {
+            key: "UNIQUEID".to_owned(),
+            detail: format!("writing unique id {id:?} for a {kind} is not supported (pads only)"),
+        }),
     }
 }
 
@@ -163,27 +225,27 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
     replace_primitives_with_preservation(
         doc,
         PrimitiveSectionKind::Tracks6,
-        build_track_records(&board.tracks, &ctx),
+        build_track_records(&board.tracks, &ctx).context("building track records")?,
     );
     replace_primitives_with_preservation(
         doc,
         PrimitiveSectionKind::Arcs6,
-        build_arc_records(&board.arcs, &ctx),
+        build_arc_records(&board.arcs, &ctx).context("building arc records")?,
     );
     replace_primitives_with_preservation(
         doc,
         PrimitiveSectionKind::Vias6,
-        build_via_records(&board.vias, &ctx),
+        build_via_records(&board.vias, &ctx).context("building via records")?,
     );
     replace_primitives_with_preservation(
         doc,
         PrimitiveSectionKind::Pads6,
-        build_pad_records(&board.pads, &ctx),
+        build_pad_records(&board.pads, &ctx).context("building pad records")?,
     );
     replace_primitives_with_preservation(
         doc,
         PrimitiveSectionKind::Fills6,
-        build_fill_records(&board.fills, &ctx),
+        build_fill_records(&board.fills, &ctx).context("building fill records")?,
     );
 
     // Text section: use whichever kind was originally present.
@@ -195,7 +257,7 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
     replace_primitives_with_preservation(
         doc,
         text_kind,
-        build_text_records(&board.texts, &ctx, &wide_indices),
+        build_text_records(&board.texts, &ctx, &wide_indices).context("building text records")?,
     );
 
     // Region section: prefer ShapeBasedRegions6 if present.
@@ -207,7 +269,7 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
     replace_primitives_with_preservation(
         doc,
         region_kind,
-        build_region_records(&board.regions, &ctx),
+        build_region_records(&board.regions, &ctx).context("building region records")?,
     );
 
     // ComponentBody section: prefer ShapeBasedComponentBodies6 if present.
@@ -219,7 +281,7 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
     replace_primitives_with_preservation(
         doc,
         body_kind,
-        build_body_records(&board.component_bodies, &ctx),
+        build_body_records(&board.component_bodies, &ctx).context("building body records")?,
     );
 
     // ── Step 4: Replace WideStrings6 ──
@@ -280,11 +342,11 @@ fn build_component_records(components: &[PcbDocComponent]) -> Vec<StandardParamR
                 other => other.to_string_name().to_uppercase(),
             };
             params.insert("LAYER", layer_name);
-            params.insert("LOCKED", "FALSE".to_string());
+            params.insert("LOCKED", comp.locked.to_param_value());
             params.insert("POLYGONOUTLINE", "FALSE".to_string());
             params.insert("USERROUTED", "TRUE".to_string());
             params.insert("KEEPOUT", "FALSE".to_string());
-            params.insert("PRIMITIVELOCK", "TRUE".to_string());
+            params.insert("PRIMITIVELOCK", comp.primitive_lock.to_param_value());
             params.insert("X", MilCoord(comp.location.x).to_param_value());
             params.insert("Y", MilCoord(comp.location.y).to_param_value());
             params.insert("PATTERN", comp.pattern.clone());
@@ -309,8 +371,13 @@ fn build_component_records(components: &[PcbDocComponent]) -> Vec<StandardParamR
             params.insert("SOURCEDESCRIPTION", String::new());
             params.insert("FOOTPRINTDESCRIPTION", String::new());
             params.insert("COMMENT", comp.comment.clone());
-            // Generate a unique ID for new components.
-            params.insert("UNIQUEID", generate_unique_id());
+            // Keep the component's id; generate one for a component built by hand.
+            let unique_id = if comp.unique_id.is_empty() {
+                generate_unique_id()
+            } else {
+                comp.unique_id.clone()
+            };
+            params.insert("UNIQUEID", unique_id);
             StandardParamRecord { params }
         })
         .collect()
@@ -617,65 +684,88 @@ fn build_board_record(settings: &BoardSettings) -> Vec<StandardParamRecord> {
 
 // ── Primitive record builders ──────────────────────────────────────────────
 
-fn build_track_records(tracks: &[Track], ctx: &WriteContext) -> Vec<ParsedPrimitiveRecord> {
+fn build_track_records(tracks: &[Track], ctx: &WriteContext) -> Result<Vec<ParsedPrimitiveRecord>> {
     tracks
         .iter()
-        .map(|t| ParsedPrimitiveRecord {
-            object_id: PcbObjectId::Track,
-            primitive: PcbPrimitive::Track(PcbTrack {
-                common: primitive_common_for_board(&t.layer, &t.net, &t.component, ctx),
-                start: t.start,
-                end: t.end,
-                width: t.width,
-                subpoly_index: 0,
-                user_routed: false,
-                union_index: 0,
-                track_kind: 0,
-                layer_enum_index: t.layer.v7(),
-                keepout_restrictions: None,
-            }),
+        .map(|t| {
+            reject_unique_id("track", &t.unique_id)?;
+            Ok(ParsedPrimitiveRecord {
+                object_id: PcbObjectId::Track,
+                primitive: PcbPrimitive::Track(PcbTrack {
+                    common: primitive_common_for_board(
+                        &t.layer,
+                        &t.net,
+                        &t.component,
+                        t.component_index,
+                        t.flags,
+                        ctx,
+                    )?,
+                    start: t.start,
+                    end: t.end,
+                    width: t.width,
+                    subpoly_index: 0,
+                    user_routed: false,
+                    union_index: 0,
+                    track_kind: 0,
+                    layer_enum_index: t.layer.v7(),
+                    keepout_restrictions: None,
+                }),
+            })
         })
         .collect()
 }
 
-fn build_arc_records(arcs: &[Arc], ctx: &WriteContext) -> Vec<ParsedPrimitiveRecord> {
+fn build_arc_records(arcs: &[Arc], ctx: &WriteContext) -> Result<Vec<ParsedPrimitiveRecord>> {
     arcs.iter()
-        .map(|a| ParsedPrimitiveRecord {
-            object_id: PcbObjectId::Arc,
-            primitive: PcbPrimitive::Arc(PcbArc {
-                common: primitive_common_for_board(&a.layer, &a.net, &a.component, ctx),
-                center: a.center,
-                radius: a.radius,
-                start_angle: a.start_angle,
-                end_angle: a.end_angle,
-                width: a.width,
-                subpoly_index: 0,
-                user_routed: false,
-                union_index: 0,
-                layer_enum_index: a.layer.v7(),
-                keepout_restrictions: None,
-            }),
+        .map(|a| {
+            reject_unique_id("arc", &a.unique_id)?;
+            Ok(ParsedPrimitiveRecord {
+                object_id: PcbObjectId::Arc,
+                primitive: PcbPrimitive::Arc(PcbArc {
+                    common: primitive_common_for_board(
+                        &a.layer,
+                        &a.net,
+                        &a.component,
+                        a.component_index,
+                        a.flags,
+                        ctx,
+                    )?,
+                    center: a.center,
+                    radius: a.radius,
+                    start_angle: a.start_angle,
+                    end_angle: a.end_angle,
+                    width: a.width,
+                    subpoly_index: 0,
+                    user_routed: false,
+                    union_index: 0,
+                    layer_enum_index: a.layer.v7(),
+                    keepout_restrictions: None,
+                }),
+            })
         })
         .collect()
 }
 
-fn build_via_records(vias: &[Via], ctx: &WriteContext) -> Vec<ParsedPrimitiveRecord> {
+fn build_via_records(vias: &[Via], ctx: &WriteContext) -> Result<Vec<ParsedPrimitiveRecord>> {
     vias.iter()
         .map(|v| {
+            reject_unique_id("via", &v.unique_id)?;
             let (solder_mask_override, solder_mask_expansion_front) = match v.solder_mask_expansion
             {
                 Some(exp) => (true, exp),
                 None => (false, Coord::ZERO),
             };
-            ParsedPrimitiveRecord {
+            Ok(ParsedPrimitiveRecord {
                 object_id: PcbObjectId::Via,
                 primitive: PcbPrimitive::Via(PcbVia {
                     common: primitive_common_for_board(
                         &LayerRef::from_v6(V6Layer::MultiLayer),
                         &v.net,
                         &v.component,
+                        v.component_index,
+                        v.flags,
                         ctx,
-                    ),
+                    )?,
                     location: v.location,
                     diameter: v.diameter,
                     hole_size: v.hole_size,
@@ -734,94 +824,113 @@ fn build_via_records(vias: &[Via], ctx: &WriteContext) -> Vec<ParsedPrimitiveRec
                     layer_diameter_overrides: Vec::new(),
                     unique_id: None,
                 }),
-            }
+            })
         })
         .collect()
 }
 
-fn build_pad_records(pads: &[Pad], ctx: &WriteContext) -> Vec<ParsedPrimitiveRecord> {
+fn build_pad_records(pads: &[Pad], ctx: &WriteContext) -> Result<Vec<ParsedPrimitiveRecord>> {
     pads.iter()
-        .map(|p| ParsedPrimitiveRecord {
-            object_id: PcbObjectId::Pad,
-            primitive: PcbPrimitive::Pad(PcbPad {
-                common: primitive_common_for_board(&p.layer, &p.net, &p.component, ctx),
-                pad_name: p.pad_name.clone(),
-                unknown_sub1: String::new(),
-                unknown_sub2: String::new(),
-                unknown_sub3: String::new(),
-                location: p.location,
-                size_top: CoordPoint::new(p.stack.top.x_size, p.stack.top.y_size),
-                size_mid: CoordPoint::new(p.stack.mid.x_size, p.stack.mid.y_size),
-                size_bot: CoordPoint::new(p.stack.bot.x_size, p.stack.bot.y_size),
-                hole_size: p.hole_size,
-                shape_top: p.stack.top.shape,
-                shape_mid: p.stack.mid.shape,
-                shape_bot: p.stack.bot.shape,
-                rotation: p.rotation,
-                is_plated: p.is_plated,
-                daisy_chain_style: DaisyChainStyle::default(),
-                pad_mode: p.pad_mode,
-                unknown_63: 0,
-                cache: PcbPadCache {
-                    plane_connection_style: p.plane_connection,
-                    relief_conductor_width: p.relief_conductor_width,
-                    relief_entries: p.relief_entries as i16,
-                    relief_air_gap: p.relief_air_gap,
-                    power_plane_relief_expansion: Coord::ZERO,
-                    power_plane_clearance: Coord::ZERO,
-                    paste_mask_expansion: p.paste_mask_expansion,
-                    solder_mask_expansion: p.solder_mask_expansion,
-                    planes: 0,
-                    plane_connection_style_valid: TCacheState::Valid,
-                    relief_conductor_width_valid: TCacheState::Valid,
-                    relief_entries_valid: TCacheState::Valid,
-                    relief_air_gap_valid: TCacheState::Valid,
-                    power_plane_relief_expansion_valid: TCacheState::default(),
-                    paste_mask_expansion_valid: TCacheState::Valid,
-                    solder_mask_expansion_valid: TCacheState::Valid,
-                    power_plane_clearance_valid: TCacheState::default(),
-                    planes_valid: TCacheState::default(),
-                },
-                selection_memory_flags: 0,
-                union_index: 0,
-                jumper_id: 0,
-                v7_layer_override: 0,
-                is_assy_testpoint_top: false,
-                is_assy_testpoint_bottom: false,
-                use_separate_expansions: false,
-                solder_mask_bottom_expansion: 0,
-                solder_mask_expansion_from_hole_edge: false,
-                template_link_library_id: [0u8; 16],
-                template_link_template_id: [0u8; 16],
-                pin_package_length: Coord::ZERO,
-                hole_positive_tolerance: 0,
-                hole_negative_tolerance: 0,
-                unknown_170: 0,
-                has_sub4_extension: false,
-                sub4_extension: None,
-                thermal_reliefs: Vec::new(),
-                stack_data: None,
-                unique_id: None,
-            }),
+        .map(|p| {
+            Ok(ParsedPrimitiveRecord {
+                object_id: PcbObjectId::Pad,
+                primitive: PcbPrimitive::Pad(PcbPad {
+                    common: primitive_common_for_board(
+                        &p.layer,
+                        &p.net,
+                        &p.component,
+                        p.component_index,
+                        p.flags,
+                        ctx,
+                    )?,
+                    pad_name: p.pad_name.clone(),
+                    unknown_sub1: String::new(),
+                    unknown_sub2: String::new(),
+                    unknown_sub3: String::new(),
+                    location: p.location,
+                    size_top: CoordPoint::new(p.stack.top.x_size, p.stack.top.y_size),
+                    size_mid: CoordPoint::new(p.stack.mid.x_size, p.stack.mid.y_size),
+                    size_bot: CoordPoint::new(p.stack.bot.x_size, p.stack.bot.y_size),
+                    hole_size: p.hole_size,
+                    shape_top: p.stack.top.shape,
+                    shape_mid: p.stack.mid.shape,
+                    shape_bot: p.stack.bot.shape,
+                    rotation: p.rotation,
+                    is_plated: p.is_plated,
+                    daisy_chain_style: DaisyChainStyle::default(),
+                    pad_mode: p.pad_mode,
+                    unknown_63: 0,
+                    cache: PcbPadCache {
+                        plane_connection_style: p.plane_connection,
+                        relief_conductor_width: p.relief_conductor_width,
+                        relief_entries: p.relief_entries as i16,
+                        relief_air_gap: p.relief_air_gap,
+                        power_plane_relief_expansion: Coord::ZERO,
+                        power_plane_clearance: Coord::ZERO,
+                        paste_mask_expansion: p.paste_mask_expansion,
+                        solder_mask_expansion: p.solder_mask_expansion,
+                        planes: 0,
+                        plane_connection_style_valid: TCacheState::Valid,
+                        relief_conductor_width_valid: TCacheState::Valid,
+                        relief_entries_valid: TCacheState::Valid,
+                        relief_air_gap_valid: TCacheState::Valid,
+                        power_plane_relief_expansion_valid: TCacheState::default(),
+                        paste_mask_expansion_valid: TCacheState::Valid,
+                        solder_mask_expansion_valid: TCacheState::Valid,
+                        power_plane_clearance_valid: TCacheState::default(),
+                        planes_valid: TCacheState::default(),
+                    },
+                    selection_memory_flags: 0,
+                    union_index: 0,
+                    jumper_id: 0,
+                    v7_layer_override: 0,
+                    is_assy_testpoint_top: false,
+                    is_assy_testpoint_bottom: false,
+                    use_separate_expansions: false,
+                    solder_mask_bottom_expansion: 0,
+                    solder_mask_expansion_from_hole_edge: false,
+                    template_link_library_id: [0u8; 16],
+                    template_link_template_id: [0u8; 16],
+                    pin_package_length: Coord::ZERO,
+                    hole_positive_tolerance: 0,
+                    hole_negative_tolerance: 0,
+                    unknown_170: 0,
+                    has_sub4_extension: false,
+                    sub4_extension: None,
+                    thermal_reliefs: Vec::new(),
+                    stack_data: None,
+                    unique_id: p.unique_id.clone(),
+                }),
+            })
         })
         .collect()
 }
 
-fn build_fill_records(fills: &[Fill], ctx: &WriteContext) -> Vec<ParsedPrimitiveRecord> {
+fn build_fill_records(fills: &[Fill], ctx: &WriteContext) -> Result<Vec<ParsedPrimitiveRecord>> {
     fills
         .iter()
-        .map(|f| ParsedPrimitiveRecord {
-            object_id: PcbObjectId::Fill,
-            primitive: PcbPrimitive::Fill(PcbFill {
-                common: primitive_common_for_board(&f.layer, &f.net, &f.component, ctx),
-                corner_1: f.corner1,
-                corner_2: f.corner2,
-                rotation: f.rotation,
-                user_routed: None,
-                union_index: None,
-                layer_enum_index: Some(f.layer.v7()),
-                keepout_restrictions: None,
-            }),
+        .map(|f| {
+            reject_unique_id("fill", &f.unique_id)?;
+            Ok(ParsedPrimitiveRecord {
+                object_id: PcbObjectId::Fill,
+                primitive: PcbPrimitive::Fill(PcbFill {
+                    common: primitive_common_for_board(
+                        &f.layer,
+                        &f.net,
+                        &f.component,
+                        f.component_index,
+                        f.flags,
+                        ctx,
+                    )?,
+                    corner_1: f.corner1,
+                    corner_2: f.corner2,
+                    rotation: f.rotation,
+                    user_routed: None,
+                    union_index: None,
+                    layer_enum_index: Some(f.layer.v7()),
+                    keepout_restrictions: None,
+                }),
+            })
         })
         .collect()
 }
@@ -830,16 +939,24 @@ fn build_text_records(
     texts: &[Text],
     ctx: &WriteContext,
     wide_indices: &[i32],
-) -> Vec<ParsedPrimitiveRecord> {
+) -> Result<Vec<ParsedPrimitiveRecord>> {
     texts
         .iter()
         .enumerate()
         .map(|(i, t)| {
+            reject_unique_id("text", &t.unique_id)?;
             let wide_string_index = wide_indices.get(i).copied().unwrap_or(-1);
-            ParsedPrimitiveRecord {
+            Ok(ParsedPrimitiveRecord {
                 object_id: PcbObjectId::Text,
                 primitive: PcbPrimitive::Text(PcbText {
-                    common: primitive_common_for_board(&t.layer, &None, &t.component, ctx),
+                    common: primitive_common_for_board(
+                        &t.layer,
+                        &None,
+                        &t.component,
+                        t.component_index,
+                        t.flags,
+                        ctx,
+                    )?,
                     location: t.location,
                     height: t.height,
                     stroke_font_type: 0,
@@ -889,97 +1006,122 @@ fn build_text_records(
                     snap_point_y: None,
                     text: t.text.clone(),
                 }),
-            }
+            })
         })
         .collect()
 }
 
-fn build_region_records(regions: &[Region], ctx: &WriteContext) -> Vec<ParsedPrimitiveRecord> {
+fn build_region_records(
+    regions: &[Region],
+    ctx: &WriteContext,
+) -> Result<Vec<ParsedPrimitiveRecord>> {
     regions
         .iter()
-        .map(|r| ParsedPrimitiveRecord {
-            object_id: PcbObjectId::Region,
-            primitive: PcbPrimitive::Region(PcbRegion {
-                common: primitive_common_for_board(&r.layer, &r.net, &r.component, ctx),
-                kind: r.kind,
-                v7_layer: r.layer.display_name().unwrap_or("").to_owned(),
-                name: String::new(),
-                param_kind: 0,
-                subpoly_index: 0,
-                union_index: 0,
-                arc_resolution: Coord::ZERO,
-                is_shape_based: false,
-                cavity_height: Coord::ZERO,
-                keepout_restrictions: 0,
-                layer: String::new(),
-                keepout: r.is_keepout,
-                is_board_cutout: r.is_board_cutout,
-                pad_index: -1,
-                object_kind: String::new(),
-                bending_line_count: 0,
-                locked_3d: false,
-                layer_stack_id: String::new(),
-                outline: Contour::Legacy(r.outline.clone()),
-                holes: r.holes.iter().map(|h| Contour::Legacy(h.clone())).collect(),
-                shape_text_segments: None,
-                hole_shape_text_segments: Vec::new(),
-                unique_id: None,
-            }),
+        .map(|r| {
+            reject_unique_id("region", &r.unique_id)?;
+            Ok(ParsedPrimitiveRecord {
+                object_id: PcbObjectId::Region,
+                primitive: PcbPrimitive::Region(PcbRegion {
+                    common: primitive_common_for_board(
+                        &r.layer,
+                        &r.net,
+                        &r.component,
+                        r.component_index,
+                        r.flags,
+                        ctx,
+                    )?,
+                    kind: r.kind,
+                    v7_layer: r.layer.display_name().unwrap_or("").to_owned(),
+                    name: String::new(),
+                    param_kind: 0,
+                    subpoly_index: 0,
+                    union_index: 0,
+                    arc_resolution: Coord::ZERO,
+                    is_shape_based: false,
+                    cavity_height: Coord::ZERO,
+                    keepout_restrictions: 0,
+                    layer: String::new(),
+                    keepout: r.is_keepout,
+                    is_board_cutout: r.is_board_cutout,
+                    pad_index: -1,
+                    object_kind: String::new(),
+                    bending_line_count: 0,
+                    locked_3d: false,
+                    layer_stack_id: String::new(),
+                    outline: Contour::Legacy(r.outline.clone()),
+                    holes: r.holes.iter().map(|h| Contour::Legacy(h.clone())).collect(),
+                    shape_text_segments: None,
+                    hole_shape_text_segments: Vec::new(),
+                    unique_id: None,
+                }),
+            })
         })
         .collect()
 }
 
-fn build_body_records(bodies: &[ComponentBody], ctx: &WriteContext) -> Vec<ParsedPrimitiveRecord> {
+fn build_body_records(
+    bodies: &[ComponentBody],
+    ctx: &WriteContext,
+) -> Result<Vec<ParsedPrimitiveRecord>> {
     bodies
         .iter()
-        .map(|b| ParsedPrimitiveRecord {
-            object_id: PcbObjectId::ComponentBody,
-            primitive: PcbPrimitive::ComponentBody(PcbComponentBody {
-                common: primitive_common_for_board(&b.layer, &None, &b.component, ctx),
-                v7_layer: b.layer.display_name().unwrap_or("").to_owned(),
-                name: String::new(),
-                kind: 0,
-                subpoly_index: -1,
-                union_index: 0,
-                arc_resolution: Coord::ZERO,
-                is_shape_based: false,
-                cavity_height: Coord::ZERO,
-                standoff_height: b.standoff_height,
-                overall_height: b.overall_height,
-                body_projection: 0,
-                body_color_3d: b.body_color_3d,
-                body_opacity_3d: b.body_opacity_3d,
-                identifier: String::new(),
-                texture: String::new(),
-                texture_center_x: Coord::ZERO,
-                texture_center_y: Coord::ZERO,
-                texture_size_x: Coord::ZERO,
-                texture_size_y: Coord::ZERO,
-                texture_rotation: 0.0,
-                body_override_color: false,
-                model_guid: String::new(),
-                model_checksum: String::new(),
-                model_embed: false,
-                model_name: b.model_name.clone(),
-                model_2d_x: Coord::ZERO,
-                model_2d_y: Coord::ZERO,
-                model_2d_rotation: 0.0,
-                rotation_x: 0.0,
-                rotation_y: 0.0,
-                rotation_z: 0.0,
-                model_3d_dz: Coord::ZERO,
-                model_type: 0,
-                model_source: String::new(),
-                model_snap_points: Vec::new(),
-                model_extruded_min_z: Coord::ZERO,
-                model_extruded_max_z: Coord::ZERO,
-                model_cylinder_radius: Coord::ZERO,
-                model_cylinder_height: Coord::ZERO,
-                model_sphere_radius: Coord::ZERO,
-                outline: Contour::Legacy(b.outline.clone()),
-                shape_text_segments: None,
-                unique_id: None,
-            }),
+        .map(|b| {
+            Ok(ParsedPrimitiveRecord {
+                object_id: PcbObjectId::ComponentBody,
+                primitive: PcbPrimitive::ComponentBody(PcbComponentBody {
+                    common: primitive_common_for_board(
+                        &b.layer,
+                        &None,
+                        &b.component,
+                        b.component_index,
+                        PcbFlags::default(),
+                        ctx,
+                    )?,
+                    v7_layer: b.layer.display_name().unwrap_or("").to_owned(),
+                    name: String::new(),
+                    kind: 0,
+                    subpoly_index: -1,
+                    union_index: 0,
+                    arc_resolution: Coord::ZERO,
+                    is_shape_based: false,
+                    cavity_height: Coord::ZERO,
+                    standoff_height: b.standoff_height,
+                    overall_height: b.overall_height,
+                    body_projection: 0,
+                    body_color_3d: b.body_color_3d,
+                    body_opacity_3d: b.body_opacity_3d,
+                    identifier: String::new(),
+                    texture: String::new(),
+                    texture_center_x: Coord::ZERO,
+                    texture_center_y: Coord::ZERO,
+                    texture_size_x: Coord::ZERO,
+                    texture_size_y: Coord::ZERO,
+                    texture_rotation: 0.0,
+                    body_override_color: false,
+                    model_guid: String::new(),
+                    model_checksum: String::new(),
+                    model_embed: false,
+                    model_name: b.model_name.clone(),
+                    model_2d_x: Coord::ZERO,
+                    model_2d_y: Coord::ZERO,
+                    model_2d_rotation: 0.0,
+                    rotation_x: 0.0,
+                    rotation_y: 0.0,
+                    rotation_z: 0.0,
+                    model_3d_dz: Coord::ZERO,
+                    model_type: 0,
+                    model_source: String::new(),
+                    model_snap_points: Vec::new(),
+                    model_extruded_min_z: Coord::ZERO,
+                    model_extruded_max_z: Coord::ZERO,
+                    model_cylinder_radius: Coord::ZERO,
+                    model_cylinder_height: Coord::ZERO,
+                    model_sphere_radius: Coord::ZERO,
+                    outline: Contour::Legacy(b.outline.clone()),
+                    shape_text_segments: None,
+                    unique_id: None,
+                }),
+            })
         })
         .collect()
 }
@@ -1102,7 +1244,9 @@ fn preserve_via_fields(new: &mut PcbVia, old: &PcbVia) {
     new.counter_hole_angle = old.counter_hole_angle;
     new.via_structure_type = old.via_structure_type;
     new.legacy_tail = old.legacy_tail.clone();
-    new.unique_id = old.unique_id.clone();
+    if new.unique_id.is_none() {
+        new.unique_id = old.unique_id.clone();
+    }
 }
 
 fn preserve_pad_fields(new: &mut PcbPad, old: &PcbPad) {
@@ -1140,7 +1284,9 @@ fn preserve_pad_fields(new: &mut PcbPad, old: &PcbPad) {
     new.sub4_extension = old.sub4_extension.clone();
     new.thermal_reliefs = old.thermal_reliefs.clone();
     new.stack_data = old.stack_data.clone();
-    new.unique_id = old.unique_id.clone();
+    if new.unique_id.is_none() {
+        new.unique_id = old.unique_id.clone();
+    }
 }
 
 fn preserve_fill_fields(new: &mut PcbFill, old: &PcbFill) {
@@ -1209,7 +1355,9 @@ fn preserve_region_fields(new: &mut PcbRegion, old: &PcbRegion) {
     new.bending_line_count = old.bending_line_count;
     new.locked_3d = old.locked_3d;
     new.layer_stack_id = old.layer_stack_id.clone();
-    new.unique_id = old.unique_id.clone();
+    if new.unique_id.is_none() {
+        new.unique_id = old.unique_id.clone();
+    }
     // Preserve contour data to maintain the correct binary format (Legacy vs ShapeBased).
     // build_region_records always produces Contour::Legacy from the public API's Vec<CoordPoint>,
     // but ShapeBasedRegions6 records require Contour::ShapeBased (TPolySegment format).
@@ -1255,7 +1403,9 @@ fn preserve_body_fields(new: &mut PcbComponentBody, old: &PcbComponentBody) {
     new.model_cylinder_radius = old.model_cylinder_radius;
     new.model_cylinder_height = old.model_cylinder_height;
     new.model_sphere_radius = old.model_sphere_radius;
-    new.unique_id = old.unique_id.clone();
+    if new.unique_id.is_none() {
+        new.unique_id = old.unique_id.clone();
+    }
 }
 
 // ── WideStrings6 rebuilding ────────────────────────────────────────────────
@@ -1660,7 +1810,7 @@ pub(crate) fn build_polygon_record_for_test(
             .enumerate()
             .map(|(i, n)| ((*n).to_owned(), i as u16))
             .collect(),
-        component_indices: HashMap::new(),
+        component_designators: Vec::new(),
     };
     build_polygon_record(poly, &ctx).map(|r| r.params)
 }
@@ -1689,7 +1839,7 @@ mod tests {
     fn write_ctx() -> WriteContext {
         WriteContext {
             net_indices: HashMap::from([("GND".to_owned(), 0), ("P2V5".to_owned(), 1)]),
-            component_indices: HashMap::new(),
+            component_designators: Vec::new(),
         }
     }
 
@@ -1766,6 +1916,39 @@ mod tests {
         let written = build_polygon_record(&poly, &write_ctx()).unwrap();
         assert_eq!(written.params.get("R0"), Some("0mil"));
         assert_eq!(written.params.get("SA0"), Some(" 0.00000000000000E+0000"));
+    }
+
+    #[test]
+    fn component_resolution_prefers_index_and_rejects_ambiguity() {
+        let ctx = WriteContext {
+            net_indices: HashMap::new(),
+            component_designators: vec!["R14".to_owned(), "R14".to_owned(), "C1".to_owned()],
+        };
+        let r14 = Some("R14".to_owned());
+        assert_eq!(ctx.resolve_component_index(&None, None).unwrap(), 0xFFFF);
+        assert_eq!(ctx.resolve_component_index(&r14, Some(1)).unwrap(), 1);
+        assert_eq!(ctx.resolve_component_index(&None, Some(1)).unwrap(), 1);
+        assert_eq!(
+            ctx.resolve_component_index(&Some("C1".to_owned()), None)
+                .unwrap(),
+            2
+        );
+        for (designator, index, needle) in [
+            (r14.clone(), None, "several components"),
+            (Some("U9".to_owned()), None, "no component"),
+            (Some("C1".to_owned()), Some(0), "disagrees"),
+            (None, Some(3), "outside"),
+        ] {
+            let err = ctx.resolve_component_index(&designator, index).unwrap_err();
+            assert!(err.to_string().contains(needle), "{needle}: {err}");
+        }
+    }
+
+    #[test]
+    fn non_pad_unique_ids_are_rejected_not_dropped() {
+        assert!(reject_unique_id("track", &None).is_ok());
+        let err = reject_unique_id("track", &Some("ABCDEFGH".to_owned())).unwrap_err();
+        assert!(err.to_string().contains("ABCDEFGH"), "{err}");
     }
 
     #[test]

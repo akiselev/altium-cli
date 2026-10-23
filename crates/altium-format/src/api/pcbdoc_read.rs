@@ -12,7 +12,8 @@ use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, PolyHatchStyle,
     PolySegmentKind, PolygonType, RegionKind, RuleKind, V6Layer, V7Layer,
 };
-use altium_format_types::{DielectricType, LayerStackStyle};
+use altium_format_types::{DielectricType, LayerStackStyle, PcbObjectId};
+use std::collections::HashMap;
 
 use crate::AltiumFormatError;
 use crate::api::pcb_common::{
@@ -44,6 +45,8 @@ struct ConvertContext {
     component_designators: Vec<String>,
     /// WideStrings6 index → text (for PcbText wide_string_index).
     wide_strings: Vec<String>,
+    /// Pads6 record index → unique id (UniqueIDPrimitiveInformation).
+    pad_unique_ids: HashMap<usize, String>,
 }
 
 impl ConvertContext {
@@ -79,6 +82,26 @@ impl ConvertContext {
                     self.net_names.len()
                 ),
             })
+    }
+
+    /// Resolve a primitive's component index: 0xFFFF is "no component", an
+    /// index outside Components6 is an error.
+    fn component_index(&self, index: u16) -> Result<Option<usize>> {
+        if index == 0xFFFF {
+            return Ok(None);
+        }
+        let i = usize::from(index);
+        if i < self.component_designators.len() {
+            Ok(Some(i))
+        } else {
+            Err(AltiumFormatError::InvalidParamValue {
+                key: "component index".to_owned(),
+                detail: format!(
+                    "{i} outside Components6 ({} components)",
+                    self.component_designators.len()
+                ),
+            })
+        }
     }
 
     fn resolve_wide_string(&self, index: i32) -> Option<String> {
@@ -151,7 +174,7 @@ pub(crate) fn board_from_internal(doc: &PcbDoc) -> Result<PcbDocBoard> {
                 &mut texts,
                 &mut regions,
                 &mut component_bodies,
-            );
+            )?;
         }
     }
 
@@ -224,11 +247,74 @@ fn build_context(doc: &PcbDoc) -> Result<ConvertContext> {
         }
     }
 
+    let pad_unique_ids =
+        convert_unique_id_primitive_information(doc).context("UniqueIDPrimitiveInformation")?;
+
     Ok(ConvertContext {
         net_names,
         component_designators,
         wide_strings,
+        pad_unique_ids,
     })
+}
+
+/// Read UniqueIDPrimitiveInformation: `PRIMITIVEINDEX`, `PRIMITIVEOBJECTID`,
+/// `UNIQUEID` per record. Only `Pad` entries occur in the test corpus (58,719
+/// of them) and only those are mapped; another object kind, an index outside
+/// Pads6, a repeated index or an unknown key is an error.
+fn convert_unique_id_primitive_information(doc: &PcbDoc) -> Result<HashMap<usize, String>> {
+    let Some(records) = find_param_section(doc, ParamSectionKind::UniqueIdPrimitiveInformation)
+    else {
+        return Ok(HashMap::new());
+    };
+    let pad_count = doc
+        .sections
+        .iter()
+        .find_map(|s| match s {
+            PcbDocSection::Primitive(p) if p.kind == PrimitiveSectionKind::Pads6 => {
+                Some(p.records.len())
+            }
+            _ => None,
+        })
+        .unwrap_or(0);
+    pad_unique_ids_from_records(records, pad_count)
+}
+
+fn pad_unique_ids_from_records(
+    records: &[crate::pcbdoc::records::StandardParamRecord],
+    pad_count: usize,
+) -> Result<HashMap<usize, String>> {
+    let mut ids = HashMap::with_capacity(records.len());
+    for (idx, rec) in records.iter().enumerate() {
+        let mut params = rec.params.clone();
+        let entry = (|| -> Result<(usize, String)> {
+            let index: usize = params.remove_required("PRIMITIVEINDEX")?;
+            let object: String = params.remove_required("PRIMITIVEOBJECTID")?;
+            let unique_id: String = params.remove_required("UNIQUEID")?;
+            params.assert_exhausted()?;
+            if object != PcbObjectId::Pad.to_string() {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: "PRIMITIVEOBJECTID".to_owned(),
+                    detail: format!("unique ids for {object:?} primitives are not supported"),
+                });
+            }
+            if index >= pad_count {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: "PRIMITIVEINDEX".to_owned(),
+                    detail: format!("pad index {index} outside Pads6 ({pad_count} pads)"),
+                });
+            }
+            Ok((index, unique_id))
+        })()
+        .with_context(|| format!("record #{idx}"))?;
+        if ids.insert(entry.0, entry.1).is_some() {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "PRIMITIVEINDEX".to_owned(),
+                detail: format!("record #{idx}: pad index {} repeated", entry.0),
+            });
+        }
+    }
+    Ok(ids)
 }
 
 // ── Named collection converters ─────────────────────────────────────────────
@@ -341,6 +427,15 @@ fn convert_components(doc: &PcbDoc) -> Result<Vec<PcbDocComponent>> {
         let source_hierarchical_path: String = params
             .remove_with_default("SOURCEHIERARCHICALPATH", String::new())
             .context("Components6 source_hierarchical_path")?;
+        let unique_id: String = params
+            .remove_required("UNIQUEID")
+            .context("Components6 UNIQUEID")?;
+        let locked: bool = params
+            .remove_required("LOCKED")
+            .context("Components6 LOCKED")?;
+        let primitive_lock: bool = params
+            .remove_required("PRIMITIVELOCK")
+            .context("Components6 PRIMITIVELOCK")?;
 
         let id = designator.clone();
         components.push(PcbDocComponent {
@@ -355,6 +450,9 @@ fn convert_components(doc: &PcbDoc) -> Result<Vec<PcbDocComponent>> {
             source_lib_reference,
             source_unique_id,
             source_hierarchical_path,
+            unique_id,
+            locked,
+            primitive_lock,
             parameters: Vec::new(),
         });
     }
@@ -1270,35 +1368,28 @@ fn convert_primitive_section(
     texts: &mut Vec<Text>,
     regions: &mut Vec<Region>,
     component_bodies: &mut Vec<ComponentBody>,
-) {
-    for record in &section.records {
-        match &record.primitive {
-            PcbPrimitive::Track(t) => {
-                tracks.push(track_from_internal(tracks.len(), t, ctx));
+) -> Result<()> {
+    for (idx, record) in section.records.iter().enumerate() {
+        let converted = (|| -> Result<()> {
+            match &record.primitive {
+                PcbPrimitive::Track(t) => tracks.push(track_from_internal(tracks.len(), t, ctx)?),
+                PcbPrimitive::Arc(a) => arcs.push(arc_from_internal(arcs.len(), a, ctx)?),
+                PcbPrimitive::Via(v) => vias.push(via_from_internal(vias.len(), v, ctx)?),
+                PcbPrimitive::Pad(p) => pads.push(pad_from_internal(pads.len(), p, ctx)?),
+                PcbPrimitive::Fill(f) => fills.push(fill_from_internal(fills.len(), f, ctx)?),
+                PcbPrimitive::Text(t) => texts.push(text_from_internal(texts.len(), t, ctx)?),
+                PcbPrimitive::Region(r) => {
+                    regions.push(region_from_internal(regions.len(), r, ctx)?)
+                }
+                PcbPrimitive::ComponentBody(b) => {
+                    component_bodies.push(body_from_internal(component_bodies.len(), b, ctx)?)
+                }
             }
-            PcbPrimitive::Arc(a) => {
-                arcs.push(arc_from_internal(arcs.len(), a, ctx));
-            }
-            PcbPrimitive::Via(v) => {
-                vias.push(via_from_internal(vias.len(), v, ctx));
-            }
-            PcbPrimitive::Pad(p) => {
-                pads.push(pad_from_internal(pads.len(), p, ctx));
-            }
-            PcbPrimitive::Fill(f) => {
-                fills.push(fill_from_internal(fills.len(), f, ctx));
-            }
-            PcbPrimitive::Text(t) => {
-                texts.push(text_from_internal(texts.len(), t, ctx));
-            }
-            PcbPrimitive::Region(r) => {
-                regions.push(region_from_internal(regions.len(), r, ctx));
-            }
-            PcbPrimitive::ComponentBody(b) => {
-                component_bodies.push(body_from_internal(component_bodies.len(), b, ctx));
-            }
-        }
+            Ok(())
+        })();
+        converted.with_context(|| format!("{:?} record #{idx}", section.kind))?;
     }
+    Ok(())
 }
 
 // ── Per-type converters ─────────────────────────────────────────────────────
@@ -1315,37 +1406,43 @@ fn track_from_internal(
     idx: usize,
     t: &crate::pcbdoc::primitives::PcbTrack,
     ctx: &ConvertContext,
-) -> Track {
-    Track {
+) -> Result<Track> {
+    Ok(Track {
         id: format!("track_{idx}"),
         layer: resolve_layer_v6_v7(t.common.layer, t.layer_enum_index),
         net: ctx.resolve_net(t.common.net_index),
         component: ctx.resolve_component(t.common.component_index),
+        unique_id: None,
+        component_index: ctx.component_index(t.common.component_index)?,
+        flags: t.common.flags,
         start: t.start,
         end: t.end,
         width: t.width,
-    }
+    })
 }
 
 fn arc_from_internal(
     idx: usize,
     a: &crate::pcbdoc::primitives::PcbArc,
     ctx: &ConvertContext,
-) -> Arc {
-    Arc {
+) -> Result<Arc> {
+    Ok(Arc {
         id: format!("arc_{idx}"),
         layer: resolve_layer_v6_v7(a.common.layer, a.layer_enum_index),
         net: ctx.resolve_net(a.common.net_index),
         component: ctx.resolve_component(a.common.component_index),
+        unique_id: None,
+        component_index: ctx.component_index(a.common.component_index)?,
+        flags: a.common.flags,
         center: a.center,
         radius: a.radius,
         start_angle: a.start_angle,
         end_angle: a.end_angle,
         width: a.width,
-    }
+    })
 }
 
-fn via_from_internal(idx: usize, v: &PcbVia, ctx: &ConvertContext) -> Via {
+fn via_from_internal(idx: usize, v: &PcbVia, ctx: &ConvertContext) -> Result<Via> {
     // Solder mask expansion: use front expansion if the override flag is set.
     let solder_mask_expansion = if v.solder_mask_override {
         Some(v.solder_mask_expansion_front)
@@ -1353,27 +1450,33 @@ fn via_from_internal(idx: usize, v: &PcbVia, ctx: &ConvertContext) -> Via {
         None
     };
 
-    Via {
+    Ok(Via {
         id: format!("via_{idx}"),
         net: ctx.resolve_net(v.common.net_index),
         component: ctx.resolve_component(v.common.component_index),
+        unique_id: None,
+        component_index: ctx.component_index(v.common.component_index)?,
+        flags: v.common.flags,
         location: v.location,
         diameter: v.diameter,
         hole_size: v.hole_size,
         from_layer: LayerRef::from_v6(v.from_layer),
         to_layer: LayerRef::from_v6(v.to_layer),
         solder_mask_expansion,
-    }
+    })
 }
 
-fn pad_from_internal(idx: usize, p: &PcbPad, ctx: &ConvertContext) -> Pad {
+fn pad_from_internal(idx: usize, p: &PcbPad, ctx: &ConvertContext) -> Result<Pad> {
     let stack = extract_pad_stack(p);
-    Pad {
+    Ok(Pad {
         id: format!("pad_{idx}"),
         pad_name: p.pad_name.clone(),
         layer: LayerRef::from_v6(p.common.layer),
         net: ctx.resolve_net(p.common.net_index),
         component: ctx.resolve_component(p.common.component_index),
+        unique_id: ctx.pad_unique_ids.get(&idx).cloned(),
+        component_index: ctx.component_index(p.common.component_index)?,
+        flags: p.common.flags,
         location: p.location,
         shape: p.shape_top,
         x_size: p.size_top.x,
@@ -1391,44 +1494,50 @@ fn pad_from_internal(idx: usize, p: &PcbPad, ctx: &ConvertContext) -> Pad {
         stack,
         swap_id_pin: None,
         swap_id_part: None,
-    }
+    })
 }
 
 fn fill_from_internal(
     idx: usize,
     f: &crate::pcbdoc::primitives::PcbFill,
     ctx: &ConvertContext,
-) -> Fill {
+) -> Result<Fill> {
     let layer = match f.layer_enum_index {
         Some(v7) => LayerRef::from_v6_and_v7(f.common.layer, v7),
         None => LayerRef::from_v6(f.common.layer),
     };
-    Fill {
+    Ok(Fill {
         id: format!("fill_{idx}"),
         layer,
         net: ctx.resolve_net(f.common.net_index),
         component: ctx.resolve_component(f.common.component_index),
+        unique_id: None,
+        component_index: ctx.component_index(f.common.component_index)?,
+        flags: f.common.flags,
         corner1: f.corner_1,
         corner2: f.corner_2,
         rotation: f.rotation,
-    }
+    })
 }
 
 fn text_from_internal(
     idx: usize,
     t: &crate::pcbdoc::primitives::PcbText,
     ctx: &ConvertContext,
-) -> Text {
+) -> Result<Text> {
     // Resolve wide string if the index is valid.
     let text = ctx
         .resolve_wide_string(t.wide_string_index)
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| t.text.clone());
 
-    Text {
+    Ok(Text {
         id: format!("text_{idx}"),
         layer: LayerRef::from_v6(t.common.layer),
         component: ctx.resolve_component(t.common.component_index),
+        unique_id: None,
+        component_index: ctx.component_index(t.common.component_index)?,
+        flags: t.common.flags,
         location: t.location,
         text,
         height: t.height,
@@ -1438,7 +1547,7 @@ fn text_from_internal(
         is_mirrored: t.is_mirrored,
         is_comment: t.is_comment,
         is_designator: t.is_designator,
-    }
+    })
 }
 
 fn contour_to_coord_points(contour: &Contour) -> Vec<CoordPoint> {
@@ -1448,42 +1557,50 @@ fn contour_to_coord_points(contour: &Contour) -> Vec<CoordPoint> {
     }
 }
 
-fn region_from_internal(idx: usize, r: &PcbRegion, ctx: &ConvertContext) -> Region {
+fn region_from_internal(idx: usize, r: &PcbRegion, ctx: &ConvertContext) -> Result<Region> {
     let layer = if !r.v7_layer.is_empty() {
         LayerRef::from_string_name(&r.v7_layer).unwrap_or_else(|| LayerRef::from_v6(r.common.layer))
     } else {
         LayerRef::from_v6(r.common.layer)
     };
-    Region {
+    Ok(Region {
         id: format!("region_{idx}"),
         layer,
         net: ctx.resolve_net(r.common.net_index),
         component: ctx.resolve_component(r.common.component_index),
+        unique_id: None,
+        component_index: ctx.component_index(r.common.component_index)?,
+        flags: r.common.flags,
         kind: r.kind,
         outline: contour_to_coord_points(&r.outline),
         holes: r.holes.iter().map(contour_to_coord_points).collect(),
         is_board_cutout: r.is_board_cutout,
         is_keepout: r.keepout,
-    }
+    })
 }
 
-fn body_from_internal(idx: usize, b: &PcbComponentBody, ctx: &ConvertContext) -> ComponentBody {
+fn body_from_internal(
+    idx: usize,
+    b: &PcbComponentBody,
+    ctx: &ConvertContext,
+) -> Result<ComponentBody> {
     let layer = if !b.v7_layer.is_empty() {
         LayerRef::from_string_name(&b.v7_layer).unwrap_or_else(|| LayerRef::from_v6(b.common.layer))
     } else {
         LayerRef::from_v6(b.common.layer)
     };
-    ComponentBody {
+    Ok(ComponentBody {
         id: format!("body_{idx}"),
         layer,
         component: ctx.resolve_component(b.common.component_index),
+        component_index: ctx.component_index(b.common.component_index)?,
         standoff_height: b.standoff_height,
         overall_height: b.overall_height,
         body_color_3d: b.body_color_3d,
         body_opacity_3d: b.body_opacity_3d,
         model_name: b.model_name.clone(),
         outline: contour_to_coord_points(&b.outline),
-    }
+    })
 }
 
 // ── Board outline extraction ────────────────────────────────────────────────
@@ -1623,6 +1740,7 @@ pub(crate) fn convert_polygon_for_test(
         net_names: net_names.iter().map(|n| (*n).to_owned()).collect(),
         component_designators: Vec::new(),
         wide_strings: Vec::new(),
+        pad_unique_ids: HashMap::new(),
     };
     convert_polygon(0, record, &ctx)
 }
@@ -1656,6 +1774,7 @@ mod tests {
             net_names: vec!["GND".to_owned(), "P2V5".to_owned()],
             component_designators: Vec::new(),
             wide_strings: Vec::new(),
+            pad_unique_ids: HashMap::new(),
         }
     }
 
@@ -1858,6 +1977,67 @@ mod tests {
         ] {
             assert!(layer_from_param_value("LAYER", bad).is_err(), "{bad}");
         }
+    }
+
+    fn uid_records(texts: &[&str]) -> Vec<crate::pcbdoc::records::StandardParamRecord> {
+        texts
+            .iter()
+            .map(|t| crate::pcbdoc::records::StandardParamRecord { params: params(t) })
+            .collect()
+    }
+
+    #[test]
+    fn pad_unique_ids_map_pads6_indices() {
+        let ids = pad_unique_ids_from_records(
+            &uid_records(&[
+                "|PRIMITIVEINDEX=0|PRIMITIVEOBJECTID=Pad|UNIQUEID=DINYCLKT|",
+                "|PRIMITIVEINDEX=2|PRIMITIVEOBJECTID=Pad|UNIQUEID=ACIAFCKO|",
+            ]),
+            3,
+        )
+        .unwrap();
+        assert_eq!(ids.get(&0).map(String::as_str), Some("DINYCLKT"));
+        assert_eq!(ids.get(&1), None);
+        assert_eq!(ids.get(&2).map(String::as_str), Some("ACIAFCKO"));
+    }
+
+    #[test]
+    fn pad_unique_ids_reject_bad_records() {
+        for (records, needle) in [
+            (
+                vec!["|PRIMITIVEINDEX=0|PRIMITIVEOBJECTID=Track|UNIQUEID=A|"],
+                "Track",
+            ),
+            (
+                vec!["|PRIMITIVEINDEX=3|PRIMITIVEOBJECTID=Pad|UNIQUEID=A|"],
+                "outside Pads6",
+            ),
+            (
+                vec![
+                    "|PRIMITIVEINDEX=1|PRIMITIVEOBJECTID=Pad|UNIQUEID=A|",
+                    "|PRIMITIVEINDEX=1|PRIMITIVEOBJECTID=Pad|UNIQUEID=B|",
+                ],
+                "repeated",
+            ),
+            (
+                vec!["|PRIMITIVEINDEX=1|PRIMITIVEOBJECTID=Pad|UNIQUEID=A|EXTRA=1|"],
+                "EXTRA",
+            ),
+            (vec!["|PRIMITIVEINDEX=1|PRIMITIVEOBJECTID=Pad|"], "UNIQUEID"),
+        ] {
+            let err = pad_unique_ids_from_records(&uid_records(&records), 3).unwrap_err();
+            assert!(format!("{err}").contains(needle), "{needle}: {err}");
+        }
+    }
+
+    #[test]
+    fn component_index_rejects_out_of_range() {
+        let mut c = ctx();
+        c.component_designators = vec!["R14".to_owned(), "R14".to_owned()];
+        assert_eq!(c.component_index(0xFFFF).unwrap(), None);
+        assert_eq!(c.component_index(1).unwrap(), Some(1));
+        let err = c.component_index(2).unwrap_err();
+        assert!(err.to_string().contains("outside Components6"), "{err}");
     }
 }
 

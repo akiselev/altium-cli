@@ -17,8 +17,8 @@ use altium_format_types::pcb::{
     FanoutDirection, FanoutStyle, NetTopology, PolygonReliefAngle, RouteVia,
 };
 use altium_format_types::pcb::{
-    ClassMemberKind, DimensionKind, LayerRef, PadShape, PadStackMode, PlaneConnectionStyle,
-    PolyHatchStyle, PolygonType, RegionKind, RuleKind,
+    ClassMemberKind, DimensionKind, LayerRef, PadShape, PadStackMode, PcbFlags,
+    PlaneConnectionStyle, PolyHatchStyle, PolygonType, RegionKind, RuleKind,
 };
 use altium_format_types::{
     ComponentPlacementType, ConfinementStyle, DielectricType, LayerStackStyle, NetScope,
@@ -212,6 +212,14 @@ pub struct PcbDocComponent {
     pub source_lib_reference: String,
     pub source_unique_id: String,
     pub source_hierarchical_path: String,
+    /// Altium's 8-letter object id (Components6 `UNIQUEID`). Empty on a
+    /// component built by hand; the writer then generates one.
+    pub unique_id: String,
+    /// Components6 `LOCKED`: the component cannot be moved.
+    pub locked: bool,
+    /// Components6 `PRIMITIVELOCK`: the component's primitives cannot be
+    /// edited on their own.
+    pub primitive_lock: bool,
     /// BOM parameters (name, value) pairs, e.g. ("Value", "100R").
     pub parameters: Vec<(String, String)>,
 }
@@ -536,6 +544,14 @@ pub struct Track {
     pub layer: LayerRef,
     pub net: Option<String>,
     pub component: Option<String>,
+    /// Altium's 8-letter object id from UniqueIDPrimitiveInformation. The
+    /// test corpus stores ids for pads only; `None` when the file has none.
+    pub unique_id: Option<String>,
+    /// Index into [`PcbDocBoard::components`] of the owning component
+    /// (designators are not unique, so this is the reliable link).
+    pub component_index: Option<usize>,
+    /// Primitive flags as stored (selected, locked, …).
+    pub flags: PcbFlags,
     pub start: CoordPoint,
     pub end: CoordPoint,
     pub width: Coord,
@@ -548,6 +564,14 @@ pub struct Arc {
     pub layer: LayerRef,
     pub net: Option<String>,
     pub component: Option<String>,
+    /// Altium's 8-letter object id from UniqueIDPrimitiveInformation. The
+    /// test corpus stores ids for pads only; `None` when the file has none.
+    pub unique_id: Option<String>,
+    /// Index into [`PcbDocBoard::components`] of the owning component
+    /// (designators are not unique, so this is the reliable link).
+    pub component_index: Option<usize>,
+    /// Primitive flags as stored (selected, locked, …).
+    pub flags: PcbFlags,
     pub center: CoordPoint,
     pub radius: Coord,
     pub start_angle: f64,
@@ -561,6 +585,14 @@ pub struct Via {
     pub id: String,
     pub net: Option<String>,
     pub component: Option<String>,
+    /// Altium's 8-letter object id from UniqueIDPrimitiveInformation. The
+    /// test corpus stores ids for pads only; `None` when the file has none.
+    pub unique_id: Option<String>,
+    /// Index into [`PcbDocBoard::components`] of the owning component
+    /// (designators are not unique, so this is the reliable link).
+    pub component_index: Option<usize>,
+    /// Primitive flags as stored (selected, locked, …).
+    pub flags: PcbFlags,
     pub location: CoordPoint,
     pub diameter: Coord,
     pub hole_size: Coord,
@@ -577,6 +609,14 @@ pub struct Pad {
     pub layer: LayerRef,
     pub net: Option<String>,
     pub component: Option<String>,
+    /// Altium's 8-letter object id from UniqueIDPrimitiveInformation. The
+    /// test corpus stores ids for pads only; `None` when the file has none.
+    pub unique_id: Option<String>,
+    /// Index into [`PcbDocBoard::components`] of the owning component
+    /// (designators are not unique, so this is the reliable link).
+    pub component_index: Option<usize>,
+    /// Primitive flags as stored (selected, locked, …).
+    pub flags: PcbFlags,
     pub location: CoordPoint,
     pub shape: PadShape,
     pub x_size: Coord,
@@ -610,6 +650,14 @@ pub struct Fill {
     pub layer: LayerRef,
     pub net: Option<String>,
     pub component: Option<String>,
+    /// Altium's 8-letter object id from UniqueIDPrimitiveInformation. The
+    /// test corpus stores ids for pads only; `None` when the file has none.
+    pub unique_id: Option<String>,
+    /// Index into [`PcbDocBoard::components`] of the owning component
+    /// (designators are not unique, so this is the reliable link).
+    pub component_index: Option<usize>,
+    /// Primitive flags as stored (selected, locked, …).
+    pub flags: PcbFlags,
     pub corner1: CoordPoint,
     pub corner2: CoordPoint,
     pub rotation: f64,
@@ -621,6 +669,14 @@ pub struct Text {
     pub id: String,
     pub layer: LayerRef,
     pub component: Option<String>,
+    /// Altium's 8-letter object id from UniqueIDPrimitiveInformation. The
+    /// test corpus stores ids for pads only; `None` when the file has none.
+    pub unique_id: Option<String>,
+    /// Index into [`PcbDocBoard::components`] of the owning component
+    /// (designators are not unique, so this is the reliable link).
+    pub component_index: Option<usize>,
+    /// Primitive flags as stored (selected, locked, …).
+    pub flags: PcbFlags,
     pub location: CoordPoint,
     pub text: String,
     pub height: Coord,
@@ -639,6 +695,14 @@ pub struct Region {
     pub layer: LayerRef,
     pub net: Option<String>,
     pub component: Option<String>,
+    /// Altium's 8-letter object id from UniqueIDPrimitiveInformation. The
+    /// test corpus stores ids for pads only; `None` when the file has none.
+    pub unique_id: Option<String>,
+    /// Index into [`PcbDocBoard::components`] of the owning component
+    /// (designators are not unique, so this is the reliable link).
+    pub component_index: Option<usize>,
+    /// Primitive flags as stored (selected, locked, …).
+    pub flags: PcbFlags,
     pub kind: RegionKind,
     pub outline: Vec<CoordPoint>,
     pub holes: Vec<Vec<CoordPoint>>,
@@ -652,6 +716,8 @@ pub struct ComponentBody {
     pub id: String,
     pub layer: LayerRef,
     pub component: Option<String>,
+    /// Index into [`PcbDocBoard::components`] of the owning component.
+    pub component_index: Option<usize>,
     pub standoff_height: Coord,
     pub overall_height: Coord,
     pub body_color_3d: Color,

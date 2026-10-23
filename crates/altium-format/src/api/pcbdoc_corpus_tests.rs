@@ -135,3 +135,120 @@ fn corpus_r2_polygons() {
     assert_eq!(split_planes, 105);
     assert_eq!(vertices, 25_070);
 }
+
+/// Identity fields every R4 primitive carries, for comparing a board with
+/// itself after a write.
+fn r4_identity(board: &PcbDocBoard) -> Vec<(String, Option<String>, Option<usize>, u16)> {
+    let mut out = Vec::new();
+    macro_rules! collect {
+        ($list:expr) => {
+            for p in &$list {
+                out.push((
+                    p.id.clone(),
+                    p.unique_id.clone(),
+                    p.component_index,
+                    p.flags.raw(),
+                ));
+            }
+        };
+    }
+    collect!(board.tracks);
+    collect!(board.arcs);
+    collect!(board.vias);
+    collect!(board.pads);
+    collect!(board.fills);
+    collect!(board.texts);
+    collect!(board.regions);
+    out
+}
+
+/// R4: unique ids, component indices, flags and the Components6 identity
+/// fields read on every corpus board, agree with the designators, and survive
+/// `update_board` → `board()` unchanged.
+#[test]
+fn corpus_r4_identity() {
+    let (mut components, mut locked, mut unlocked_primitives, mut pad_ids) = (0, 0, 0, 0);
+    let (mut linked, mut boards_round_tripped, mut regions_compared) = (0, 0, 0);
+    for (name, mut doc) in corpus_docs() {
+        let ctx = build_context(&doc).unwrap_or_else(|e| panic!("{name}: {e}"));
+        pad_ids += ctx.pad_unique_ids.len();
+        for c in convert_components(&doc).unwrap_or_else(|e| panic!("{name}: {e}")) {
+            components += 1;
+            assert_eq!(c.unique_id.len(), 8, "{name}: {}", c.designator);
+            locked += usize::from(c.locked);
+            unlocked_primitives += usize::from(!c.primitive_lock);
+        }
+        let Ok(board) = doc.board() else {
+            assert!(BOARDS_FAILING_AT_BASE.contains(&name.as_str()), "{name}");
+            continue;
+        };
+        let pads_with_ids = board.pads.iter().filter(|p| p.unique_id.is_some()).count();
+        assert_eq!(pads_with_ids, ctx.pad_unique_ids.len(), "{name}");
+        let before = r4_identity(&board);
+        for (id, _, index, _) in &before {
+            if let Some(i) = index {
+                assert!(*i < board.components.len(), "{name}: {id}");
+                linked += 1;
+            }
+        }
+        for p in &board.pads {
+            if let Some(i) = p.component_index {
+                assert_eq!(
+                    p.component.as_deref(),
+                    Some(board.components[i].designator.as_str()),
+                    "{name}: {}",
+                    p.id
+                );
+            }
+        }
+        doc.update_board(&board)
+            .unwrap_or_else(|e| panic!("{name}: update_board: {e}"));
+        let after = doc
+            .board()
+            .unwrap_or_else(|e| panic!("{name}: board() after update: {e}"));
+        // update_board → board() adds one region on 65 of the 79 boards, as it
+        // already did at 18062d6 (pre-existing writer defect, see the lane
+        // report); regions are compared only where their count survives.
+        let regions_kept = after.regions.len() == board.regions.len();
+        if regions_kept {
+            regions_compared += 1;
+        }
+        let keep = |ids: Vec<(String, Option<String>, Option<usize>, u16)>| {
+            ids.into_iter()
+                .filter(|(id, ..)| regions_kept || !id.starts_with("region_"))
+                .collect::<Vec<_>>()
+        };
+        let (before, after_ids) = (keep(before), keep(r4_identity(&after)));
+        assert_eq!(
+            after_ids.len(),
+            before.len(),
+            "{name}: primitive count changed"
+        );
+        if let Some((a, b)) = after_ids.iter().zip(&before).find(|(a, b)| a != b) {
+            panic!("{name}: identity changed on write: {b:?} became {a:?}");
+        }
+        let comp_ids = |b: &PcbDocBoard| -> Vec<(String, bool, bool)> {
+            b.components
+                .iter()
+                .map(|c| (c.unique_id.clone(), c.locked, c.primitive_lock))
+                .collect()
+        };
+        assert_eq!(
+            comp_ids(&after),
+            comp_ids(&board),
+            "{name}: components changed"
+        );
+        boards_round_tripped += 1;
+    }
+    eprintln!(
+        "corpus_r4_identity: {components} components ({locked} locked, {unlocked_primitives} \
+         without primitive lock), {pad_ids} pad unique ids, {linked} primitives linked to a \
+         component, {boards_round_tripped} boards written and re-read \
+         ({regions_compared} with regions compared)"
+    );
+    assert_eq!(components, 14_409);
+    assert_eq!(locked, 395);
+    assert_eq!(unlocked_primitives, 49);
+    assert_eq!(pad_ids, 58_719);
+    assert_eq!(boards_round_tripped, 79);
+}
