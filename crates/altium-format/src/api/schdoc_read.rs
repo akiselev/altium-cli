@@ -893,4 +893,46 @@ mod corpus_tests {
         assert_eq!(alternate, 137);
         assert!(written > 0);
     }
+
+    /// R10: UniqueIDs are the same on every load (missing ones used to be
+    /// filled with random ids); every SchDoc of the corpus is opened twice.
+    #[test]
+    fn corpus_r10_unique_ids_reproducible() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schdoc");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+            .map(|e| e.expect("dir entry").path())
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("schdoc"))
+            })
+            .collect();
+        paths.sort();
+        let ids = |doc: &SchDoc| -> Vec<String> {
+            doc.records
+                .iter()
+                .chain(doc.additional_records.iter())
+                .filter_map(|r| r.unique_id().map(str::to_owned))
+                .collect()
+        };
+        let (mut docs, mut records_with_ids) = (0, 0);
+        for path in &paths {
+            let Ok(first) = SchDoc::open(path) else {
+                continue;
+            };
+            let second = SchDoc::open(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let (a, b) = (ids(&first), ids(&second));
+            assert_eq!(a, b, "{}: ids differ between loads", path.display());
+            let distinct: std::collections::HashSet<&String> = a.iter().collect();
+            assert!(a.iter().all(|id| !id.is_empty()), "{}", path.display());
+            assert!(distinct.len() <= a.len());
+            docs += 1;
+            records_with_ids += a.len();
+        }
+        eprintln!(
+            "corpus_r10_unique_ids_reproducible: {docs} SchDocs opened twice, {records_with_ids} \
+             record ids identical"
+        );
+        assert_eq!(docs, 1_202);
+    }
 }

@@ -534,6 +534,8 @@ All 40+ record types parsed. Flat OWNERINDEX → nested tree conversion. UniqueI
 SchDoc components expose the placed display mode (`SchDocComponent::display_mode`, R9 on branch
 `claude/ecad-b1-altium-r1-r7`); it must be below `display_mode_count` on read and write. Before,
 the writer always stored 0, dropping an alternate placed mode (137 corpus components).
+A record that stores no UniqueID gets a filler derived from its stream and index (R10), so ids
+are the same on every load (they were random); stored ids are never reused.
 
 ### PcbLib
 8 primitive types (Pad, Via, Track, Arc, Text, Fill, Region, ComponentBody). 6 sidecar stream types. Complete roundtrip. PadStack/PcbContour shared types with PcbDoc. Spec supports pad templates and spread operators.
