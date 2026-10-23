@@ -1262,3 +1262,62 @@ fn corpus_r13_plane_nets() {
     let err = doc.update_board(&bad).unwrap_err();
     assert!(format!("{err:#}").contains("NO_SUCH_NET"), "{err:#}");
 }
+
+/// R15: region PADINDEX, SUBPOLYINDEX and OBJECTKIND (BoardRegion) are typed,
+/// read the same from both region sections, and survive `update_board`.
+#[test]
+fn corpus_r15_region_indices() {
+    let (mut with_pad, mut with_subpoly, mut pour_subpoly, mut board_regions) = (0, 0, 0, 0);
+    let mut edit_checked = false;
+    for (name, mut doc) in corpus_docs() {
+        if BOARDS_FAILING_AT_BASE.contains(&name.as_str()) {
+            continue;
+        }
+        let board = doc.board().unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        for r in &board.regions {
+            with_pad += usize::from(r.pad_index.is_some());
+            with_subpoly += usize::from(r.subpoly_index.is_some());
+            pour_subpoly += usize::from(r.subpoly_index.is_some() && r.polygon.is_some());
+            board_regions += usize::from(r.board_region);
+            if r.polygon.is_some() {
+                assert!(
+                    r.subpoly_index.is_some(),
+                    "{name}: pour region without a subpoly index"
+                );
+            }
+        }
+        let key = |b: &PcbDocBoard| -> Vec<_> {
+            b.regions
+                .iter()
+                .map(|r| (r.pad_index, r.subpoly_index, r.board_region))
+                .collect()
+        };
+        let Some(i) = board.regions.iter().position(|r| r.pad_index.is_some()) else {
+            continue;
+        };
+        doc.update_board(&board)
+            .unwrap_or_else(|e| panic!("{name}: update_board: {e:#}"));
+        assert_eq!(key(&doc.board().unwrap()), key(&board), "{name}");
+        if !edit_checked {
+            edit_checked = true;
+            let mut edited = board.clone();
+            edited.regions[i].pad_index = None;
+            edited.regions[i].subpoly_index = Some(7);
+            doc.update_board(&edited).unwrap();
+            let again = doc.board().unwrap();
+            assert_eq!(
+                (again.regions[i].pad_index, again.regions[i].subpoly_index),
+                (None, Some(7))
+            );
+            let mut bad = board.clone();
+            bad.regions[i].pad_index = Some(u32::MAX);
+            let err = doc.update_board(&bad).unwrap_err();
+            assert!(format!("{err:#}").contains("PADINDEX"), "{name}: {err:#}");
+        }
+    }
+    assert!(edit_checked);
+    eprintln!(
+        "pad {with_pad}, subpoly {with_subpoly} ({pour_subpoly} in pours), board {board_regions}"
+    );
+    assert_eq!((board_regions, with_pad, pour_subpoly), (79, 25, 43631));
+}

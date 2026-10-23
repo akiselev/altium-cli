@@ -624,6 +624,11 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   net, 7 split). The net must be a board net. Keys of planes not in the stack are not read (stale
   on four corpus boards); one trailing CR on the record's last key is removed. `update_board`
   writes changed plane nets.
+- Region indices (R15): `Region::subpoly_index` (SUBPOLYINDEX; set on all 43,631 pour regions of
+  readable boards, plus 267 outside pours) and `Region::pad_index` (PADINDEX as stored, 25 corpus
+  regions; what it indexes is unconfirmed, it is not an index into `pads`). OBJECTKIND must be
+  `BoardRegion` exactly on BoardRegions records (79/79). The writer stores all three from the API
+  (before, they were copied from the region at the same position).
 - Board6 write fix: `update_board` merged Board6 by DOCUMENTNAME, a key no corpus board stores, so
   every update replaced the whole record (layer stack, plane nets, display options) with five
   keys. It now keeps the stored record and writes only the settings that changed, in the stored

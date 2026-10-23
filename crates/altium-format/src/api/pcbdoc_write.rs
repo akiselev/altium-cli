@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use altium_format_types::coord::{Coord, CoordPoint};
-use altium_format_types::pcb::constants::{POLYGON_INDEX_PLANE_SPLIT_LINE, PRIMITIVE_INDEX_NONE};
+use altium_format_types::pcb::constants::{
+    BOARD_REGION_OBJECT_KIND, POLYGON_INDEX_PLANE_SPLIT_LINE, PRIMITIVE_INDEX_NONE,
+};
 use altium_format_types::pcb::{
     BarcodeRenderMode, DaisyChainStyle, LayerRef, MaskExpansionState, PadStackMode, PcbFlags,
     PlaneConnectionStyle, PolySegmentKind, PolygonType, TCacheState, TextKind, V6Layer,
@@ -367,6 +369,18 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
     let (keep_violations, keep_waived) = check_stored_violations(board, doc)?;
     super::pcbdoc_read::check_plane_nets(&board.settings.layer_stack, &board.nets)
         .context("layer stack")?;
+    for (i, r) in board.regions.iter().enumerate() {
+        if [r.pad_index, r.subpoly_index]
+            .iter()
+            .flatten()
+            .any(|&v| v > i32::MAX as u32)
+        {
+            return Err(crate::AltiumFormatError::InvalidParamValue {
+                key: "PADINDEX".to_owned(),
+                detail: format!("region #{i}: index out of the stored range"),
+            });
+        }
+    }
     let ctx = WriteContext::new(board);
     attach_pad_unique_ids(doc).context("UniqueIDPrimitiveInformation")?;
 
@@ -1663,7 +1677,7 @@ fn build_region_records(
                     v7_layer: r.layer.display_name().unwrap_or("").to_owned(),
                     name: String::new(),
                     param_kind: 0,
-                    subpoly_index: 0,
+                    subpoly_index: r.subpoly_index.map_or(-1, |i| i as i32),
                     union_index: 0,
                     arc_resolution: Coord::ZERO,
                     // ISSHAPEBASED: corpus ShapeBasedRegions6 records set it exactly when
@@ -1674,8 +1688,12 @@ fn build_region_records(
                     layer: String::new(),
                     keepout: r.is_keepout,
                     is_board_cutout: r.is_board_cutout,
-                    pad_index: -1,
-                    object_kind: String::new(),
+                    pad_index: r.pad_index.map_or(-1, |i| i as i32),
+                    object_kind: if r.board_region {
+                        BOARD_REGION_OBJECT_KIND.to_owned()
+                    } else {
+                        String::new()
+                    },
                     bending_line_count: 0,
                     locked_3d: false,
                     layer_stack_id: String::new(),
@@ -2020,15 +2038,13 @@ fn preserve_text_fields(new: &mut PcbText, old: &PcbText) {
 fn preserve_region_fields(new: &mut PcbRegion, old: &PcbRegion) {
     new.name = old.name.clone();
     new.param_kind = old.param_kind;
-    new.subpoly_index = old.subpoly_index;
+    // subpoly_index, pad_index and object_kind come from the API region.
     new.union_index = old.union_index;
     new.arc_resolution = old.arc_resolution;
     new.is_shape_based = old.is_shape_based;
     new.cavity_height = old.cavity_height;
     new.keepout_restrictions = old.keepout_restrictions;
     new.layer = old.layer.clone();
-    new.pad_index = old.pad_index;
-    new.object_kind = old.object_kind.clone();
     new.bending_line_count = old.bending_line_count;
     new.locked_3d = old.locked_3d;
     new.layer_stack_id = old.layer_stack_id.clone();
@@ -2843,6 +2859,8 @@ mod tests {
             is_board_cutout: false,
             is_keepout: false,
             board_region: false,
+            pad_index: None,
+            subpoly_index: None,
         }
     }
 

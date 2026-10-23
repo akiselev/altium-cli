@@ -8,6 +8,7 @@
 use altium_format_types::color::Color;
 use altium_format_types::common::Unit;
 use altium_format_types::coord::{Coord, CoordPoint};
+use altium_format_types::pcb::constants::BOARD_REGION_OBJECT_KIND;
 use altium_format_types::pcb::constants::{POLYGON_INDEX_PLANE_SPLIT_LINE, PRIMITIVE_INDEX_NONE};
 use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, PolyHatchStyle,
@@ -1972,6 +1973,26 @@ fn region_from_internal(
     };
     // PcbLib regions can repeat their geometry as text keys; no corpus PcbDoc
     // region does, and the board writer stores only the binary contours.
+    // OBJECTKIND names the BoardRegions section's records and nothing else.
+    let expected_kind = if board_region {
+        BOARD_REGION_OBJECT_KIND
+    } else {
+        ""
+    };
+    if r.object_kind != expected_kind {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "OBJECTKIND".to_owned(),
+            detail: format!(
+                "region object kind {:?} in a {} section",
+                r.object_kind,
+                if board_region {
+                    "BoardRegions"
+                } else {
+                    "region"
+                }
+            ),
+        });
+    }
     if r.shape_text_segments.is_some() || !r.hole_shape_text_segments.is_empty() {
         return Err(AltiumFormatError::InvalidParamValue {
             key: "MAINCONTOURVERTEXCOUNT".to_owned(),
@@ -1995,7 +2016,21 @@ fn region_from_internal(
         is_board_cutout: r.is_board_cutout,
         is_keepout: r.keepout,
         board_region,
+        pad_index: optional_index("PADINDEX", r.pad_index)?.map(|i| i as u32),
+        subpoly_index: optional_index("SUBPOLYINDEX", r.subpoly_index)?.map(|i| i as u32),
     })
+}
+
+/// A stored index where -1 means none; any other negative value is an error.
+fn optional_index(key: &str, raw: i32) -> Result<Option<usize>> {
+    match raw {
+        -1 => Ok(None),
+        i if i >= 0 => Ok(Some(i as usize)),
+        i => Err(AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("index {i}"),
+        }),
+    }
 }
 
 fn body_from_internal(

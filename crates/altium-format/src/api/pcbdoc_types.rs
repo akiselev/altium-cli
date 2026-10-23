@@ -806,6 +806,13 @@ pub struct Region {
     /// Stored in the BoardRegions section (the board shape regions), not in
     /// (ShapeBased)Regions6. The writer puts the region back in that section.
     pub board_region: bool,
+    /// `PADINDEX` as stored; `None` for -1. Set on 25 corpus regions of
+    /// components. What it indexes is not confirmed: it is not an index into
+    /// [`PcbDocBoard::pads`] (none of the 25 names a pad under its region).
+    pub pad_index: Option<u32>,
+    /// `SUBPOLYINDEX`: the region's sub-polygon number within its pour;
+    /// `None` for -1. (271 corpus regions outside any pour also carry one.)
+    pub subpoly_index: Option<u32>,
 }
 
 /// A 3D component body.

@@ -2651,6 +2651,11 @@ pub mod constants {
     /// (10 corpus values); not checked against the decompiled sources.
     pub const PLANE_NET_NAME_MULTIPLE: &str = "(Multiple Nets)";
 
+    /// Region `OBJECTKIND` of the BoardRegions section's records (all 94 corpus
+    /// records; other regions store none). Not checked against the decompiled
+    /// sources.
+    pub const BOARD_REGION_OBJECT_KIND: &str = "BoardRegion";
+
     /// Number of `PLANEnNETNAME` keys (internal planes 1..=16).
     pub const PLANE_NET_NAME_COUNT: u8 = 16;
 

@@ -1571,6 +1571,8 @@ fn instantiate_footprint_primitives(
                             is_board_cutout: false,
                             is_keepout: false,
                             board_region: false,
+                            pad_index: None,
+                            subpoly_index: None,
                         });
                         region_counter += 1;
                     }
