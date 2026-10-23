@@ -1288,9 +1288,13 @@ fn build_region_records(
             let mut outline_contour =
                 region_contour_for_write("outline", &r.outline, &r.outline_contour)
                     .with_context(|| format!("region {}", r.id))?;
-            // A region given as vertices only has an implied closing edge
-            // (the Regions6 convention); ShapeBasedRegions6 stores it explicitly.
-            if shape_based && r.outline_contour.segments.is_empty() {
+            // A line-only outline has an implied closing edge (the Regions6 and
+            // BoardRegions convention); ShapeBasedRegions6 stores it explicitly.
+            let line_only = outline_contour
+                .segments
+                .iter()
+                .all(|s| matches!(s, ContourSegment::Line { .. }));
+            if shape_based && line_only {
                 let first = outline_contour.segments.first().map(|s| match *s {
                     ContourSegment::Line { endpoint } | ContourSegment::Arc { endpoint, .. } => {
                         endpoint
@@ -1354,7 +1358,9 @@ fn build_region_records(
                     subpoly_index: 0,
                     union_index: 0,
                     arc_resolution: Coord::ZERO,
-                    is_shape_based: false,
+                    // ISSHAPEBASED: corpus ShapeBasedRegions6 records set it exactly when
+                    // they have arcs (a preserved old record's value wins).
+                    is_shape_based: !line_only,
                     cavity_height: Coord::ZERO,
                     keepout_restrictions: 0,
                     layer: String::new(),
@@ -2500,6 +2506,81 @@ mod tests {
         let mut moved = arc.to_points();
         moved[0].x = mil(1);
         assert!(region_contour_for_write("outline", &moved, &arc).is_err());
+    }
+
+    fn region(outline: Vec<CoordPoint>, holes: Vec<Vec<CoordPoint>>) -> Region {
+        Region {
+            id: "region_0".to_owned(),
+            layer: LayerRef::from_v6(V6Layer::TopLayer),
+            net: None,
+            component: None,
+            unique_id: None,
+            component_index: None,
+            flags: PcbFlags::default(),
+            polygon: None,
+            kind: altium_format_types::pcb::RegionKind::Copper,
+            outline,
+            holes,
+            outline_contour: PcbContour {
+                segments: Vec::new(),
+            },
+            hole_contours: Vec::new(),
+            is_board_cutout: false,
+            is_keepout: false,
+            board_region: false,
+        }
+    }
+
+    fn written_outline(record: &ParsedPrimitiveRecord) -> &Contour {
+        match &record.primitive {
+            PcbPrimitive::Region(r) => &r.outline,
+            _ => panic!("not a region"),
+        }
+    }
+
+    #[test]
+    fn region_records_close_vertex_outlines_and_check_holes() {
+        let ctx = WriteContext {
+            net_indices: HashMap::new(),
+            component_designators: Vec::new(),
+            polygon_count: 0,
+        };
+        let mil = |v: i32| Coord::from_internal(v * 10_000);
+        let square = vec![
+            CoordPoint::new(mil(0), mil(0)),
+            CoordPoint::new(mil(10), mil(0)),
+            CoordPoint::new(mil(10), mil(10)),
+        ];
+        // Vertex-only region into ShapeBasedRegions6: the implied closing edge
+        // is stored (N + 1 segments); into Regions6 it stays N vertices.
+        let shape =
+            build_region_records(&[region(square.clone(), Vec::new())], &ctx, true).unwrap();
+        assert!(matches!(written_outline(&shape[0]), Contour::ShapeBased(s) if s.len() == 4));
+        let legacy =
+            build_region_records(&[region(square.clone(), Vec::new())], &ctx, false).unwrap();
+        assert!(matches!(written_outline(&legacy[0]), Contour::Legacy(p) if p.len() == 3));
+        // An open line-only contour (as read from Regions6) is closed too.
+        let mut read_from_legacy = region(square.clone(), Vec::new());
+        read_from_legacy.outline_contour = PcbContour {
+            segments: square
+                .iter()
+                .map(|&endpoint| ContourSegment::Line { endpoint })
+                .collect(),
+        };
+        assert!(build_region_records(&[read_from_legacy], &ctx, true).is_ok());
+        // Holes: more contours than vertex lists is an error; an empty outline
+        // cannot go to ShapeBasedRegions6.
+        let mut bad_holes = region(square.clone(), vec![square.clone()]);
+        bad_holes.hole_contours = vec![
+            PcbContour {
+                segments: Vec::new(),
+            },
+            PcbContour {
+                segments: Vec::new(),
+            },
+        ];
+        assert!(build_region_records(&[bad_holes], &ctx, false).is_err());
+        assert!(build_region_records(&[region(Vec::new(), Vec::new())], &ctx, true).is_err());
     }
 
     #[test]
