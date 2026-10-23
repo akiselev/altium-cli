@@ -210,72 +210,7 @@ fn resolve_record<'a>(
     }
 }
 
-/// Get the owner_index and is_additional flag from a SchRecord.
-fn owner_ref(record: &SchRecord) -> (i32, bool) {
-    match record {
-        SchRecord::Sheet(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Template(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Wire(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Bus(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::NetLabel(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::PowerObject(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Port(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::NoConnect(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Junction(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::SheetName(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::SheetFileName(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::SheetSymbol(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::SheetEntry(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::BusEntry(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::ParameterSet(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Note(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Probe(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::CompileMask(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Blanket(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Component(v) => (v.owner_index, false),
-        SchRecord::Pin(v) => (v.owner_index, v.owner_index_additional_list),
-        SchRecord::Symbol(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Line(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Rectangle(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::RoundRectangle(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Arc(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::EllipticalArc(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Ellipse(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Pie(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Polyline(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Polygon(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Bezier(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Image(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Label(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Hyperlink(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Designator(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::Parameter(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::TextFrame(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::ImplementationList(v) => {
-            (v.base.owner_index, v.base.owner_index_additional_list)
-        }
-        SchRecord::Implementation(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::ImplementationMap(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::MapDefiner(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::ParameterList(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::HarnessConnector(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::HarnessEntry(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::HarnessConnectorType(v) => {
-            (v.base.owner_index, v.base.owner_index_additional_list)
-        }
-        SchRecord::SignalHarness(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::HighLevelCodeSymbol(v) => {
-            (v.base.owner_index, v.base.owner_index_additional_list)
-        }
-        SchRecord::HighLevelCodeEntry(v) => {
-            (v.base.owner_index, v.base.owner_index_additional_list)
-        }
-        SchRecord::HighLevelCodeName(v) => (v.base.owner_index, v.base.owner_index_additional_list),
-        SchRecord::HighLevelCodeFileName(v) => {
-            (v.base.owner_index, v.base.owner_index_additional_list)
-        }
-    }
-}
+use crate::schdoc::owner_ref;
 
 /// Convert a single Sheet child record into a `SheetObject`.
 ///

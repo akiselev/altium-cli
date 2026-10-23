@@ -498,7 +498,7 @@ fn pad_unique_ids_from_records(
 
 // ── Named collection converters ─────────────────────────────────────────────
 
-fn find_param_section<'a>(
+pub(crate) fn find_param_section<'a>(
     doc: &'a PcbDoc,
     kind: ParamSectionKind,
 ) -> Option<&'a [crate::pcbdoc::records::StandardParamRecord]> {
@@ -1025,7 +1025,7 @@ pub(crate) fn is_class_member_key(key: &str) -> bool {
         && key[1..].bytes().all(|b| b.is_ascii_digit())
 }
 
-fn convert_classes(doc: &PcbDoc) -> Result<Vec<NetClass>> {
+pub(crate) fn convert_classes(doc: &PcbDoc) -> Result<Vec<NetClass>> {
     let records = match find_param_section(doc, ParamSectionKind::Classes6) {
         Some(r) => r,
         None => return Ok(Vec::new()),
@@ -1073,7 +1073,7 @@ fn convert_classes(doc: &PcbDoc) -> Result<Vec<NetClass>> {
     Ok(classes)
 }
 
-fn convert_differential_pairs(doc: &PcbDoc) -> Result<Vec<DifferentialPair>> {
+pub(crate) fn convert_differential_pairs(doc: &PcbDoc) -> Result<Vec<DifferentialPair>> {
     let records = match find_param_section(doc, ParamSectionKind::DifferentialPairs6) {
         Some(r) => r,
         None => return Ok(Vec::new()),

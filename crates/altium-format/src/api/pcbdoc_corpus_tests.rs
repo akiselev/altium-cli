@@ -1680,7 +1680,10 @@ fn corpus_r21_classes_and_pairs() {
     assert_eq!(pad_classes, (79, 1));
     assert_eq!((unicode_members, pairs), (36, 716));
 
-    // Removing a member drops its key; renaming one replaces its Unicode sidecar.
+    // A class with a Unicode member: unchanged, its record (placeholder bytes +
+    // UNICODE__Mn sidecars) is kept byte for byte; changed while a member is
+    // still outside Windows-1252, it is refused; changed to ASCII-only members,
+    // the stale Mn and sidecar keys are dropped and the members read back.
     let (name, doc) = docs
         .iter_mut()
         .filter(|(n, _)| !BOARDS_FAILING_AT_BASE.contains(&n.as_str()))
@@ -1692,19 +1695,74 @@ fn corpus_r21_classes_and_pairs() {
                 .any(|c| c.members.iter().any(|m| !m.is_ascii()))
         })
         .expect("a class with a Unicode member");
-    let mut b = doc.board().unwrap();
+    let b = doc.board().unwrap();
     let c = b
         .classes
-        .iter_mut()
+        .iter()
         .find(|c| c.members.iter().any(|m| !m.is_ascii()))
-        .unwrap();
-    let class_name = c.name.clone();
-    let i = c.members.iter().position(|m| !m.is_ascii()).unwrap();
-    c.members[i] = "RENAMED".to_owned();
-    c.members.pop();
-    let expected = c.members.clone();
+        .unwrap()
+        .clone();
+    let stored = |doc: &PcbDoc| -> Vec<String> {
+        find_param_section(doc, ParamSectionKind::Classes6)
+            .unwrap()
+            .iter()
+            .find(|r| r.params.get("NAME") == Some(c.name.as_str()))
+            .unwrap()
+            .params
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect()
+    };
+    let before = stored(doc);
     doc.update_board(&b).unwrap();
+    assert_eq!(
+        stored(doc),
+        before,
+        "{name}: unchanged Unicode class rewritten"
+    );
+    let mut grown = b.clone();
+    grown
+        .classes
+        .iter_mut()
+        .find(|k| k.name == c.name && k.kind == c.kind)
+        .unwrap()
+        .members
+        .push("NEW1".to_owned());
+    let err = doc.update_board(&grown).unwrap_err();
+    assert!(format!("{err:#}").contains("Windows-1252"), "{err:#}");
+    let mut ascii = b.clone();
+    let k = ascii
+        .classes
+        .iter_mut()
+        .find(|k| k.name == c.name && k.kind == c.kind)
+        .unwrap();
+    k.members = k
+        .members
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            if m.is_ascii() {
+                m.clone()
+            } else {
+                format!("U{i}")
+            }
+        })
+        .collect();
+    k.members.pop();
+    let expected = k.members.clone();
+    doc.update_board(&ascii).unwrap();
+    let after = stored(doc);
+    assert!(
+        after
+            .iter()
+            .all(|kv| !kv.to_ascii_uppercase().starts_with("UNICODE")),
+        "{name}: {after:?}"
+    );
     let got = doc.board().unwrap();
-    let c = got.classes.iter().find(|c| c.name == class_name).unwrap();
-    assert_eq!(c.members, expected, "{name}: {class_name}");
+    let got = got
+        .classes
+        .iter()
+        .find(|k| k.name == c.name && k.kind == c.kind)
+        .unwrap();
+    assert_eq!(got.members, expected, "{name}");
 }

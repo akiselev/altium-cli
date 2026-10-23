@@ -1016,25 +1016,71 @@ fn ensure_standard_classes(board: &PcbDocBoard) -> Vec<NetClass> {
     classes
 }
 
-/// Write Classes6. A class keeps its stored record (matched by name and kind,
-/// each stored record used once; names repeat across kinds on five corpus
-/// boards) except for its members, whose `Mn` keys and Unicode sidecars are
-/// rewritten from the API (stale keys of removed members are dropped).
+/// Write Classes6. Each class is matched to a stored record by its decoded
+/// name and kind (each stored record used once; names repeat across kinds on
+/// five corpus boards).
+///
+/// - Members unchanged: the stored record is kept byte for byte. A member
+///   outside Windows-1252 is stored as a system-code-page placeholder (GBK
+///   bytes in the corpus) plus a `UNICODE__Mn` sidecar; the placeholder cannot
+///   be rebuilt from the text, so only an unchanged list can keep it.
+/// - Members changed, or a new class: `Mn` keys and Unicode sidecars are
+///   rewritten from the API (stale keys dropped). A name or member that
+///   Windows-1252 cannot encode is refused rather than written in a form
+///   Altium may misread.
 fn merge_class_section(doc: &mut PcbDoc, classes: &[NetClass]) -> Result<()> {
     let old = take_param_records(doc, ParamSectionKind::Classes6);
+    // (decoded name, KIND as stored, decoded members) of each stored record.
+    let decoded: Vec<(String, String, Vec<String>)> = old
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let mut p = r.params.clone();
+            p.apply_unicode_sidecars()
+                .with_context(|| format!("Classes6 record #{i}"))?;
+            let name: String = p.remove_required("NAME")?;
+            let kind: String = p.remove_required("KIND")?;
+            let mut members = Vec::new();
+            while let Some(m) = p.remove_optional::<String>(&format!("M{}", members.len()))? {
+                members.push(m);
+            }
+            Ok((name, kind, members))
+        })
+        .collect::<Result<_>>()?;
     let mut used = vec![false; old.len()];
+    let encodable = |s: &str| !encoding_rs::WINDOWS_1252.encode(s).2;
     let records = classes
         .iter()
         .map(|cls| {
             let kind = (cls.kind as u8).to_param_value();
-            let matched = old.iter().enumerate().position(|(i, r)| {
-                !used[i]
-                    && r.params.get("NAME") == Some(cls.name.as_str())
-                    && r.params.get("KIND") == Some(kind.as_str())
-            });
+            let matched = (0..old.len())
+                .find(|&i| !used[i] && decoded[i].0 == cls.name && decoded[i].1 == kind);
+            if let Some(i) = matched {
+                used[i] = true;
+                if decoded[i].2 == cls.members {
+                    let mut p = old[i].params.clone();
+                    let sc = cls.super_class.to_param_value();
+                    if !p.replace_in_place("SUPERCLASS", sc.clone()) {
+                        p.insert("SUPERCLASS", sc);
+                    }
+                    return Ok(StandardParamRecord { params: p });
+                }
+            }
+            if let Some(bad) = std::iter::once(&cls.name)
+                .chain(&cls.members)
+                .find(|s| !encodable(s))
+            {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: "Classes6".to_owned(),
+                    detail: format!(
+                        "class '{}': {bad:?} is not Windows-1252; writing Altium's code-page \
+                         placeholder + UNICODE__ sidecar for a changed class is not supported",
+                        cls.name
+                    ),
+                });
+            }
             let mut params = match matched {
                 Some(i) => {
-                    used[i] = true;
                     let mut p = old[i].params.clone();
                     let stale: Vec<String> = p
                         .iter()
@@ -2872,6 +2918,133 @@ mod tests {
             kind: altium_format_types::ComponentKind::Standard,
             parameters: Vec::new(),
         }
+    }
+
+    fn doc_with_params(sections: &[(ParamSectionKind, &[&str])]) -> PcbDoc {
+        PcbDoc {
+            legacy_header: String::new(),
+            header: crate::pcb_file_header::PcbFileHeader {
+                version_string: "PCB 6.0 Binary File".to_owned(),
+                version: 5.01,
+                unique_id: None,
+            },
+            sections: sections
+                .iter()
+                .map(|(kind, recs)| {
+                    PcbDocSection::Parameter(ParamSectionData {
+                        kind: *kind,
+                        records: recs
+                            .iter()
+                            .map(|r| StandardParamRecord {
+                                params: ParameterCollection::from_str(r).unwrap(),
+                            })
+                            .collect(),
+                    })
+                })
+                .collect(),
+            rules: Vec::new(),
+            violations: Default::default(),
+            waived_violations: Vec::new(),
+            drc_options: None,
+            source_path: None,
+        }
+    }
+
+    fn class_keys(doc: &PcbDoc, i: usize) -> Vec<String> {
+        crate::api::pcbdoc_read::find_param_section(doc, ParamSectionKind::Classes6).unwrap()[i]
+            .params
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect()
+    }
+
+    #[test]
+    fn classes_read_strictly_and_write_by_name_and_kind() {
+        use crate::api::pcbdoc_read::convert_classes;
+        const NETS: &str = "|NAME=PWR|KIND=0|SUPERCLASS=FALSE|M0=VCC|M1=GND|UNIQUEID=AAAAAAAA";
+        // The same name as a component class (names repeat across kinds).
+        const COMPS: &str = "|NAME=PWR|KIND=1|SUPERCLASS=FALSE|M0=U1|M1=??|UNIQUEID=BBBBBBBB|UNICODE__M1=21518|UNICODE=EXISTS";
+        let mut doc = doc_with_params(&[(ParamSectionKind::Classes6, &[NETS, COMPS])]);
+        let classes = convert_classes(&doc).unwrap();
+        assert_eq!(classes[0].members, ["VCC", "GND"]);
+        assert_eq!(classes[1].members, ["U1", "\u{540e}"]);
+        assert!(!classes[1].super_class);
+        let comps_before = class_keys(&doc, 1);
+        // Unchanged: both records kept, the Unicode one byte for byte.
+        let mut edited = classes.clone();
+        merge_class_section(&mut doc, &edited).unwrap();
+        assert_eq!(class_keys(&doc, 1), comps_before);
+        // Net class loses a member: stale M1 dropped, the other keys kept.
+        edited[0].members.pop();
+        merge_class_section(&mut doc, &edited).unwrap();
+        let nets = class_keys(&doc, 0);
+        assert!(nets.contains(&"UNIQUEID=AAAAAAAA".to_owned()), "{nets:?}");
+        assert!(!nets.iter().any(|k| k.starts_with("M1=")), "{nets:?}");
+        assert_eq!(
+            class_keys(&doc, 1),
+            comps_before,
+            "matched by kind, not name"
+        );
+        // Changing a class that keeps a non-Windows-1252 member is refused.
+        edited[1].members.push("U2".to_owned());
+        let err = merge_class_section(&mut doc, &edited).unwrap_err();
+        assert!(err.to_string().contains("Windows-1252"), "{err}");
+
+        // Strict read.
+        for bad in [
+            "|NAME=X|KIND=99|SUPERCLASS=FALSE",
+            "|NAME=X|SUPERCLASS=FALSE",
+            "|NAME=X|KIND=0",
+            "|KIND=0|SUPERCLASS=FALSE",
+            "|NAME=X|KIND=0|SUPERCLASS=FALSE|M0=A|M2=C",
+        ] {
+            let doc = doc_with_params(&[(ParamSectionKind::Classes6, &[bad])]);
+            assert!(convert_classes(&doc).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn differential_pairs_use_the_stored_net_name_keys() {
+        use crate::api::pcbdoc_read::convert_differential_pairs;
+        const PAIR: &str = "|SELECTION=FALSE|POSITIVENETNAME=USB_P|NEGATIVENETNAME=USB_N\
+            |NAME=USB|GATHERCONTROL=FALSE|UNIQUEID=CCCCCCCC";
+        let mut doc = doc_with_params(&[(ParamSectionKind::DifferentialPairs6, &[PAIR])]);
+        let pairs = convert_differential_pairs(&doc).unwrap();
+        assert_eq!(
+            (
+                pairs[0].positive_net.as_str(),
+                pairs[0].negative_net.as_str()
+            ),
+            ("USB_P", "USB_N")
+        );
+        merge_param_section(
+            &mut doc,
+            ParamSectionKind::DifferentialPairs6,
+            build_diff_pair_records(&pairs),
+            "NAME",
+        );
+        let rec = &crate::api::pcbdoc_read::find_param_section(
+            &doc,
+            ParamSectionKind::DifferentialPairs6,
+        )
+        .unwrap()[0];
+        assert_eq!(rec.params.get("UNIQUEID"), Some("CCCCCCCC"));
+        assert_eq!(rec.params.get("POSITIVENETNAME"), Some("USB_P"));
+        assert_eq!(rec.params.get("POSITIVENET"), None);
+        let old = doc_with_params(&[(
+            ParamSectionKind::DifferentialPairs6,
+            &["|NAME=USB|POSITIVENET=USB_P|NEGATIVENET=USB_N"],
+        )]);
+        assert!(convert_differential_pairs(&old).is_err());
+    }
+
+    #[test]
+    fn channel_offset_written_only_when_stored() {
+        let mut with = component("R1", "AAAAAAAA");
+        with.channel_offset = Some(7);
+        let records = build_component_records(&[with, component("R2", "BBBBBBBB")]).unwrap();
+        assert_eq!(records[0].params.get("CHANNELOFFSET"), Some("7"));
+        assert_eq!(records[1].params.get("CHANNELOFFSET"), None);
     }
 
     #[test]

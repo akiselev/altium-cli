@@ -1179,59 +1179,73 @@ fn validate_owner_index(
     Ok(())
 }
 
-fn owner_ref(record: &SchRecord) -> (i32, bool) {
+/// A record's owner index and whether it points into the `/Additional` list
+/// (`OwnerIndexAdditionalList`, carried by every record kind: pins, harness
+/// entries and types, …). The one definition used by the validator and the
+/// sheet tree builder.
+pub(crate) fn owner_ref(record: &SchRecord) -> (i32, bool) {
     match record {
-        SchRecord::Sheet(v) => (v.base.owner_index, false),
-        SchRecord::Template(v) => (v.base.owner_index, false),
-        SchRecord::Wire(v) => (v.base.owner_index, false),
-        SchRecord::Bus(v) => (v.base.owner_index, false),
-        SchRecord::NetLabel(v) => (v.base.owner_index, false),
-        SchRecord::PowerObject(v) => (v.base.owner_index, false),
-        SchRecord::Port(v) => (v.base.owner_index, false),
-        SchRecord::NoConnect(v) => (v.base.owner_index, false),
-        SchRecord::Junction(v) => (v.base.owner_index, false),
-        SchRecord::SheetName(v) => (v.base.owner_index, false),
-        SchRecord::SheetFileName(v) => (v.base.owner_index, false),
-        SchRecord::SheetSymbol(v) => (v.base.owner_index, false),
-        SchRecord::SheetEntry(v) => (v.base.owner_index, false),
-        SchRecord::BusEntry(v) => (v.base.owner_index, false),
-        SchRecord::ParameterSet(v) => (v.base.owner_index, false),
-        SchRecord::Note(v) => (v.base.owner_index, false),
-        SchRecord::Probe(v) => (v.base.owner_index, false),
-        SchRecord::CompileMask(v) => (v.base.owner_index, false),
-        SchRecord::Blanket(v) => (v.base.owner_index, false),
+        SchRecord::Sheet(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Template(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Wire(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Bus(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::NetLabel(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::PowerObject(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Port(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::NoConnect(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Junction(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::SheetName(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::SheetFileName(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::SheetSymbol(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::SheetEntry(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::BusEntry(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::ParameterSet(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Note(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Probe(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::CompileMask(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Blanket(v) => (v.base.owner_index, v.base.owner_index_additional_list),
         SchRecord::Component(v) => (v.owner_index, false),
         SchRecord::Pin(v) => (v.owner_index, v.owner_index_additional_list),
-        SchRecord::Symbol(v) => (v.base.owner_index, false),
-        SchRecord::Line(v) => (v.base.owner_index, false),
-        SchRecord::Rectangle(v) => (v.base.owner_index, false),
-        SchRecord::RoundRectangle(v) => (v.base.owner_index, false),
-        SchRecord::Arc(v) => (v.base.owner_index, false),
-        SchRecord::EllipticalArc(v) => (v.base.owner_index, false),
-        SchRecord::Ellipse(v) => (v.base.owner_index, false),
-        SchRecord::Pie(v) => (v.base.owner_index, false),
-        SchRecord::Polyline(v) => (v.base.owner_index, false),
-        SchRecord::Polygon(v) => (v.base.owner_index, false),
-        SchRecord::Bezier(v) => (v.base.owner_index, false),
-        SchRecord::Image(v) => (v.base.owner_index, false),
-        SchRecord::Label(v) => (v.base.owner_index, false),
-        SchRecord::Hyperlink(v) => (v.base.owner_index, false),
-        SchRecord::Designator(v) => (v.base.owner_index, false),
-        SchRecord::Parameter(v) => (v.base.owner_index, false),
-        SchRecord::TextFrame(v) => (v.base.owner_index, false),
-        SchRecord::ImplementationList(v) => (v.base.owner_index, false),
-        SchRecord::Implementation(v) => (v.base.owner_index, false),
-        SchRecord::ImplementationMap(v) => (v.base.owner_index, false),
-        SchRecord::MapDefiner(v) => (v.base.owner_index, false),
-        SchRecord::ParameterList(v) => (v.base.owner_index, false),
-        SchRecord::HarnessConnector(v) => (v.base.owner_index, false),
-        SchRecord::HarnessEntry(v) => (v.base.owner_index, false),
-        SchRecord::HarnessConnectorType(v) => (v.base.owner_index, false),
-        SchRecord::SignalHarness(v) => (v.base.owner_index, false),
-        SchRecord::HighLevelCodeSymbol(v) => (v.base.owner_index, false),
-        SchRecord::HighLevelCodeEntry(v) => (v.base.owner_index, false),
-        SchRecord::HighLevelCodeName(v) => (v.base.owner_index, false),
-        SchRecord::HighLevelCodeFileName(v) => (v.base.owner_index, false),
+        SchRecord::Symbol(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Line(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Rectangle(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::RoundRectangle(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Arc(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::EllipticalArc(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Ellipse(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Pie(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Polyline(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Polygon(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Bezier(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Image(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Label(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Hyperlink(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Designator(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Parameter(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::TextFrame(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::ImplementationList(v) => {
+            (v.base.owner_index, v.base.owner_index_additional_list)
+        }
+        SchRecord::Implementation(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::ImplementationMap(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::MapDefiner(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::ParameterList(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::HarnessConnector(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::HarnessEntry(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::HarnessConnectorType(v) => {
+            (v.base.owner_index, v.base.owner_index_additional_list)
+        }
+        SchRecord::SignalHarness(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::HighLevelCodeSymbol(v) => {
+            (v.base.owner_index, v.base.owner_index_additional_list)
+        }
+        SchRecord::HighLevelCodeEntry(v) => {
+            (v.base.owner_index, v.base.owner_index_additional_list)
+        }
+        SchRecord::HighLevelCodeName(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::HighLevelCodeFileName(v) => {
+            (v.base.owner_index, v.base.owner_index_additional_list)
+        }
     }
 }
 
@@ -1290,6 +1304,56 @@ fn positional_unique_id(stream: &str, index: usize, taken: &HashSet<String>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn harness_children_own_into_the_additional_list() {
+        let parse = |text: &str| {
+            let mut params = ParameterCollection::from_str(text).unwrap();
+            let rt: i32 = params.remove_required("RECORD").unwrap();
+            let rec = dispatch_record_type(rt, &mut params).unwrap();
+            params.assert_exhausted().unwrap();
+            rec
+        };
+        let entry = parse(
+            "|RECORD=216|OwnerIndexAdditionalList=T|OwnerPartId=-1|DistanceFromTop_Frac1=787618\
+             |Color=7354880|AreaColor=8454143|TextColor=7354880|TextFontID=2|TextStyle=Full\
+             |Name=MCLK|UniqueID=FBSOTPNJ",
+        );
+        // OwnerIndex omitted = 0, in the Additional list.
+        assert_eq!(owner_ref(&entry), (0, true));
+        // One FileHeader record, one Additional record (the connector): in range.
+        validate_owner_index(1, &entry, 1, 1, "Additional").unwrap();
+        // An Additional owner beyond the Additional list is refused, whatever
+        // the FileHeader size (before, it was checked against FileHeader).
+        let far = parse(
+            "|RECORD=216|OwnerIndex=3|OwnerIndexAdditionalList=T|OwnerPartId=-1\
+             |DistanceFromTop_Frac1=787618|Color=7354880|AreaColor=8454143|TextColor=7354880\
+             |TextFontID=2|TextStyle=Full|Name=MCLK|UniqueID=FBSOTPNJ",
+        );
+        let err = validate_owner_index(1, &far, 10, 2, "Additional").unwrap_err();
+        assert!(
+            err.to_string().contains("Additional owner index 3"),
+            "{err}"
+        );
+        // IgnoreOnLoad is typed on the base and written back only when true.
+        let ignored = parse("|RECORD=29|IgnoreOnLoad=T|Location.X=10|Location.Y=20|Color=128");
+        let SchRecord::Junction(j) = &ignored else {
+            panic!("{ignored:?}")
+        };
+        assert!(j.base.ignore_on_load);
+        let bytes = serialize_record(&ignored).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(
+            text.to_ascii_uppercase().contains("|IGNOREONLOAD=T"),
+            "{text}"
+        );
+        let plain = parse("|RECORD=29|Location.X=10|Location.Y=20|Color=128");
+        let text = String::from_utf8_lossy(&serialize_record(&plain).unwrap()).to_string();
+        assert!(
+            !text.to_ascii_uppercase().contains("IGNOREONLOAD"),
+            "{text}"
+        );
+    }
 
     #[test]
     fn positional_unique_ids_are_reproducible_and_avoid_taken_ids() {
