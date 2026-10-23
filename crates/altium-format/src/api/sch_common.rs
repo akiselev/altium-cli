@@ -212,6 +212,7 @@ fn graphic_from_line(g: &SchLine) -> Graphic {
     Graphic::Line(LineGraphic {
         unique_id: g.unique_id.clone(),
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         location: g.location,
         corner: g.corner,
         line_width: g.line_width,
@@ -224,6 +225,7 @@ fn graphic_from_rectangle(g: &SchRectangle) -> Graphic {
     Graphic::Rectangle(RectangleGraphic {
         unique_id: g.unique_id.clone(),
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         location: g.location,
         corner: g.corner,
         line_width: g.line_width,
@@ -239,6 +241,7 @@ fn graphic_from_round_rectangle(g: &SchRoundRectangle) -> Graphic {
     Graphic::RoundRectangle(RoundRectangleGraphic {
         unique_id: g.unique_id.clone(),
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         location: g.location,
         corner: g.corner,
         corner_x_radius: g.corner_x_radius,
@@ -254,6 +257,7 @@ fn graphic_from_arc(g: &SchArc) -> Graphic {
     Graphic::Arc(ArcGraphic {
         unique_id: g.unique_id.clone(),
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         location: g.location,
         radius: g.radius,
         start_angle: g.start_angle,
@@ -267,6 +271,7 @@ fn graphic_from_elliptical_arc(g: &SchEllipticalArc) -> Graphic {
     Graphic::EllipticalArc(EllipticalArcGraphic {
         unique_id: g.unique_id.clone(),
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         location: g.location,
         radius: g.radius,
         secondary_radius: g.secondary_radius,
@@ -281,6 +286,7 @@ fn graphic_from_ellipse(g: &SchEllipse) -> Graphic {
     Graphic::Ellipse(EllipseGraphic {
         unique_id: g.unique_id.clone(),
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         location: g.location,
         radius: g.radius,
         secondary_radius: g.secondary_radius,
@@ -295,6 +301,7 @@ fn graphic_from_ellipse(g: &SchEllipse) -> Graphic {
 fn graphic_from_pie(g: &SchPie) -> Graphic {
     Graphic::Pie(PieGraphic {
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         location: g.location,
         radius: g.radius,
         start_angle: g.start_angle,
@@ -310,6 +317,7 @@ fn graphic_from_polyline(g: &SchPolyline) -> Graphic {
     Graphic::Polyline(PolylineGraphic {
         unique_id: g.unique_id.clone(),
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         vertices: g.vertices.clone(),
         line_width: g.line_width,
         line_style: g.line_style,
@@ -324,6 +332,7 @@ fn graphic_from_polygon(g: &SchPolygon) -> Graphic {
     Graphic::Polygon(PolygonGraphic {
         unique_id: g.unique_id.clone(),
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         vertices: g.vertices.clone(),
         line_width: g.line_width,
         color: g.color,
@@ -337,6 +346,7 @@ fn graphic_from_bezier(g: &SchBezier) -> Graphic {
     Graphic::Bezier(BezierGraphic {
         unique_id: g.unique_id.clone(),
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         vertices: g.vertices.clone(),
         line_width: g.line_width,
         color: g.color,
@@ -347,6 +357,7 @@ fn graphic_from_image(g: &SchImage) -> Graphic {
     Graphic::Image(ImageGraphic {
         unique_id: g.unique_id.clone(),
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         location: g.location,
         corner: g.corner,
         orientation: g.orientation,
@@ -363,6 +374,7 @@ fn graphic_from_label(g: &SchLabel) -> Graphic {
     Graphic::Label(LabelGraphic {
         unique_id: g.unique_id.clone(),
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         location: g.location,
         orientation: g.orientation,
         justification: g.justification,
@@ -378,6 +390,7 @@ fn graphic_from_text_frame(g: &SchTextFrame) -> Graphic {
     Graphic::TextFrame(TextFrameGraphic {
         unique_id: g.unique_id.clone(),
         owner_part_id: g.base.owner_part_id,
+        owner_part_display_mode: g.base.owner_part_display_mode,
         location: g.location,
         corner: g.corner,
         line_width: g.line_width,
@@ -649,6 +662,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::Line(g) => SchRecord::Line(SchLine {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             location: g.location,
@@ -662,6 +676,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::Rectangle(g) => SchRecord::Rectangle(SchRectangle {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             location: g.location,
@@ -677,6 +692,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::RoundRectangle(g) => SchRecord::RoundRectangle(SchRoundRectangle {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             location: g.location,
@@ -692,6 +708,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::Arc(g) => SchRecord::Arc(SchArc {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             location: g.location,
@@ -705,6 +722,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::EllipticalArc(g) => SchRecord::EllipticalArc(SchEllipticalArc {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             location: g.location,
@@ -719,6 +737,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::Ellipse(g) => SchRecord::Ellipse(SchEllipse {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             location: g.location,
@@ -734,6 +753,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::Pie(g) => SchRecord::Pie(SchPie {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             location: g.location,
@@ -748,6 +768,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::Polyline(g) => SchRecord::Polyline(SchPolyline {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             line_width: g.line_width,
@@ -763,6 +784,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::Polygon(g) => SchRecord::Polygon(SchPolygon {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             line_width: g.line_width,
@@ -776,6 +798,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::Bezier(g) => SchRecord::Bezier(SchBezier {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             line_width: g.line_width,
@@ -786,6 +809,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::Image(g) => SchRecord::Image(SchImage {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             location: g.location,
@@ -802,6 +826,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::Label(g) => SchRecord::Label(SchLabel {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             location: g.location,
@@ -817,6 +842,7 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         Graphic::TextFrame(g) => SchRecord::TextFrame(SchTextFrame {
             base: SchPrimitiveBase {
                 owner_part_id: g.owner_part_id,
+                owner_part_display_mode: g.owner_part_display_mode,
                 ..default_base()
             },
             location: g.location,

@@ -226,6 +226,25 @@ impl Graphic {
             Graphic::TextFrame(g) => g.owner_part_id,
         }
     }
+
+    /// The display mode this graphic belongs to.
+    pub fn owner_part_display_mode(&self) -> i32 {
+        match self {
+            Graphic::Line(g) => g.owner_part_display_mode,
+            Graphic::Rectangle(g) => g.owner_part_display_mode,
+            Graphic::RoundRectangle(g) => g.owner_part_display_mode,
+            Graphic::Arc(g) => g.owner_part_display_mode,
+            Graphic::EllipticalArc(g) => g.owner_part_display_mode,
+            Graphic::Ellipse(g) => g.owner_part_display_mode,
+            Graphic::Pie(g) => g.owner_part_display_mode,
+            Graphic::Polyline(g) => g.owner_part_display_mode,
+            Graphic::Polygon(g) => g.owner_part_display_mode,
+            Graphic::Bezier(g) => g.owner_part_display_mode,
+            Graphic::Image(g) => g.owner_part_display_mode,
+            Graphic::Label(g) => g.owner_part_display_mode,
+            Graphic::TextFrame(g) => g.owner_part_display_mode,
+        }
+    }
 }
 
 // ── Graphic Variant Structs ──────────────────────────────────────────────────
@@ -234,6 +253,9 @@ impl Graphic {
 pub struct LineGraphic {
     pub unique_id: String,
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub location: CoordPoint,
     pub corner: CoordPoint,
     pub line_width: PenWidth,
@@ -245,6 +267,9 @@ pub struct LineGraphic {
 pub struct RectangleGraphic {
     pub unique_id: String,
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub location: CoordPoint,
     pub corner: CoordPoint,
     pub line_width: PenWidth,
@@ -259,6 +284,9 @@ pub struct RectangleGraphic {
 pub struct RoundRectangleGraphic {
     pub unique_id: String,
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub location: CoordPoint,
     pub corner: CoordPoint,
     pub corner_x_radius: Coord,
@@ -273,6 +301,9 @@ pub struct RoundRectangleGraphic {
 pub struct ArcGraphic {
     pub unique_id: String,
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub location: CoordPoint,
     pub radius: Coord,
     pub start_angle: SchAngle,
@@ -285,6 +316,9 @@ pub struct ArcGraphic {
 pub struct EllipticalArcGraphic {
     pub unique_id: String,
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub location: CoordPoint,
     pub radius: Coord,
     pub secondary_radius: Coord,
@@ -298,6 +332,9 @@ pub struct EllipticalArcGraphic {
 pub struct EllipseGraphic {
     pub unique_id: String,
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub location: CoordPoint,
     pub radius: Coord,
     pub secondary_radius: Coord,
@@ -311,6 +348,9 @@ pub struct EllipseGraphic {
 #[derive(Debug, Clone)]
 pub struct PieGraphic {
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub location: CoordPoint,
     pub radius: Coord,
     pub start_angle: SchAngle,
@@ -325,6 +365,9 @@ pub struct PieGraphic {
 pub struct PolylineGraphic {
     pub unique_id: String,
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub vertices: Vec<CoordPoint>,
     pub line_width: PenWidth,
     pub line_style: LineStyle,
@@ -338,6 +381,9 @@ pub struct PolylineGraphic {
 pub struct PolygonGraphic {
     pub unique_id: String,
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub vertices: Vec<CoordPoint>,
     pub line_width: PenWidth,
     pub color: Color,
@@ -350,6 +396,9 @@ pub struct PolygonGraphic {
 pub struct BezierGraphic {
     pub unique_id: String,
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub vertices: Vec<CoordPoint>,
     pub line_width: PenWidth,
     pub color: Color,
@@ -359,6 +408,9 @@ pub struct BezierGraphic {
 pub struct ImageGraphic {
     pub unique_id: String,
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub location: CoordPoint,
     pub corner: CoordPoint,
     pub orientation: RotationBy90,
@@ -374,6 +426,9 @@ pub struct ImageGraphic {
 pub struct LabelGraphic {
     pub unique_id: String,
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub location: CoordPoint,
     pub orientation: RotationBy90,
     pub justification: TextJustification,
@@ -388,6 +443,9 @@ pub struct LabelGraphic {
 pub struct TextFrameGraphic {
     pub unique_id: String,
     pub owner_part_id: i32,
+    /// The display mode this graphic belongs to (`OwnerPartDisplayMode`; 0 is
+    /// the normal graphics, 1.. the alternates).
+    pub owner_part_display_mode: i32,
     pub location: CoordPoint,
     pub corner: CoordPoint,
     pub line_width: PenWidth,

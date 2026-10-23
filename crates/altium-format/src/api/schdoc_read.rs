@@ -824,8 +824,9 @@ mod corpus_tests {
     use std::path::Path;
 
     /// R9: every corpus component's placed display mode is in range and
-    /// reaches the API (157 components are placed in an alternate mode), and
-    /// survives `update_sheet` → `sheet()` (the writer used to store 0).
+    /// reaches the API (137 components on readable sheets are placed in an
+    /// alternate mode), and survives `update_sheet` → `sheet()` together with
+    /// every child's display mode (the writer stored 0 for both).
     #[test]
     fn corpus_r9_display_mode() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schdoc");
@@ -838,6 +839,7 @@ mod corpus_tests {
             })
             .collect();
         paths.sort();
+        let mut alternate_children = 0;
         let (mut docs, mut sheets, mut alternate, mut written, mut not_written) = (0, 0, 0, 0, 0);
         for path in &paths {
             let Ok(mut doc) = SchDoc::open(path) else {
@@ -859,6 +861,21 @@ mod corpus_tests {
             let modes = |s: &crate::api::SchDocSheet| -> Vec<i32> {
                 s.components().iter().map(|c| c.display_mode).collect()
             };
+            let child_modes = |s: &crate::api::SchDocSheet| -> Vec<(i32, i32)> {
+                s.components()
+                    .iter()
+                    .flat_map(|c| c.children.iter())
+                    .filter_map(|child| match child {
+                        crate::api::ComponentChild::Graphic(g) => {
+                            Some((g.owner_part_id(), g.owner_part_display_mode()))
+                        }
+                        crate::api::ComponentChild::Pin(p) => {
+                            Some((p.owner_part_id, i32::from(p.owner_part_display_mode)))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            };
             let read = modes(&sheet);
             let mut sorted_read = read.clone();
             let mut sorted_stored = stored.clone();
@@ -879,6 +896,14 @@ mod corpus_tests {
                         "{}: display modes changed",
                         path.display()
                     );
+                    assert_eq!(
+                        child_modes(&after),
+                        child_modes(&sheet),
+                        "{}: child display modes changed",
+                        path.display()
+                    );
+                    alternate_children +=
+                        child_modes(&sheet).iter().filter(|(_, m)| *m != 0).count();
                     written += 1;
                 } else {
                     not_written += 1;
@@ -890,6 +915,8 @@ mod corpus_tests {
              components in an alternate mode, {written} sheets with one written and re-read, \
              {not_written} where update_sheet failed"
         );
+        eprintln!("corpus_r9_display_mode: {alternate_children} alternate-mode children");
+        assert!(alternate_children > 0);
         assert_eq!(alternate, 137);
         assert!(written > 0);
     }

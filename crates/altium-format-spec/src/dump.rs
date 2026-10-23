@@ -2778,6 +2778,7 @@ mod graphic_roundtrip_tests {
             Graphic::Rectangle(RectangleGraphic {
                 unique_id: String::new(),
                 owner_part_id: 1,
+                owner_part_display_mode: 0,
                 location: pt(10, -20),
                 corner: pt(700, 0),
                 line_width: Default::default(),
@@ -2790,6 +2791,7 @@ mod graphic_roundtrip_tests {
             Graphic::Polyline(PolylineGraphic {
                 unique_id: String::new(),
                 owner_part_id: 1,
+                owner_part_display_mode: 0,
                 vertices: vec![pt(0, 0), pt(100, 0), pt(100, 200)],
                 line_width: Default::default(),
                 line_style: Default::default(),
@@ -2800,6 +2802,7 @@ mod graphic_roundtrip_tests {
             }),
             Graphic::Pie(PieGraphic {
                 owner_part_id: 1,
+                owner_part_display_mode: 0,
                 location: pt(50, 50),
                 radius: Coord::from_mils(30).unwrap(),
                 start_angle: SchAngle(0.0),
@@ -2812,6 +2815,7 @@ mod graphic_roundtrip_tests {
             Graphic::TextFrame(TextFrameGraphic {
                 unique_id: String::new(),
                 owner_part_id: 1,
+                owner_part_display_mode: 0,
                 location: pt(-10, -10),
                 corner: pt(90, 40),
                 line_width: Default::default(),
@@ -2831,6 +2835,7 @@ mod graphic_roundtrip_tests {
             Graphic::Image(ImageGraphic {
                 unique_id: String::new(),
                 owner_part_id: 1,
+                owner_part_display_mode: 0,
                 location: pt(0, 0),
                 corner: pt(400, 300),
                 orientation: Default::default(),

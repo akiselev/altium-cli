@@ -1126,6 +1126,7 @@ fn schdoc_object_from_spec(spec: &SchDocObjectSpec) -> api::SheetObject {
                 api::Graphic::Line(api::LineGraphic {
                     unique_id: g.unique_id.clone(),
                     owner_part_id: 0,
+                    owner_part_display_mode: 0,
                     location: CoordPoint::default(),
                     corner: CoordPoint::default(),
                     line_width: PenWidth::default(),
@@ -1449,6 +1450,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
         GraphicType::Line => Some(api::Graphic::Line(api::LineGraphic {
             unique_id: spec.unique_id.clone(),
             owner_part_id,
+            owner_part_display_mode: 0,
             location: props.from.unwrap_or_default(),
             corner: props.to.unwrap_or_default(),
             line_width: PenWidth::default(),
@@ -1458,6 +1460,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
         GraphicType::Rectangle => Some(api::Graphic::Rectangle(api::RectangleGraphic {
             unique_id: spec.unique_id.clone(),
             owner_part_id,
+            owner_part_display_mode: 0,
             location: props.from.unwrap_or_default(),
             corner: props.to.unwrap_or_default(),
             line_width: PenWidth::default(),
@@ -1471,6 +1474,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
             Some(api::Graphic::RoundRectangle(api::RoundRectangleGraphic {
                 unique_id: spec.unique_id.clone(),
                 owner_part_id,
+            owner_part_display_mode: 0,
                 location: props.from.unwrap_or_default(),
                 corner: props.to.unwrap_or_default(),
                 corner_x_radius: props.corner_x_radius.unwrap_or_default(),
@@ -1484,6 +1488,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
         GraphicType::Arc => Some(api::Graphic::Arc(api::ArcGraphic {
             unique_id: spec.unique_id.clone(),
             owner_part_id,
+            owner_part_display_mode: 0,
             location: props.center.unwrap_or_default(),
             radius: props.radius.unwrap_or_default(),
             start_angle: api::SchAngle(props.start_angle.unwrap_or(0.0)),
@@ -1495,6 +1500,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
             Some(api::Graphic::EllipticalArc(api::EllipticalArcGraphic {
                 unique_id: spec.unique_id.clone(),
                 owner_part_id,
+            owner_part_display_mode: 0,
                 location: props.center.unwrap_or_default(),
                 radius: props.radius.unwrap_or_default(),
                 secondary_radius: props.secondary_radius.unwrap_or_default(),
@@ -1507,6 +1513,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
         GraphicType::Ellipse => Some(api::Graphic::Ellipse(api::EllipseGraphic {
             unique_id: spec.unique_id.clone(),
             owner_part_id,
+            owner_part_display_mode: 0,
             location: props.center.unwrap_or_default(),
             radius: props.radius.unwrap_or_default(),
             secondary_radius: props.secondary_radius.unwrap_or_default(),
@@ -1518,6 +1525,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
         })),
         GraphicType::Pie => Some(api::Graphic::Pie(api::PieGraphic {
             owner_part_id,
+            owner_part_display_mode: 0,
             location: props.center.unwrap_or_default(),
             radius: props.radius.unwrap_or_default(),
             start_angle: api::SchAngle(props.start_angle.unwrap_or(0.0)),
@@ -1530,6 +1538,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
         GraphicType::Polyline => Some(api::Graphic::Polyline(api::PolylineGraphic {
             unique_id: spec.unique_id.clone(),
             owner_part_id,
+            owner_part_display_mode: 0,
             vertices: props.points.clone().unwrap_or_default(),
             line_width: PenWidth::default(),
             line_style: LineStyle::default(),
@@ -1541,6 +1550,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
         GraphicType::Polygon => Some(api::Graphic::Polygon(api::PolygonGraphic {
             unique_id: spec.unique_id.clone(),
             owner_part_id,
+            owner_part_display_mode: 0,
             vertices: props.points.clone().unwrap_or_default(),
             line_width: PenWidth::default(),
             color: props.color.unwrap_or_default(),
@@ -1551,6 +1561,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
         GraphicType::Bezier => Some(api::Graphic::Bezier(api::BezierGraphic {
             unique_id: spec.unique_id.clone(),
             owner_part_id,
+            owner_part_display_mode: 0,
             vertices: props.points.clone().unwrap_or_default(),
             line_width: PenWidth::default(),
             color: props.color.unwrap_or_default(),
@@ -1558,6 +1569,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
         GraphicType::Label => Some(api::Graphic::Label(api::LabelGraphic {
             unique_id: spec.unique_id.clone(),
             owner_part_id,
+            owner_part_display_mode: 0,
             location: props.at.unwrap_or_default(),
             orientation: RotationBy90::Rotate0,
             justification: TextJustification::default(),
@@ -1570,6 +1582,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
         GraphicType::TextFrame => Some(api::Graphic::TextFrame(api::TextFrameGraphic {
             unique_id: spec.unique_id.clone(),
             owner_part_id,
+            owner_part_display_mode: 0,
             location: props.from.unwrap_or_default(),
             corner: props.to.unwrap_or_default(),
             line_width: PenWidth::default(),
@@ -1589,6 +1602,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
         GraphicType::Image => Some(api::Graphic::Image(api::ImageGraphic {
             unique_id: spec.unique_id.clone(),
             owner_part_id,
+            owner_part_display_mode: 0,
             location: props.from.unwrap_or_default(),
             corner: props.to.unwrap_or_default(),
             orientation: RotationBy90::Rotate0,
