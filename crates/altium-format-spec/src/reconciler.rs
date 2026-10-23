@@ -3525,6 +3525,7 @@ mod tests {
                 document_name: String::new(),
                 signal_layer_count: 2,
                 board_outline: None,
+                outline: None,
                 snap_grid_size: Coord::ZERO,
                 visible_grid_size: Coord::ZERO,
                 display_unit: Unit::Metric,

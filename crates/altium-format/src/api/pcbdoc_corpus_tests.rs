@@ -385,3 +385,66 @@ fn corpus_r3_polygon_membership() {
     assert_eq!(layer_mismatches, 1);
     assert_eq!(boards_round_tripped, 79);
 }
+
+/// R1: every corpus board's Board6 outline reads with its arcs (counts from
+/// the olefile survey: 94 outlines, 1,037 vertices, one open), survives
+/// `update_board` → `board()`, and a replaced, shorter outline leaves none of
+/// the old vertices behind.
+#[test]
+fn corpus_r1_board_outline() {
+    let (mut outlines, mut vertices, mut arcs, mut open) = (0, 0, 0, 0);
+    let mut boards_round_tripped = 0;
+    for (name, mut doc) in corpus_docs() {
+        let settings = convert_board_settings(&doc).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let outline = settings
+            .outline
+            .unwrap_or_else(|| panic!("{name}: no Board6 outline"));
+        outlines += 1;
+        vertices += outline.segments.len();
+        arcs += outline
+            .segments
+            .iter()
+            .filter(|s| matches!(s, ContourSegment::Arc { .. }))
+            .count();
+        let points = outline.to_points();
+        if points.first() != points.last() {
+            open += 1;
+        }
+        let Ok(mut board) = doc.board() else {
+            assert!(BOARDS_FAILING_AT_BASE.contains(&name.as_str()), "{name}");
+            continue;
+        };
+        doc.update_board(&board)
+            .unwrap_or_else(|e| panic!("{name}: update_board: {e}"));
+        let after = doc.board().unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(
+            format!("{:?}", after.settings.outline),
+            format!("{:?}", board.settings.outline),
+            "{name}: outline changed on write"
+        );
+        let triangle = PcbContour {
+            segments: points[..3]
+                .iter()
+                .map(|&endpoint| ContourSegment::Line { endpoint })
+                .collect(),
+        };
+        board.settings.outline = Some(triangle.clone());
+        doc.update_board(&board)
+            .unwrap_or_else(|e| panic!("{name}: update_board (triangle): {e}"));
+        let after = doc.board().unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(
+            format!("{:?}", after.settings.outline),
+            format!("{:?}", Some(triangle)),
+            "{name}: replaced outline"
+        );
+        boards_round_tripped += 1;
+    }
+    eprintln!(
+        "corpus_r1_board_outline: {outlines} outlines, {vertices} vertices, {arcs} arc edges, \
+         {open} open; {boards_round_tripped} boards written and re-read"
+    );
+    assert_eq!(outlines, 94);
+    assert_eq!(vertices, 1_037);
+    assert_eq!(open, 1);
+    assert_eq!(boards_round_tripped, 79);
+}

@@ -19,7 +19,7 @@ use altium_format_types::{BarcodeKind, PcbObjectId};
 use crate::api::pcb_common::{ContourSegment, PcbContour};
 use crate::api::pcbdoc_read::{
     hatch_style_to_param_value, layer_to_param_value, polygon_type_to_param_value,
-    validate_unique_id,
+    strip_param_contour, validate_unique_id,
 };
 use crate::api::pcbdoc_types::*;
 use crate::param_collection::ParameterCollection;
@@ -275,6 +275,7 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
         build_board_record(&board.settings),
         "DOCUMENTNAME",
     );
+    replace_board_outline(doc, board.settings.outline.as_ref())?;
 
     // ── Step 3: Replace primitive sections ──
     replace_primitives_with_preservation(
@@ -754,6 +755,25 @@ fn build_board_record(settings: &BoardSettings) -> Vec<StandardParamRecord> {
         (settings.display_unit as u8).to_param_value(),
     );
     vec![StandardParamRecord { params }]
+}
+
+/// Replace the Board6 outline keys with `outline` (all of them removed when
+/// `None`). The merge above keeps the old record's keys, so a shorter new
+/// outline would otherwise leave the old record's trailing vertices behind.
+fn replace_board_outline(doc: &mut PcbDoc, outline: Option<&PcbContour>) -> Result<()> {
+    for section in &mut doc.sections {
+        if let PcbDocSection::Parameter(param) = section {
+            if param.kind == ParamSectionKind::Board6 {
+                for record in &mut param.records {
+                    strip_param_contour(&mut record.params).context("Board6 outline")?;
+                    if let Some(outline) = outline {
+                        insert_param_contour(&mut record.params, outline);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 // ── Primitive record builders ──────────────────────────────────────────────

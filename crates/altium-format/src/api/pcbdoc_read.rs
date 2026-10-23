@@ -742,6 +742,19 @@ fn is_contour_key(key: &str) -> bool {
     })
 }
 
+/// Remove every contour key (`KINDn`, `VXn`, … for any n) from a record.
+pub(crate) fn strip_param_contour(params: &mut ParameterCollection) -> Result<()> {
+    let keys: Vec<String> = params
+        .iter()
+        .filter(|(k, _)| is_contour_key(k))
+        .map(|(k, _)| k.to_owned())
+        .collect();
+    for key in keys {
+        params.remove_required::<String>(&key)?;
+    }
+    Ok(())
+}
+
 /// Remove an arc-preserving contour stored as indexed parameters
 /// (`KINDn`, `VXn`, `VYn`, `CXn`, `CYn`, `SAn`, `EAn`, `Rn`, n = 0, 1, …).
 ///
@@ -1139,6 +1152,7 @@ fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
         document_name: String::new(),
         signal_layer_count: 2,
         board_outline: None,
+        outline: None,
         snap_grid_size: Coord::from_internal(100_000), // 10 mil default
         visible_grid_size: Coord::from_internal(100_000),
         display_unit: Unit::Imperial,
@@ -1183,6 +1197,12 @@ fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
             let config = crate::board_config::parse_board_config(&mut config_params)
                 .context("Board6 layer stack config")?;
             settings.layer_stack = extract_layer_stack(&config);
+
+            // Board6 is not consumed key by key, so the outline is taken from a
+            // copy; remove_param_contour still rejects a partial vertex or a gap.
+            let outline =
+                remove_param_contour(&mut first.params.clone()).context("Board6 outline")?;
+            settings.outline = (!outline.segments.is_empty()).then_some(outline);
         }
     }
 
@@ -1996,6 +2016,20 @@ mod tests {
         ));
         // Only the contour keys are consumed.
         assert_eq!(p.remaining_keys(), vec!["OTHER"]);
+    }
+
+    #[test]
+    fn strip_param_contour_removes_only_contour_keys() {
+        let text = format!(
+            "{VERTEX0}|KIND7=0|VX7=0mil|VY7=0mil|CX7=0mil|CY7=0mil|SA7=0|EA7=0|R7=0mil\
+             |RADIUS=1|KINDNESS=2|VX=3|DOCUMENTNAME=x|"
+        );
+        let mut p = params(&text);
+        strip_param_contour(&mut p).unwrap();
+        assert_eq!(
+            p.remaining_keys(),
+            vec!["RADIUS", "KINDNESS", "VX", "DOCUMENTNAME"]
+        );
     }
 
     #[test]

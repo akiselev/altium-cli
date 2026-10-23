@@ -555,6 +555,8 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   `plane_split_line` on Track/Arc for the 0xFFFE marker (split-plane lines on plane layers).
   In the corpus only regions are pour members on readable boards, and they store no net.
   Writer: primitives with a full V7 layer id keep their V6 layer (were written as NoLayer).
+- Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
+  boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
 
 ### PrjPcb
 INI-style format with indexed sections. Complete roundtrip. Read-only high-level API (internal write exists but not surfaced).

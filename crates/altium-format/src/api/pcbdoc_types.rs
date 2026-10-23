@@ -74,6 +74,12 @@ pub struct BoardSettings {
     pub document_name: String,
     pub signal_layer_count: i32,
     pub board_outline: Option<Vec<CoordPoint>>,
+    /// The board outline stored in Board6 (`KINDn`, `VXn`, `VYn`, `CXn`, `CYn`,
+    /// `SAn`, `EAn`, `Rn`), with arcs; `None` when Board6 stores no vertices.
+    /// As stored, the first vertex is normally repeated as the last one (one
+    /// corpus board's outline is open). `board_outline` and `geometry` are
+    /// derived from regions instead.
+    pub outline: Option<PcbContour>,
     pub snap_grid_size: Coord,
     pub visible_grid_size: Coord,
     pub display_unit: Unit,
