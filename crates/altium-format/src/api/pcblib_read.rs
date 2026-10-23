@@ -7,6 +7,7 @@ use crate::pcblib::{
     PcbTrack, PcbVia,
 };
 use altium_format_types::color::Color;
+use altium_format_types::coord::Coord;
 use altium_format_types::pcb::{LayerRef, V7Layer};
 
 /// Convert an internal `PcbFootprint` into a public `Footprint`.
@@ -71,6 +72,10 @@ fn pad_from_internal(p: &PcbPad) -> Pad {
         paste_mask_expansion: p.cache.paste_mask_expansion,
         solder_mask_mode: mask_mode_from_cache(p.cache.solder_mask_expansion_valid),
         paste_mask_mode: mask_mode_from_cache(p.cache.paste_mask_expansion_valid),
+        solder_mask_bottom_expansion: p
+            .use_separate_expansions
+            .then(|| Coord::from_internal(p.solder_mask_bottom_expansion)),
+        solder_mask_from_hole_edge: p.solder_mask_expansion_from_hole_edge,
         plane_connection: p.cache.plane_connection_style,
         relief_conductor_width: p.cache.relief_conductor_width,
         relief_entries: p.cache.relief_entries as i32,

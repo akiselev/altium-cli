@@ -539,6 +539,7 @@ fn corpus_r6_layer_identity() {
 fn corpus_r5_pad_modes() {
     use altium_format_types::pcb::MaskExpansionMode;
     let (mut pads, mut solder_manual, mut paste_manual, mut boards_round_tripped) = (0, 0, 0, 0);
+    let (mut separate_bottom, mut from_hole_edge) = (0, 0);
     for (name, mut doc) in corpus_docs() {
         let states = |doc: &PcbDoc| -> Vec<(TCacheState, TCacheState)> {
             doc.sections
@@ -574,6 +575,9 @@ fn corpus_r5_pad_modes() {
                 *paste == TCacheState::Manual
             );
             assert_ne!(p.solder_mask_mode, MaskExpansionMode::NoMask);
+            assert_ne!(p.paste_mask_mode, MaskExpansionMode::NoMask);
+            separate_bottom += usize::from(p.solder_mask_bottom_expansion.is_some());
+            from_hole_edge += usize::from(p.solder_mask_from_hole_edge);
             solder_manual += usize::from(p.solder_mask_mode == MaskExpansionMode::Manual);
             paste_manual += usize::from(p.paste_mask_mode == MaskExpansionMode::Manual);
         }
@@ -584,12 +588,51 @@ fn corpus_r5_pad_modes() {
             before_states,
             "{name}: pad cache states changed"
         );
+        let pad_masks = |b: &PcbDocBoard| -> Vec<String> {
+            b.pads
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{:?} {:?} {:?} {:?} {:?} {}",
+                        p.solder_mask_mode,
+                        p.paste_mask_mode,
+                        p.solder_mask_expansion,
+                        p.paste_mask_expansion,
+                        p.solder_mask_bottom_expansion,
+                        p.solder_mask_from_hole_edge
+                    )
+                })
+                .collect()
+        };
+        let after = doc.board().unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(
+            pad_masks(&after),
+            pad_masks(&board),
+            "{name}: pad masks changed"
+        );
+        // Insert a new pad in front: the old pads keep their own internal
+        // fields (matched by unique id), so their cache states do not shift.
+        if let Some(first) = board.pads.first().cloned() {
+            let mut inserted = board.clone();
+            let mut new_pad = first;
+            new_pad.unique_id = None;
+            inserted.pads.insert(0, new_pad);
+            doc.update_board(&inserted)
+                .unwrap_or_else(|e| panic!("{name}: update_board (inserted): {e}"));
+            assert_eq!(
+                states(&doc)[1..],
+                before_states[..],
+                "{name}: states shifted"
+            );
+        }
         boards_round_tripped += 1;
     }
     eprintln!(
         "corpus_r5_pad_modes: {pads} pads on readable boards, {solder_manual} manual solder \
-         mask, {paste_manual} manual paste mask; {boards_round_tripped} boards written"
+         mask, {paste_manual} manual paste mask, {separate_bottom} separate bottom solder \
+         expansions, {from_hole_edge} from the hole edge; {boards_round_tripped} boards written"
     );
+    assert_eq!((separate_bottom, from_hole_edge), (5, 0));
     assert_eq!(boards_round_tripped, 79);
 }
 

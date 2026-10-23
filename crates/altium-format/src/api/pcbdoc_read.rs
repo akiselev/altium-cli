@@ -300,6 +300,7 @@ fn build_context(doc: &PcbDoc) -> Result<ConvertContext> {
 
     let pad_unique_ids =
         convert_unique_id_primitive_information(doc).context("UniqueIDPrimitiveInformation")?;
+    reject_pad_extended_primitive_information(doc)?;
 
     let polygon_count = find_param_section(doc, ParamSectionKind::Polygons6).map_or(0, <[_]>::len);
 
@@ -310,6 +311,26 @@ fn build_context(doc: &PcbDoc) -> Result<ConvertContext> {
         pad_unique_ids,
         polygon_count,
     })
+}
+
+/// ExtendedPrimitiveInformation pad entries would carry mask expansion modes
+/// (possibly NoMask) that the board API, which reads pad modes from the pad
+/// cache states, would contradict; none occurs in the test corpus, so one is
+/// an error until its mapping is implemented.
+fn reject_pad_extended_primitive_information(doc: &PcbDoc) -> Result<()> {
+    let Some(records) = find_param_section(doc, ParamSectionKind::ExtendedPrimitiveInformation)
+    else {
+        return Ok(());
+    };
+    for (idx, rec) in records.iter().enumerate() {
+        if rec.params.get("PRIMITIVEOBJECTID") == Some(PcbObjectId::Pad.to_string().as_str()) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "ExtendedPrimitiveInformation".to_owned(),
+                detail: format!("record #{idx}: entries for pads are not supported"),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Check an Altium object id: 8 uppercase ASCII letters, as every id in the
@@ -329,7 +350,9 @@ pub(crate) fn validate_unique_id(key: &str, value: &str) -> Result<()> {
 /// `UNIQUEID` per record. Only `Pad` entries occur in the test corpus (58,719
 /// of them) and only those are mapped; another object kind, an index outside
 /// Pads6, a repeated index or an unknown key is an error.
-fn convert_unique_id_primitive_information(doc: &PcbDoc) -> Result<HashMap<usize, String>> {
+pub(crate) fn convert_unique_id_primitive_information(
+    doc: &PcbDoc,
+) -> Result<HashMap<usize, String>> {
     let Some(records) = find_param_section(doc, ParamSectionKind::UniqueIdPrimitiveInformation)
     else {
         return Ok(HashMap::new());
@@ -1619,6 +1642,10 @@ fn pad_from_internal(idx: usize, p: &PcbPad, ctx: &ConvertContext) -> Result<Pad
         paste_mask_expansion: p.cache.paste_mask_expansion,
         solder_mask_mode: mask_mode_from_cache(p.cache.solder_mask_expansion_valid),
         paste_mask_mode: mask_mode_from_cache(p.cache.paste_mask_expansion_valid),
+        solder_mask_bottom_expansion: p
+            .use_separate_expansions
+            .then(|| Coord::from_internal(p.solder_mask_bottom_expansion)),
+        solder_mask_from_hole_edge: p.solder_mask_expansion_from_hole_edge,
         plane_connection: p.cache.plane_connection_style,
         relief_conductor_width: p.cache.relief_conductor_width,
         relief_entries: p.cache.relief_entries as i32,

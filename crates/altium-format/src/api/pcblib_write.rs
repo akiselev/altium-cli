@@ -129,12 +129,24 @@ pub(crate) fn update_footprint_internal(
                 new_pad.cache.power_plane_relief_expansion_valid =
                     ep.cache.power_plane_relief_expansion_valid;
                 new_pad.cache.paste_mask_expansion_valid = merge_mask_cache_state(
-                    new_pad.cache.paste_mask_expansion_valid,
-                    ep.cache.paste_mask_expansion_valid,
+                    (
+                        new_pad.cache.paste_mask_expansion_valid,
+                        new_pad.cache.paste_mask_expansion,
+                    ),
+                    (
+                        ep.cache.paste_mask_expansion_valid,
+                        ep.cache.paste_mask_expansion,
+                    ),
                 );
                 new_pad.cache.solder_mask_expansion_valid = merge_mask_cache_state(
-                    new_pad.cache.solder_mask_expansion_valid,
-                    ep.cache.solder_mask_expansion_valid,
+                    (
+                        new_pad.cache.solder_mask_expansion_valid,
+                        new_pad.cache.solder_mask_expansion,
+                    ),
+                    (
+                        ep.cache.solder_mask_expansion_valid,
+                        ep.cache.solder_mask_expansion,
+                    ),
                 );
                 new_pad.cache.power_plane_clearance_valid = ep.cache.power_plane_clearance_valid;
                 new_pad.cache.planes_valid = ep.cache.planes_valid;
@@ -144,10 +156,11 @@ pub(crate) fn update_footprint_internal(
                 new_pad.v7_layer_override = ep.v7_layer_override;
                 new_pad.is_assy_testpoint_top = ep.is_assy_testpoint_top;
                 new_pad.is_assy_testpoint_bottom = ep.is_assy_testpoint_bottom;
-                new_pad.use_separate_expansions = ep.use_separate_expansions;
-                new_pad.solder_mask_bottom_expansion = ep.solder_mask_bottom_expansion;
-                new_pad.solder_mask_expansion_from_hole_edge =
-                    ep.solder_mask_expansion_from_hole_edge;
+                // Separate expansions and from_hole_edge come from the API pad;
+                // without separate expansions the stored bottom value is kept.
+                if !new_pad.use_separate_expansions {
+                    new_pad.solder_mask_bottom_expansion = ep.solder_mask_bottom_expansion;
+                }
                 new_pad.template_link_library_id = ep.template_link_library_id;
                 new_pad.template_link_template_id = ep.template_link_template_id;
                 new_pad.pin_package_length = ep.pin_package_length;
@@ -308,9 +321,11 @@ fn pad_to_internal(pad: &Pad) -> Result<PcbPad> {
         v7_layer_override: 0,
         is_assy_testpoint_top: false,
         is_assy_testpoint_bottom: false,
-        use_separate_expansions: false,
-        solder_mask_bottom_expansion: 0,
-        solder_mask_expansion_from_hole_edge: false,
+        use_separate_expansions: pad.solder_mask_bottom_expansion.is_some(),
+        solder_mask_bottom_expansion: pad
+            .solder_mask_bottom_expansion
+            .map_or(0, |c| c.to_internal()),
+        solder_mask_expansion_from_hole_edge: pad.solder_mask_from_hole_edge,
         template_link_library_id: [0u8; 16],
         template_link_template_id: [0u8; 16],
         pin_package_length: Coord::ZERO,

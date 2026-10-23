@@ -254,6 +254,21 @@ fn load_sidecars(
         vec![]
     };
     validate_extended_entries(&footprint.primitives, &extended_info)?;
+    // The API derives a pad's mask expansion modes from its cache states; a pad
+    // entry here could contradict them (e.g. NoMask), and none occurs in the
+    // test corpus, so it is an error until its mapping is implemented.
+    if let Some(entry) = extended_info
+        .iter()
+        .find(|e| e.primitive_object_id == altium_format_types::PcbObjectId::Pad)
+    {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "ExtendedPrimitiveInformation".to_owned(),
+            detail: format!(
+                "/{cfb_key}: entry for pad primitive #{} is not supported",
+                entry.primitive_index
+            ),
+        });
+    }
     footprint.extended_primitive_info = extended_info;
 
     // PrimitiveGuids: optional Header/Data substorage.

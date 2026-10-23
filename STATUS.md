@@ -571,13 +571,22 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   PcbDoc and PcbLib pads. Writers store the mode (Manual, or the old Valid/Invalid state for a
   rule pad; NoMask is an error); before, both writers wrote Valid or the old record's state.
   PcbLib `update_footprint` matches repeated pad names by occurrence (was always the first).
+  Pads also expose `solder_mask_bottom_expansion` (separate top/bottom) and
+  `solder_mask_from_hole_edge`. A rule pad whose value changed is written Invalid. PcbDoc pads
+  keep internal fields by unique id (were positional, so inserting a pad shifted them). An
+  ExtendedPrimitiveInformation entry for a pad is an error in both readers (none in the corpora).
   Known gap: the PcbLib writer still writes NoLayer / Top / Bottom for layers without a V6 form.
 - Region contours (R7): `outline_contour` and `hole_contours` (`PcbContour`) keep arcs (192
   corpus regions, 1,017 arc edges on readable boards). The writer stores them in the section's
   format (TPolySegments for ShapeBasedRegions6, vertices for Regions6/BoardRegions/holes; arcs
   there are an error). Before, the writer copied the old record's contours back, so an edited
   region outline was silently discarded, and new regions went into ShapeBasedRegions6 in the
-  vertex format. Component bodies still copy their old contours (not part of R7).
+  vertex format. Known gaps (not part of R7): component bodies are always written in the vertex
+  format, so a ShapeBasedComponentBodies6 section with records gets an unreadable record, and
+  bodies/texts go to the legacy section when the modern one exists but is empty (the reader then
+  skips them); Regions6 is not rewritten when ShapeBasedRegions6 exists, so it keeps the old
+  geometry; region internal fields (layer string, keepout restrictions, …) are preserved by
+  position within each section.
 - Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
   boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
 

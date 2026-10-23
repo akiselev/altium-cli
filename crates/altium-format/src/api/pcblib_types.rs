@@ -56,6 +56,13 @@ pub struct Pad {
     pub solder_mask_mode: MaskExpansionMode,
     /// `Manual` or `Rule` (from the pad's cache state); never `NoMask`.
     pub paste_mask_mode: MaskExpansionMode,
+    /// The bottom-side solder mask expansion when the pad uses separate top
+    /// and bottom expansions (`solder_mask_expansion` is then the top one);
+    /// `None` when one expansion applies to both sides.
+    pub solder_mask_bottom_expansion: Option<Coord>,
+    /// The solder mask expansion is measured from the hole edge, not the pad
+    /// edge.
+    pub solder_mask_from_hole_edge: bool,
     pub plane_connection: PlaneConnectionStyle,
     pub relief_conductor_width: Coord,
     pub relief_entries: i32,

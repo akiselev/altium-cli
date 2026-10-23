@@ -34,15 +34,20 @@ pub(crate) fn mask_cache_state_for_write(
         })
 }
 
-/// Merge the written cache state with the old record's: the API mode decides
-/// Manual vs rule; for a rule-driven pad the old Valid/Invalid state is kept.
-pub(crate) fn merge_mask_cache_state(new: TCacheState, old: TCacheState) -> TCacheState {
-    if new == TCacheState::Manual {
+/// Merge the written (state, value) with the old record's: the API mode
+/// decides Manual vs rule; a rule-driven pad keeps the old Valid/Invalid state
+/// only while its value is the old cached value (a changed value is no longer
+/// the rule's result, so it becomes Invalid).
+pub(crate) fn merge_mask_cache_state(
+    new: (TCacheState, Coord),
+    old: (TCacheState, Coord),
+) -> TCacheState {
+    if new.0 == TCacheState::Manual {
         TCacheState::Manual
-    } else if old == TCacheState::Manual {
+    } else if old.0 == TCacheState::Manual || new.1 != old.1 {
         TCacheState::Invalid
     } else {
-        old
+        old.0
     }
 }
 
@@ -338,17 +343,31 @@ mod tests {
         );
         assert!(mask_cache_state_for_write("K", MaskExpansionMode::NoMask).is_err());
         // The API mode decides Manual vs rule; a rule pad keeps Valid/Invalid.
+        let (a, b) = (Coord::from_internal(40_000), Coord::from_internal(60_000));
         for (new, old, merged) in [
-            (TCacheState::Manual, TCacheState::Valid, TCacheState::Manual),
             (
-                TCacheState::Invalid,
+                (TCacheState::Manual, a),
+                (TCacheState::Valid, a),
                 TCacheState::Manual,
+            ),
+            (
+                (TCacheState::Invalid, a),
+                (TCacheState::Manual, a),
                 TCacheState::Invalid,
             ),
-            (TCacheState::Invalid, TCacheState::Valid, TCacheState::Valid),
             (
+                (TCacheState::Invalid, a),
+                (TCacheState::Valid, a),
+                TCacheState::Valid,
+            ),
+            (
+                (TCacheState::Invalid, b),
+                (TCacheState::Valid, a),
                 TCacheState::Invalid,
-                TCacheState::Invalid,
+            ),
+            (
+                (TCacheState::Invalid, a),
+                (TCacheState::Invalid, a),
                 TCacheState::Invalid,
             ),
         ] {

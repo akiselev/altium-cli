@@ -1675,6 +1675,8 @@ fn pad_from_pcblib_spec(spec: &PadSpec) -> api::Pad {
         // A spec that states an expansion sets it manually; otherwise the rule applies.
         solder_mask_mode: mask_mode_for(spec.solder_mask_expansion),
         paste_mask_mode: mask_mode_for(spec.paste_mask_expansion),
+        solder_mask_bottom_expansion: None,
+        solder_mask_from_hole_edge: false,
         plane_connection: spec.plane_connection.unwrap_or_default(),
         relief_conductor_width: spec.relief_conductor_width.unwrap_or(Coord::ZERO),
         relief_entries: spec.relief_entries.unwrap_or(4),
@@ -1936,9 +1938,11 @@ fn apply_pad_spec(pad: &mut api::Pad, spec: &PadSpec) {
     }
     if let Some(s) = spec.solder_mask_expansion {
         pad.solder_mask_expansion = s;
+        pad.solder_mask_mode = altium_format_types::pcb::MaskExpansionMode::Manual;
     }
     if let Some(p) = spec.paste_mask_expansion {
         pad.paste_mask_expansion = p;
+        pad.paste_mask_mode = altium_format_types::pcb::MaskExpansionMode::Manual;
     }
     if let Some(c) = spec.plane_connection {
         pad.plane_connection = c;

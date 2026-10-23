@@ -199,6 +199,27 @@ fn layer_v6_for_write(layer: &LayerRef) -> Result<V6Layer> {
         })
 }
 
+/// Give the document's Pads6 records the unique ids its
+/// UniqueIDPrimitiveInformation section stores (the parser leaves them in the
+/// section), so pad field preservation can match old pads by id.
+fn attach_pad_unique_ids(doc: &mut PcbDoc) -> Result<()> {
+    let ids = crate::api::pcbdoc_read::convert_unique_id_primitive_information(doc)?;
+    for section in &mut doc.sections {
+        if let PcbDocSection::Primitive(prim) = section {
+            if prim.kind == PrimitiveSectionKind::Pads6 {
+                for (i, record) in prim.records.iter_mut().enumerate() {
+                    if let PcbPrimitive::Pad(pad) = &mut record.primitive {
+                        if pad.unique_id.is_none() {
+                            pad.unique_id = ids.get(&i).cloned();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Build a `PcbPrimitiveCommon` for a board context with net/component resolution.
 fn primitive_common_for_board(
     layer: &LayerRef,
@@ -242,6 +263,7 @@ fn reject_unique_id(kind: &str, unique_id: &Option<String>) -> Result<()> {
 /// preserved from existing records matched by position index.
 pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result<()> {
     let ctx = WriteContext::new(board);
+    attach_pad_unique_ids(doc).context("UniqueIDPrimitiveInformation")?;
 
     // ── Step 1: Rebuild WideStrings first (needed for text primitive indices) ──
     let (wide_strings_data, wide_indices) = rebuild_wide_strings(&board.texts);
@@ -1038,9 +1060,11 @@ fn build_pad_records(pads: &[Pad], ctx: &WriteContext) -> Result<Vec<ParsedPrimi
                     v7_layer_override: 0,
                     is_assy_testpoint_top: false,
                     is_assy_testpoint_bottom: false,
-                    use_separate_expansions: false,
-                    solder_mask_bottom_expansion: 0,
-                    solder_mask_expansion_from_hole_edge: false,
+                    use_separate_expansions: p.solder_mask_bottom_expansion.is_some(),
+                    solder_mask_bottom_expansion: p
+                        .solder_mask_bottom_expansion
+                        .map_or(0, |c| c.to_internal()),
+                    solder_mask_expansion_from_hole_edge: p.solder_mask_from_hole_edge,
                     template_link_library_id: [0u8; 16],
                     template_link_template_id: [0u8; 16],
                     pin_package_length: Coord::ZERO,
@@ -1431,8 +1455,31 @@ fn preserve_primitive_fields(
     old_records: &[ParsedPrimitiveRecord],
     new_records: &mut [ParsedPrimitiveRecord],
 ) {
+    // Pads carry unique ids (R4): a pad keeps the internal fields of the old
+    // pad with its id, so inserting or removing pads does not shift them onto
+    // neighbours. Positional matching is the fallback (no id, an id the old
+    // section repeats, or an id not found).
+    let mut old_pad_by_uid: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, rec) in old_records.iter().enumerate() {
+        if let PcbPrimitive::Pad(p) = &rec.primitive {
+            if let Some(uid) = &p.unique_id {
+                old_pad_by_uid.entry(uid.as_str()).or_default().push(i);
+            }
+        }
+    }
     for (i, new_rec) in new_records.iter_mut().enumerate() {
-        let Some(old_rec) = old_records.get(i) else {
+        let old_index = match &new_rec.primitive {
+            PcbPrimitive::Pad(p) => match p
+                .unique_id
+                .as_deref()
+                .and_then(|uid| old_pad_by_uid.get(uid))
+            {
+                Some(found) if found.len() == 1 => found[0],
+                _ => i,
+            },
+            _ => i,
+        };
+        let Some(old_rec) = old_records.get(old_index) else {
             continue;
         };
         match (&mut new_rec.primitive, &old_rec.primitive) {
@@ -1557,12 +1604,24 @@ fn preserve_pad_fields(new: &mut PcbPad, old: &PcbPad) {
     new.cache.relief_air_gap_valid = old.cache.relief_air_gap_valid;
     new.cache.power_plane_relief_expansion_valid = old.cache.power_plane_relief_expansion_valid;
     new.cache.paste_mask_expansion_valid = merge_mask_cache_state(
-        new.cache.paste_mask_expansion_valid,
-        old.cache.paste_mask_expansion_valid,
+        (
+            new.cache.paste_mask_expansion_valid,
+            new.cache.paste_mask_expansion,
+        ),
+        (
+            old.cache.paste_mask_expansion_valid,
+            old.cache.paste_mask_expansion,
+        ),
     );
     new.cache.solder_mask_expansion_valid = merge_mask_cache_state(
-        new.cache.solder_mask_expansion_valid,
-        old.cache.solder_mask_expansion_valid,
+        (
+            new.cache.solder_mask_expansion_valid,
+            new.cache.solder_mask_expansion,
+        ),
+        (
+            old.cache.solder_mask_expansion_valid,
+            old.cache.solder_mask_expansion,
+        ),
     );
     new.cache.power_plane_clearance_valid = old.cache.power_plane_clearance_valid;
     new.cache.planes_valid = old.cache.planes_valid;
@@ -1572,9 +1631,12 @@ fn preserve_pad_fields(new: &mut PcbPad, old: &PcbPad) {
     new.v7_layer_override = old.v7_layer_override;
     new.is_assy_testpoint_top = old.is_assy_testpoint_top;
     new.is_assy_testpoint_bottom = old.is_assy_testpoint_bottom;
-    new.use_separate_expansions = old.use_separate_expansions;
-    new.solder_mask_bottom_expansion = old.solder_mask_bottom_expansion;
-    new.solder_mask_expansion_from_hole_edge = old.solder_mask_expansion_from_hole_edge;
+    // use_separate_expansions, the bottom expansion and from_hole_edge come
+    // from the API pad; without separate expansions the stored (unused) bottom
+    // value is kept.
+    if !new.use_separate_expansions {
+        new.solder_mask_bottom_expansion = old.solder_mask_bottom_expansion;
+    }
     new.template_link_library_id = old.template_link_library_id;
     new.template_link_template_id = old.template_link_template_id;
     new.pin_package_length = old.pin_package_length;
