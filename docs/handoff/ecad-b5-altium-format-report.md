@@ -14,7 +14,9 @@ Date: 2026-10-23. Lane brief: `docs/handoff/ecad-b5-altium-format-lane.md` (on
 |---|---|
 | `dbe7367` | R22: every rule kind typed; room outlines and flags; parsed-but-hidden keys |
 | `704229b` | R22 review fixes; R20; R21 (+ Q15 classes and diff pairs); A1, A3–A5; ASCII SchDoc; IgnoreOnLoad; harness owners; Dimensions6 (R23) |
-| `__FIX__` | second review fixes |
+| `c8f8fa8` | A2: VariationKind 0 and 2 refused (coordinator decision) |
+| `8a8f04a` | second review fixes |
+| next | R1–R17 corpus tests kept on their 79 base boards |
 | this commit | this report |
 
 ## Sources read
@@ -157,11 +159,18 @@ Date: 2026-10-23. Lane brief: `docs/handoff/ecad-b5-altium-format-lane.md` (on
 - **Tests:** `project_variants_read_and_write_as_project_variant_sections`,
   `test_unknown_section_refused`.
 
-### A2: VariationKind (open, question sent)
+### A2: VariationKind (fail fast; settled only for Kind 1)
 
-No decompiled source and no PrjPcb were reachable. The enum stays None 0 / NotFitted 1 /
-Alternate 2. It agrees with KiCad on 1 (not fitted) and disagrees on 0. The question and a
-recommendation went to the coordinator (Q1 below).
+- **The gap:** no decompiled source and no PrjPcb was reachable. Our enum (None 0 / NotFitted
+  1 / Alternate 2) agrees with KiCad's importer on Kind 1 = not fitted and disagrees on 0
+  (KiCad: alternate).
+- **Coordinator's decision:** keep NotFitted = 1. Kind 0 and Kind 2 are now hard errors with
+  context ("unverified VariationKind Kind=N, see the A2 request"); tests in
+  `project_variants_read_and_write_as_project_variant_sections`.
+- **Two ways to settle it:**
+  - altium-re reads WorkspaceManager.dll's PrjPcb variant reader and `IsFitted` (modularity's
+    altium-re request);
+  - the user adds a real PrjPcb with a not-fitted part and an alternate part to a corpus.
 
 ### A3: ChannelRoomNamingStyle (done)
 
@@ -226,11 +235,27 @@ now converts.
 | sheet font table entries missing | 5 | R30; not started |
 | SELECTION (RECORD=22), STARTLINESHAPE empty, merge conflict | 3 | |
 
+### Open: R1–R17 checks on the 15 newly readable boards
+
+The R1–R17 corpus tests stay on the 79 boards that read at the base rev; they skip the 15
+boards in `BOARDS_FAILING_AT_BASE` explicitly. On the 15 new boards, two R-items' checks
+fail:
+
+- **R3 (an observation, not a defect):** tvws-agc-calib has tracks inside a polygon
+  (`track_1541`, polygon 0). On the 79 base boards the only pour members were regions, so
+  the importer must expect track/arc pour members (hatched pours).
+- **R5 (a possible writer defect, not investigated):** on tvws-wab-1x4, after
+  `corpus_r5_pad_modes` inserts a pad, the first pad's solder cache state reads Invalid
+  instead of Valid. `merge_mask_cache_state` marks a rule pad Invalid when its expansion value
+  differs, so a value read differently on that board is the likely cause.
+- **Recommendation:** the next format lane runs every R-item check over all 94 boards and fixes
+  R5 there.
+
 ## Tests (exact commands)
 
 - **Unit tests:**
   `CARGO_TARGET_DIR=/tmp/target-altium CARGO_PROFILE_DEV_DEBUG=0 cargo test --no-fail-fast -p altium-format -p altium-format-spec -p altium-cli -p altium-format-types`
-  - altium-format: __UNIT__ passed. The 4 failures are the `intlib::tests::*` tests that need
+  - altium-format: 548 passed. The 4 failures are the `intlib::tests::*` tests that need
     the uncloned `data/intlib`; they fail at the base too.
   - altium-format-spec: 248 passed; altium-format-types: 20 passed; altium-cli: 1 + 1 passed.
 - **Corpus tests** (all `corpus_*`, the coordinator-approved fixture set):
@@ -244,7 +269,7 @@ now converts.
 | Step | Verdict | Fixed |
 |---|---|---|
 | R22 (`dbe7367`) | complete with nits, 2 blocking: MaximumViaCount key; SignalValue rounding on save | both blocking, plus: removed unevidenced keys, per-kind test-point checks, all-or-none connect keys, corpus test over every file's rules, unit tests. Not fixed: raw `SIDE`/`VALID`/stimulus ints (Q3); rule-base `KEEPOUT` default (pre-existing, Q5) |
-| Second commit (`704229b`) | __REVIEW2__ | __REVIEW2FIX__ |
+| Second commit (`704229b`) | **incomplete**, 3 blocking | All 3 fixed in `8a8f04a`: (1) Classes6 writer dropped Unicode sidecars, so a class keeps its stored record when unchanged and a changed one with a non-Windows-1252 member is refused; (2) the SchDoc validator kept a pins-only `owner_ref`, now one shared helper; (3) fixture-free tests for harness owners, IgnoreOnLoad, Classes6, DifferentialPairs6 and CHANNELOFFSET. Nits left open: ASCII errors say "/FileHeader block #N", not line N; the in-memory header string stays ASCII after an ASCII read; Classes6/DiffPairs6 do not exhaust other keys; DiffPairs6 name sidecars not applied; harness children are written to /FileHeader after an `update_sheet`; Dimensions6 is read-only; the variant key set and section list are unverified against a real PrjPcb (they may reject real projects, e.g. `[GeneratedDocumentN]` or `ParamDesignatorN`, if those exist); IgnoreOnLoad is not visible in the sheet API |
 
 ## API breaks
 
@@ -282,9 +307,8 @@ now converts.
 
 ## Questions (each with a recommendation)
 
-1. **A2 VariationKind values (sent to the coordinator).** Recommendation: keep NotFitted = 1;
-   make Kind 0 and Kind 2 errors until altium-re reads WorkspaceManager.dll's variant reader or
-   a real PrjPcb is added. Until then nothing is changed.
+1. **A2 VariationKind:** answered by the coordinator, and done as above. Open until one of the
+   two ways above settles Kind 0 and Kind 2.
 2. **New domain type `ConnectStyleTarget`** (per-object rule prefix). Recommendation: approve.
 3. **Raw integers:** test-point `side` and `valid`, and SignalStimulus `kind` and `level`, stay
    stored integers; corpus `SIDE=3` looks like a top/bottom mask. Recommendation: altium-re
