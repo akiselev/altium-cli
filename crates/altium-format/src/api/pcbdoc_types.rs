@@ -17,8 +17,9 @@ use altium_format_types::pcb::{
     FanoutDirection, FanoutStyle, NetTopology, PolygonReliefAngle, RouteVia,
 };
 use altium_format_types::pcb::{
-    ClassMemberKind, DimensionKind, LayerRef, MaskExpansionMode, PadShape, PadStackMode, PcbFlags,
-    PlaneConnectionStyle, PolyHatchStyle, PolygonType, RegionKind, RuleKind, ViolationKind,
+    ClassMemberKind, DimensionKind, LayerRef, MaskExpansionMode, ObjectClearanceId, PadShape,
+    PadStackMode, PcbFlags, PlaneConnectionStyle, PolyHatchStyle, PolygonType, RegionKind,
+    RuleKind, ViolationKind,
 };
 use altium_format_types::{
     ComponentKind, ComponentPlacementType, ConfinementStyle, DielectricType, LayerStackStyle,
@@ -379,6 +380,12 @@ pub enum RuleParams {
     Clearance {
         gap: Coord,
         ignore_pad_to_pad: bool,
+        /// `GENERICCLEARANCE`.
+        generic_clearance: Coord,
+        /// `OBJECTCLEARANCES`: per object-kind pair clearances, in stored
+        /// order (each unordered pair at most once). Empty when the rule
+        /// stores no matrix.
+        object_clearances: Vec<ObjectClearance>,
     },
     Width {
         min: Coord,
@@ -803,6 +810,15 @@ pub struct ComponentBody {
     pub body_opacity_3d: f64,
     pub model_name: String,
     pub outline: Vec<CoordPoint>,
+}
+
+/// One entry of a clearance rule's object matrix: the clearance between
+/// objects of kind `first` and objects of kind `second` (an unordered pair).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectClearance {
+    pub first: ObjectClearanceId,
+    pub second: ObjectClearanceId,
+    pub gap: Coord,
 }
 
 // ── Stored DRC violations ───────────────────────────────────────────────────

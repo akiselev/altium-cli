@@ -612,6 +612,10 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   indices are errors. Read-only: `update_board` keeps them when unchanged (indices must still be in
   range; a kept violation is not re-pointed if objects were reordered), clears an emptied list,
   and rejects edits.
+- Clearance matrix (R17): `RuleParams::Clearance` carries `generic_clearance` and
+  `object_clearances: Vec<ObjectClearance>` (OBJECTCLEARANCES, `ObjectClearanceId` pairs in stored
+  order; 944 entries in 65 of 145 corpus clearance rules). A pair given twice is now an error (it
+  was silently overwritten). Rules stay read-only on the board API.
 - Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
   boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
 

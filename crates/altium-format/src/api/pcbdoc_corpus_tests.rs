@@ -1064,3 +1064,36 @@ fn r16_write_checks(name: &str, doc: &mut PcbDoc, board: &PcbDocBoard) {
     assert!(after.waived_violations.is_empty(), "{name}");
     assert!(doc.violations.values().all(Vec::is_empty), "{name}");
 }
+
+/// R17: clearance rules carry their object matrix (counts from a Python scan
+/// of the Rules6 streams of the boards checked here).
+#[test]
+fn corpus_r17_clearance_matrix() {
+    let (mut rules, mut with_matrix, mut entries) = (0, 0, 0);
+    for (name, doc) in corpus_docs() {
+        if BOARDS_FAILING_AT_BASE.contains(&name.as_str()) {
+            continue;
+        }
+        let board = doc.board().unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        for rule in &board.rules {
+            if let RuleParams::Clearance {
+                object_clearances, ..
+            } = &rule.params
+            {
+                rules += 1;
+                with_matrix += usize::from(!object_clearances.is_empty());
+                entries += object_clearances.len();
+                for (i, a) in object_clearances.iter().enumerate() {
+                    assert!((a.first as u8) <= (a.second as u8), "{name}: {a:?}");
+                    assert!(
+                        object_clearances[..i]
+                            .iter()
+                            .all(|b| (b.first, b.second) != (a.first, a.second)),
+                        "{name}: {a:?} twice"
+                    );
+                }
+            }
+        }
+    }
+    assert_eq!((rules, with_matrix, entries), (145, 65, 944));
+}

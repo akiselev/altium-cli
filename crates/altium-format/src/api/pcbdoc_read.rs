@@ -1157,6 +1157,12 @@ fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -
         PcbRuleKindData::Clearance(d) => RuleParams::Clearance {
             gap: d.gap.0,
             ignore_pad_to_pad: d.ignore_pad_to_pad,
+            generic_clearance: d.generic_clearance.0,
+            object_clearances: d
+                .object_clearances
+                .entries()
+                .map(|(first, second, gap)| ObjectClearance { first, second, gap })
+                .collect(),
         },
         PcbRuleKindData::Width(d) => RuleParams::Width {
             min: d.min_limit.0,

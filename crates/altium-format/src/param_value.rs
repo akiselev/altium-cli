@@ -575,6 +575,15 @@ impl ClearanceMatrix {
     }
 }
 
+impl ClearanceMatrix {
+    /// The stored pairs, in stored order (each pair once, lower id first).
+    pub(crate) fn entries(
+        &self,
+    ) -> impl Iterator<Item = (ObjectClearanceId, ObjectClearanceId, Coord)> + '_ {
+        self.entries.iter().map(|(&(a, b), &gap)| (a, b, gap))
+    }
+}
+
 impl FromParamValue for ClearanceMatrix {
     fn from_param_value(key: &str, value: &str) -> Result<Self> {
         let mut matrix = ClearanceMatrix::default();
@@ -618,7 +627,16 @@ impl FromParamValue for ClearanceMatrix {
                     detail: format!("invalid clearance value: {val_str:?}"),
                 })?;
             let norm = Self::normalize(type1, type2);
-            matrix.entries.insert(norm, Coord::from_internal(raw));
+            if matrix
+                .entries
+                .insert(norm, Coord::from_internal(raw))
+                .is_some()
+            {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!("clearance pair {pair_str:?} is given twice"),
+                });
+            }
         }
         Ok(matrix)
     }
@@ -754,6 +772,38 @@ impl ToParamValue for SheetSymbolType {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn clearance_matrix_keeps_order_and_rejects_repeated_pairs() {
+        let m = ClearanceMatrix::from_param_value(
+            "OBJECTCLEARANCES",
+            "ClearanceObj_Track-ClearanceObj_Arc:50000;ClearanceObj_Hole-ClearanceObj_Hole:0",
+        )
+        .unwrap();
+        let entries: Vec<_> = m.entries().collect();
+        assert_eq!(
+            entries,
+            [
+                (
+                    ObjectClearanceId::Arc,
+                    ObjectClearanceId::Track,
+                    Coord::from_internal(50000)
+                ),
+                (
+                    ObjectClearanceId::Hole,
+                    ObjectClearanceId::Hole,
+                    Coord::from_internal(0)
+                ),
+            ]
+        );
+        let err = ClearanceMatrix::from_param_value(
+            "OBJECTCLEARANCES",
+            "ClearanceObj_Track-ClearanceObj_Arc:1;ClearanceObj_Arc-ClearanceObj_Track:2",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("twice"), "{err}");
+    }
+
     use super::*;
 
     #[test]
