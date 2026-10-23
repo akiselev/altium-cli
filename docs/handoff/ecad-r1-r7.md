@@ -7,15 +7,20 @@ The six problems held by the user (`docs/spikes/e0-corpus-and-nm.md` §5) were n
 
 ## State per request
 
+Superseded on 2026-10-23 by the cloud lane (branch `claude/ecad-b1-altium-r1-r7`). Report:
+`docs/handoff/ecad-r1-r7-cloud-report.md`.
+
 | Request | State |
 |---|---|
-| R2 polygons | **Partly done, WIP commit.** Code written, `cargo check -p altium-format --tests` passes. No test has been run. |
-| R4 ids, component index, flags | Not started |
-| R3 polygon membership | Not started |
-| R1 Board6 outline | Not started (the shared contour parser it needs is in, see below) |
-| R6 layer identity | Not started. The parameter-layer part is in R2 (see below); `copper_index` is not |
-| R5 pad expansion mode | Not started |
-| R7 region arcs | Not started |
+| R2 polygons | Done, tested (unit + `corpus_r2_polygons`), reviewed |
+| R4 ids, component index, flags | Done, tested (`corpus_r4_identity`), reviewed. Unique ids for pads only |
+| R3 polygon membership | Done, tested (`corpus_r3_polygon_membership`), reviewed |
+| R1 Board6 outline | Done, tested (`corpus_r1_board_outline`), reviewed |
+| R6 layer identity | Done (`copper_v6`, `legacy_v6`), tested (`corpus_r6_layer_identity`), reviewed twice |
+| R5 pad expansion mode | Done (`MaskExpansionMode`), tested (`corpus_r5_pad_modes`, `corpus_r5_pcblib_pad_modes`), reviewed |
+| R7 region arcs | Done, tested (`corpus_r7_region_contours`), reviewed |
+
+The rest of this file is the 2026-10-22 handoff as it was written.
 
 ## Tests actually observed
 
