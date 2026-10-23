@@ -587,6 +587,11 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   skips them); Regions6 is not rewritten when ShapeBasedRegions6 exists, so it keeps the old
   geometry; region internal fields (layer string, keepout restrictions, …) are preserved by
   position within each section.
+- Designators (R8): a component without SOURCEDESIGNATOR (603 in the corpus, 565 on ebaz4205)
+  takes its designator from its one designator Text (none or several is an error);
+  `PcbDocComponent::source_designator` keeps the stored key, and the writer stores exactly it.
+  Known defect (pre-existing): the reader never fills `PcbDocComponent::parameters`, and the
+  writer rebuilds PrimitiveParameters from them, so `update_board` empties the BOM section.
 - Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
   boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
 

@@ -482,7 +482,9 @@ fn build_component_records(components: &[PcbDocComponent]) -> Result<Vec<Standar
             params.insert("COMMENTAUTOPOSITION", "0".to_string());
             params.insert("UNIONINDEX", "0".to_string());
             params.insert("CHANNELOFFSET", "0".to_string());
-            params.insert("SOURCEDESIGNATOR", comp.designator.clone());
+            if let Some(source) = &comp.source_designator {
+                params.insert("SOURCEDESIGNATOR", source.clone());
+            }
             params.insert("SOURCEUNIQUEID", comp.source_unique_id.clone());
             params.insert(
                 "SOURCEHIERARCHICALPATH",
@@ -2390,6 +2392,7 @@ mod tests {
             unique_id: unique_id.to_owned(),
             locked: true,
             primitive_lock: false,
+            source_designator: Some(designator.to_owned()),
             parameters: Vec::new(),
         }
     }

@@ -227,6 +227,11 @@ pub struct PcbDocComponent {
     /// Components6 `PRIMITIVELOCK`: the component's primitives cannot be
     /// edited on their own.
     pub primitive_lock: bool,
+    /// The stored `SOURCEDESIGNATOR` (the schematic designator), `None` when
+    /// the record has none. `designator` is this, or else the text of the
+    /// component's designator Text primitive. The writer stores exactly this
+    /// key (absent for `None`).
+    pub source_designator: Option<String>,
     /// BOM parameters (name, value) pairs, e.g. ("Value", "100R").
     pub parameters: Vec<(String, String)>,
 }

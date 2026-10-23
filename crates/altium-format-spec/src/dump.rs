@@ -2407,6 +2407,7 @@ mod tests {
             unique_id: String::new(),
             locked: false,
             primitive_lock: true,
+            source_designator: Some(designator.to_string()),
             parameters: Vec::new(),
         }
     }

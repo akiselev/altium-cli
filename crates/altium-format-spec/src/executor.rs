@@ -320,6 +320,7 @@ fn apply_pcbdoc_components(board: &mut api::PcbDocBoard, specs: &[PcbDocComponen
                 unique_id: String::new(),
                 locked: false,
                 primitive_lock: true,
+                source_designator: Some(spec.designator.clone()),
                 parameters: spec
                     .parameters
                     .iter()

@@ -176,7 +176,7 @@ fn corpus_r4_identity() {
     for (name, mut doc) in corpus_docs() {
         let ctx = build_context(&doc).unwrap_or_else(|e| panic!("{name}: {e}"));
         pad_ids += ctx.pad_unique_ids.len();
-        for c in convert_components(&doc).unwrap_or_else(|e| panic!("{name}: {e}")) {
+        for c in convert_components(&doc, &ctx).unwrap_or_else(|e| panic!("{name}: {e}")) {
             components += 1;
             assert_eq!(c.unique_id.len(), 8, "{name}: {}", c.designator);
             locked += usize::from(c.locked);
@@ -715,4 +715,81 @@ fn corpus_r7_region_contours() {
     assert_eq!(boards_round_tripped, 79);
     assert_eq!(regions_with_arcs, 192);
     assert_eq!(arc_edges, 1_017);
+}
+
+/// R8: components without SOURCEDESIGNATOR (603 in the corpus, 565 on
+/// ebaz4205-fpga) take the designator from their one designator text; pads of
+/// ebaz4205-fpga map to distinct components by index; and a write adds no
+/// SOURCEDESIGNATOR key to them.
+#[test]
+fn corpus_r8_designators() {
+    let (mut without_source, mut boards_round_tripped) = (0, 0);
+    for (name, mut doc) in corpus_docs() {
+        let ctx = build_context(&doc).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let missing: Vec<usize> = ctx
+            .source_designators
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.is_none())
+            .map(|(i, _)| i)
+            .collect();
+        without_source += missing.len();
+        let Ok(board) = doc.board() else {
+            assert!(BOARDS_FAILING_AT_BASE.contains(&name.as_str()), "{name}");
+            continue;
+        };
+        for &i in &missing {
+            let text = board
+                .texts
+                .iter()
+                .find(|t| t.is_designator && t.component_index == Some(i))
+                .unwrap_or_else(|| panic!("{name}: component #{i} has no designator text"));
+            assert_eq!(board.components[i].designator, text.text, "{name}: #{i}");
+        }
+        if name == "ebaz4205-fpga.PcbDoc" {
+            let owners: std::collections::BTreeSet<usize> = board
+                .pads
+                .iter()
+                .filter_map(|p| p.component_index)
+                .collect();
+            let designators: std::collections::BTreeSet<&str> = board
+                .components
+                .iter()
+                .map(|c| c.designator.as_str())
+                .collect();
+            eprintln!(
+                "ebaz4205: {} pads, {} distinct owner indices, {} components, {} distinct designators",
+                board.pads.len(),
+                owners.len(),
+                board.components.len(),
+                designators.len()
+            );
+            assert_eq!(board.components.len(), 565);
+            assert!(
+                designators.len() > 500,
+                "designators should not all be empty"
+            );
+        }
+        doc.update_board(&board)
+            .unwrap_or_else(|e| panic!("{name}: update_board: {e}"));
+        let after = doc.board().unwrap_or_else(|e| panic!("{name}: {e}"));
+        let ids = |b: &PcbDocBoard| -> Vec<(String, Option<String>)> {
+            b.components
+                .iter()
+                .map(|c| (c.designator.clone(), c.source_designator.clone()))
+                .collect()
+        };
+        assert_eq!(
+            ids(&after),
+            ids(&board),
+            "{name}: designators changed on write"
+        );
+        boards_round_tripped += 1;
+    }
+    eprintln!(
+        "corpus_r8_designators: {without_source} components without SOURCEDESIGNATOR; \
+         {boards_round_tripped} boards written and re-read"
+    );
+    assert_eq!(without_source, 603);
+    assert_eq!(boards_round_tripped, 79);
 }

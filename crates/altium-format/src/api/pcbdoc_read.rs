@@ -42,8 +42,11 @@ use crate::{Result, ResultExt};
 struct ConvertContext {
     /// Net index → net name. Index 0xFFFF means "no net".
     net_names: Vec<String>,
-    /// Component index → designator. Index 0xFFFF means "no component".
+    /// Component index → designator (SOURCEDESIGNATOR, else the component's
+    /// designator text). Index 0xFFFF means "no component".
     component_designators: Vec<String>,
+    /// Component index → stored SOURCEDESIGNATOR (`None` when absent).
+    source_designators: Vec<Option<String>>,
     /// WideStrings6 index → text (for PcbText wide_string_index).
     wide_strings: Vec<String>,
     /// Pads6 record index → unique id (UniqueIDPrimitiveInformation).
@@ -172,7 +175,7 @@ pub(crate) fn board_from_internal(doc: &PcbDoc) -> Result<PcbDocBoard> {
 
     // Step 2: Convert named collections from parameter sections.
     let nets = convert_nets(doc)?;
-    let components = convert_components(doc)?;
+    let components = convert_components(doc, &ctx)?;
     let polygons = convert_polygons(doc, &ctx)?;
     let classes = convert_classes(doc)?;
     let differential_pairs = convert_differential_pairs(doc)?;
@@ -261,7 +264,7 @@ pub(crate) fn board_from_internal(doc: &PcbDoc) -> Result<PcbDocBoard> {
 
 fn build_context(doc: &PcbDoc) -> Result<ConvertContext> {
     let mut net_names = Vec::new();
-    let mut component_designators = Vec::new();
+    let mut source_designators: Vec<Option<String>> = Vec::new();
     let mut wide_strings = Vec::new();
 
     for section in &doc.sections {
@@ -282,10 +285,10 @@ fn build_context(doc: &PcbDoc) -> Result<ConvertContext> {
             {
                 for rec in records {
                     let mut params = rec.params.clone();
-                    let designator: String = params
-                        .remove_with_default("SOURCEDESIGNATOR", String::new())
+                    let designator: Option<String> = params
+                        .remove_optional("SOURCEDESIGNATOR")
                         .context("Components6 record")?;
-                    component_designators.push(designator);
+                    source_designators.push(designator);
                 }
             }
             PcbDocSection::WideStrings(WideStringsSectionData { entries }) => {
@@ -298,6 +301,9 @@ fn build_context(doc: &PcbDoc) -> Result<ConvertContext> {
         }
     }
 
+    let component_designators =
+        resolve_component_designators(doc, &source_designators, &wide_strings)
+            .context("Components6 designators")?;
     let pad_unique_ids =
         convert_unique_id_primitive_information(doc).context("UniqueIDPrimitiveInformation")?;
     reject_pad_extended_primitive_information(doc)?;
@@ -307,10 +313,78 @@ fn build_context(doc: &PcbDoc) -> Result<ConvertContext> {
     Ok(ConvertContext {
         net_names,
         component_designators,
+        source_designators,
         wide_strings,
         pad_unique_ids,
         polygon_count,
     })
+}
+
+/// A component's designator: its SOURCEDESIGNATOR, or, when the record has
+/// none (603 corpus components, 565 of them on ebaz4205-fpga), the text of the
+/// component's one designator Text primitive (`IsDesignator`). Such a component
+/// with no designator text, or with several, is an error.
+fn resolve_component_designators(
+    doc: &PcbDoc,
+    source_designators: &[Option<String>],
+    wide_strings: &[String],
+) -> Result<Vec<String>> {
+    if source_designators.iter().all(Option::is_some) {
+        return Ok(source_designators.iter().flatten().cloned().collect());
+    }
+    // The text sections board() reads (Texts is skipped when Texts6 exists).
+    let has_texts6 = has_section(doc, PrimitiveSectionKind::Texts6);
+    let mut texts: HashMap<usize, Vec<String>> = HashMap::new();
+    for section in &doc.sections {
+        let PcbDocSection::Primitive(prim) = section else {
+            continue;
+        };
+        if prim.kind == PrimitiveSectionKind::Texts && has_texts6 {
+            continue;
+        }
+        for record in &prim.records {
+            if let PcbPrimitive::Text(t) = &record.primitive {
+                if t.is_designator && t.common.component_index != PRIMITIVE_INDEX_NONE {
+                    let text = usize::try_from(t.wide_string_index)
+                        .ok()
+                        .and_then(|i| wide_strings.get(i))
+                        .filter(|s| !s.is_empty())
+                        .cloned()
+                        .unwrap_or_else(|| t.text.clone());
+                    texts
+                        .entry(usize::from(t.common.component_index))
+                        .or_default()
+                        .push(text);
+                }
+            }
+        }
+    }
+    designators_from_texts(source_designators, &texts)
+}
+
+/// See [`resolve_component_designators`]; `texts` maps a component index to the
+/// texts of its designator Text primitives.
+fn designators_from_texts(
+    source_designators: &[Option<String>],
+    texts: &HashMap<usize, Vec<String>>,
+) -> Result<Vec<String>> {
+    source_designators
+        .iter()
+        .enumerate()
+        .map(|(i, source)| match source {
+            Some(designator) => Ok(designator.clone()),
+            None => match texts.get(&i).map(Vec::as_slice) {
+                Some([designator]) => Ok(designator.clone()),
+                found => Err(AltiumFormatError::InvalidParamValue {
+                    key: "SOURCEDESIGNATOR".to_owned(),
+                    detail: format!(
+                        "component #{i} has no SOURCEDESIGNATOR and {} designator texts (need one)",
+                        found.map_or(0, <[String]>::len)
+                    ),
+                }),
+            },
+        })
+        .collect()
 }
 
 /// ExtendedPrimitiveInformation pad entries would carry mask expansion modes
@@ -476,18 +550,17 @@ fn convert_nets(doc: &PcbDoc) -> Result<Vec<Net>> {
     Ok(nets)
 }
 
-fn convert_components(doc: &PcbDoc) -> Result<Vec<PcbDocComponent>> {
+fn convert_components(doc: &PcbDoc, ctx: &ConvertContext) -> Result<Vec<PcbDocComponent>> {
     let records = match find_param_section(doc, ParamSectionKind::Components6) {
         Some(r) => r,
         None => return Ok(Vec::new()),
     };
 
     let mut components = Vec::with_capacity(records.len());
-    for rec in records {
+    for (index, rec) in records.iter().enumerate() {
         let mut params = rec.params.clone();
-        let designator: String = params
-            .remove_with_default("SOURCEDESIGNATOR", String::new())
-            .context("Components6 designator")?;
+        let source_designator = ctx.source_designators[index].clone();
+        let designator = ctx.component_designators[index].clone();
         let pattern: String = params
             .remove_with_default("PATTERN", String::new())
             .context("Components6 pattern")?;
@@ -545,6 +618,7 @@ fn convert_components(doc: &PcbDoc) -> Result<Vec<PcbDocComponent>> {
             unique_id,
             locked,
             primitive_lock,
+            source_designator,
             parameters: Vec::new(),
         });
     }
@@ -1916,6 +1990,7 @@ pub(crate) fn convert_polygon_for_test(
     let ctx = ConvertContext {
         net_names: net_names.iter().map(|n| (*n).to_owned()).collect(),
         component_designators: Vec::new(),
+        source_designators: Vec::new(),
         wide_strings: Vec::new(),
         pad_unique_ids: HashMap::new(),
         polygon_count: 0,
@@ -1951,6 +2026,7 @@ mod tests {
         ConvertContext {
             net_names: vec!["GND".to_owned(), "P2V5".to_owned()],
             component_designators: Vec::new(),
+            source_designators: Vec::new(),
             wide_strings: Vec::new(),
             pad_unique_ids: HashMap::new(),
             polygon_count: 0,
@@ -2275,6 +2351,26 @@ mod tests {
         assert!(!is_copper_layer_id(0x0200_0001)); // foreign family
         assert!(!is_copper_layer_id(0x0103_0006)); // TopOverlay
         assert!(is_copper_layer_id(1));
+    }
+
+    #[test]
+    fn designators_fall_back_to_the_one_designator_text() {
+        let texts = HashMap::from([
+            (1, vec!["U66".to_owned()]),
+            (2, vec!["A".to_owned(), "B".to_owned()]),
+            (0, vec!["IGNORED".to_owned()]),
+        ]);
+        let ok = designators_from_texts(&[Some("R1".to_owned()), None], &texts).unwrap();
+        assert_eq!(ok, vec!["R1".to_owned(), "U66".to_owned()]);
+        let err = designators_from_texts(&[None, None, None], &texts).unwrap_err();
+        assert!(
+            err.to_string().contains("component #0") || err.to_string().contains("component #2"),
+            "{err}"
+        );
+        let err = designators_from_texts(&[Some("R1".to_owned()), None, None], &texts).unwrap_err();
+        assert!(err.to_string().contains("2 designator texts"), "{err}");
+        let err = designators_from_texts(&[None], &HashMap::new()).unwrap_err();
+        assert!(err.to_string().contains("0 designator texts"), "{err}");
     }
 
     #[test]
