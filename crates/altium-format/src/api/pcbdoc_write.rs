@@ -367,6 +367,10 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
         });
     }
     let (keep_violations, keep_waived) = check_stored_violations(board, doc)?;
+    // Classes6 is planned (and refused, e.g. for a changed non-Windows-1252
+    // member) before anything is written; earlier steps do not touch it.
+    let class_records =
+        plan_class_section(doc, &ensure_standard_classes(board)).context("writing Classes6")?;
     super::pcbdoc_read::check_plane_nets(&board.settings.layer_stack, &board.nets)
         .context("layer stack")?;
     for (i, r) in board.regions.iter().enumerate() {
@@ -441,8 +445,7 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
         ParamSectionKind::Polygons6,
         build_polygon_records(&board.polygons, &ctx)?,
     );
-    let enriched_classes = ensure_standard_classes(board);
-    merge_class_section(doc, &enriched_classes).context("writing Classes6")?;
+    replace_param_section(doc, ParamSectionKind::Classes6, class_records);
     // Pairs keep their stored keys (UNIQUEID, GATHERCONTROL, …), matched by name.
     merge_param_section(
         doc,
@@ -1028,8 +1031,9 @@ fn ensure_standard_classes(board: &PcbDocBoard) -> Vec<NetClass> {
 ///   rewritten from the API (stale keys dropped). A name or member that
 ///   Windows-1252 cannot encode is refused rather than written in a form
 ///   Altium may misread.
-fn merge_class_section(doc: &mut PcbDoc, classes: &[NetClass]) -> Result<()> {
-    let old = take_param_records(doc, ParamSectionKind::Classes6);
+fn plan_class_section(doc: &PcbDoc, classes: &[NetClass]) -> Result<Vec<StandardParamRecord>> {
+    let old: &[StandardParamRecord] =
+        crate::api::pcbdoc_read::find_param_section(doc, ParamSectionKind::Classes6).unwrap_or(&[]);
     // (decoded name, KIND as stored, decoded members) of each stored record.
     let decoded: Vec<(String, String, Vec<String>)> = old
         .iter()
@@ -1113,6 +1117,13 @@ fn merge_class_section(doc: &mut PcbDoc, classes: &[NetClass]) -> Result<()> {
             Ok(StandardParamRecord { params })
         })
         .collect::<Result<Vec<_>>>()?;
+    Ok(records)
+}
+
+/// [`plan_class_section`] then write it; the document is unchanged on error.
+#[cfg(test)]
+fn merge_class_section(doc: &mut PcbDoc, classes: &[NetClass]) -> Result<()> {
+    let records = plan_class_section(doc, classes)?;
     replace_param_section(doc, ParamSectionKind::Classes6, records);
     Ok(())
 }
@@ -2989,6 +3000,8 @@ mod tests {
         edited[1].members.push("U2".to_owned());
         let err = merge_class_section(&mut doc, &edited).unwrap_err();
         assert!(err.to_string().contains("Windows-1252"), "{err}");
+        // A refused write leaves the section as it was.
+        assert_eq!(class_keys(&doc, 1), comps_before);
 
         // Strict read.
         for bad in [

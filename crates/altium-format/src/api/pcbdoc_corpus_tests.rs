@@ -1770,6 +1770,16 @@ fn corpus_r21_classes_and_pairs() {
         .push("NEW1".to_owned());
     let err = doc.update_board(&grown).unwrap_err();
     assert!(format!("{err:#}").contains("Windows-1252"), "{err:#}");
+    // Refused before any write: the board reads as before.
+    assert_eq!(
+        stored(doc),
+        before,
+        "{name}: refused update changed Classes6"
+    );
+    assert_eq!(
+        format!("{:?}", doc.board().unwrap().classes),
+        format!("{:?}", b.classes)
+    );
     let mut ascii = b.clone();
     let k = ascii
         .classes
