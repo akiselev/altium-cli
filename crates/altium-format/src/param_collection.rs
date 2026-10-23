@@ -54,6 +54,27 @@ impl ParameterCollection {
         self.params.entry(key.to_owned()).or_insert(value);
     }
 
+    /// Replaces the value of an existing key where it stands (case-insensitive
+    /// lookup), keeping a trailing CR the stored value carries: in records made
+    /// of several `|RECORD=...` blocks (Board6) the CR that separates two blocks
+    /// is read as part of the last value of the first block. Returns false when
+    /// the key is absent.
+    pub(crate) fn replace_in_place(&mut self, key: &str, value: String) -> bool {
+        let key_upper = key.to_ascii_uppercase();
+        match self
+            .params
+            .iter_mut()
+            .find(|(k, _)| k.to_ascii_uppercase() == key_upper)
+        {
+            Some((_, v)) => {
+                let cr = if v.ends_with('\r') { "\r" } else { "" };
+                *v = value + cr;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Inserts a key=value pair, overwriting any existing value for this key.
     pub(crate) fn set(&mut self, key: &str, value: String) {
         // Remove old entry (case-insensitive) then insert new.
@@ -658,6 +679,16 @@ fn unescape_param_value(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn replace_in_place_keeps_position_and_block_cr() {
+        let mut p = ParameterCollection::from_str("|A=1|B=x\r|C=3|").unwrap();
+        assert!(p.replace_in_place("b", "y".to_owned()));
+        assert!(!p.replace_in_place("D", "4".to_owned()));
+        let pairs: Vec<_> = p.iter().collect();
+        assert_eq!(pairs, [("A", "1"), ("B", "y\r"), ("C", "3")]);
+    }
+
     use super::*;
 
     #[test]

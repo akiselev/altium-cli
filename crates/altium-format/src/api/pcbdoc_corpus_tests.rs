@@ -1246,11 +1246,27 @@ fn corpus_r13_plane_nets() {
         .unwrap();
     plane.plane_net = None;
     plane.plane_multiple_nets = true;
+    let position = |doc: &PcbDoc, key: &str| {
+        find_param_section(doc, ParamSectionKind::Board6).unwrap()[0]
+            .params
+            .iter()
+            .position(|(k, _)| k == key)
+    };
+    let p2 = position(&doc, "PLANE2NETNAME");
     doc.update_board(&edited).unwrap();
     assert_eq!(
         planes(&doc.board().unwrap())[1],
         ("3.3V_layer".to_owned(), None, true)
     );
+    assert_eq!(
+        position(&doc, "PLANE2NETNAME"),
+        p2,
+        "edited key stays in its block"
+    );
+    let mut restacked = b.clone();
+    restacked.settings.layer_stack.layers[0].name.push('x');
+    let err = doc.update_board(&restacked).unwrap_err();
+    assert!(format!("{err:#}").contains("layer stack"), "{err:#}");
     let mut bad = b.clone();
     bad.settings
         .layer_stack

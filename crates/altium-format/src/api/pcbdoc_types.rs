@@ -106,7 +106,7 @@ pub struct BoardSettings {
 /// Extracted from whichever layer stack version is present in the file
 /// (V9 > V8 > V7 > legacy, first non-empty wins). Contains only copper
 /// and dielectric layers in physical order from top to bottom.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LayerStack {
     /// Stack construction style (LayerPairs, InternalLayerPairs, BuildUp).
     pub style: LayerStackStyle,
@@ -119,7 +119,7 @@ pub struct LayerStack {
 }
 
 /// A single layer in the physical stack.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StackLayer {
     /// Layer reference for cross-referencing with primitives.
     pub layer: LayerRef,

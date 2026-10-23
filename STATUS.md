@@ -622,13 +622,20 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
 - Plane nets (R13): `StackLayer::plane_net` / `plane_multiple_nets` from Board6 `PLANEnNETNAME`
   (plane n = V6 InternalPlane n; `(No Net)`, `(Multiple Nets)`; 33 corpus stack planes, 17 with a
   net, 7 split). The net must be a board net. Keys of planes not in the stack are not read (stale
-  on four corpus boards); one trailing CR on the record's last key is removed. `update_board`
-  writes changed plane nets.
+  on four corpus boards). `update_board` writes changed plane nets in place and refuses any other
+  layer stack edit (the stack is not written).
+- Known defect (pre-existing): a Board6 record is 26 `|RECORD=Board...` blocks separated by CRs.
+  The parameter reader keeps the first of the duplicate RECORD keys only and attaches each CR to
+  the last value of its block (`PLANE16NETNAME`, `LAYERnDIELMATERIAL` on legacy stacks →
+  `dielectric_material = "FR-4\r"`, `VP.HY`, …). The plane-net reader strips that CR and
+  `ParameterCollection::replace_in_place` keeps it; the block framing itself is not modelled.
 - Region indices (R15): `Region::subpoly_index` (SUBPOLYINDEX; set on all 43,631 pour regions of
   readable boards, plus 267 outside pours) and `Region::pad_index` (PADINDEX as stored, 25 corpus
   regions; what it indexes is unconfirmed, it is not an index into `pads`). OBJECTKIND must be
   `BoardRegion` exactly on BoardRegions records (79/79). The writer stores all three from the API
-  (before, they were copied from the region at the same position).
+  (before, they were copied from the region at the same position). A pour region without a
+  sub-polygon index is an error on read and write. Open: when both region sections exist, the
+  Regions6 copy is not rewritten (its geometry and these fields stay as stored).
 - Board6 write fix: `update_board` merged Board6 by DOCUMENTNAME, a key no corpus board stores, so
   every update replaced the whole record (layer stack, plane nets, display options) with five
   keys. It now keeps the stored record and writes only the settings that changed, in the stored

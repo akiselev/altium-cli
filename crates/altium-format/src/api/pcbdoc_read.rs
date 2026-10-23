@@ -1396,9 +1396,11 @@ pub(crate) fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
 /// stack's internal planes (a missing key leaves the plane without a net). An
 /// empty value is an error. Keys of planes that are not in the stack are left
 /// unread: four corpus boards keep plane nets after their planes were removed.
-/// The last key of the record carries the record's trailing CR (every corpus
-/// board ends Board6 with `PLANE16NETNAME=(No Net)\r`); one trailing CR is
-/// removed.
+/// A Board6 record is a run of `|RECORD=Board...` blocks separated by CRs, and
+/// the parameter reader attaches each CR to the last value of its block; on
+/// every corpus board that is `PLANE16NETNAME=(No Net)\r`. One trailing CR is
+/// therefore removed (the writer keeps it, see
+/// `ParameterCollection::replace_in_place`).
 fn assign_plane_nets(params: &ParameterCollection, stack: &mut LayerStack) -> Result<()> {
     use altium_format_types::pcb::constants::{
         PLANE_NET_NAME_COUNT, PLANE_NET_NAME_MULTIPLE, PLANE_NET_NAME_NONE,
@@ -1999,6 +2001,13 @@ fn region_from_internal(
             detail: "text-form region geometry in a PcbDoc region is not supported".to_owned(),
         });
     }
+    let polygon = ctx.polygon_index(r.common.polygon_index)?;
+    if polygon.is_some() && r.subpoly_index < 0 {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "SUBPOLYINDEX".to_owned(),
+            detail: "pour region without a subpoly index".to_owned(),
+        });
+    }
     Ok(Region {
         id: format!("region_{idx}"),
         layer,
@@ -2007,7 +2016,7 @@ fn region_from_internal(
         unique_id: None,
         component_index: ctx.component_index(r.common.component_index)?,
         flags: r.common.flags,
-        polygon: ctx.polygon_index(r.common.polygon_index)?,
+        polygon,
         kind: r.kind,
         outline: contour_to_coord_points(&r.outline),
         holes: r.holes.iter().map(contour_to_coord_points).collect(),

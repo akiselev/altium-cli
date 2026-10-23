@@ -370,14 +370,19 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
     super::pcbdoc_read::check_plane_nets(&board.settings.layer_stack, &board.nets)
         .context("layer stack")?;
     for (i, r) in board.regions.iter().enumerate() {
-        if [r.pad_index, r.subpoly_index]
-            .iter()
-            .flatten()
-            .any(|&v| v > i32::MAX as u32)
-        {
+        for (key, value) in [("PADINDEX", r.pad_index), ("SUBPOLYINDEX", r.subpoly_index)] {
+            if value.is_some_and(|v| v > i32::MAX as u32) {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!("region #{i}: index out of the stored range"),
+                });
+            }
+        }
+        // Every corpus pour region has a sub-polygon index.
+        if r.polygon.is_some() && r.subpoly_index.is_none() {
             return Err(crate::AltiumFormatError::InvalidParamValue {
-                key: "PADINDEX".to_owned(),
-                detail: format!("region #{i}: index out of the stored range"),
+                key: "SUBPOLYINDEX".to_owned(),
+                detail: format!("region #{i} belongs to a polygon but has no subpoly index"),
             });
         }
     }
@@ -1011,6 +1016,16 @@ fn build_diff_pair_records(pairs: &[DifferentialPair]) -> Vec<StandardParamRecor
         .collect()
 }
 
+/// SNAPGRIDSIZE as stored: internal units with six decimals.
+fn snap_grid_value(size: Coord) -> String {
+    format!("{:.6}", f64::from(size.to_internal()))
+}
+
+/// VISIBLEGRIDSIZE as stored: internal units with three decimals.
+fn visible_grid_value(size: Coord) -> String {
+    format!("{:.3}", f64::from(size.to_internal()))
+}
+
 fn build_board_record(settings: &BoardSettings) -> Vec<StandardParamRecord> {
     let mut params = ParameterCollection::new();
     params.insert("DOCUMENTNAME", settings.document_name.clone());
@@ -1018,10 +1033,10 @@ fn build_board_record(settings: &BoardSettings) -> Vec<StandardParamRecord> {
         "SIGNALLAYERCOUNT",
         settings.signal_layer_count.to_param_value(),
     );
-    params.insert("SNAPGRIDSIZE", settings.snap_grid_size.to_param_value());
+    params.insert("SNAPGRIDSIZE", snap_grid_value(settings.snap_grid_size));
     params.insert(
         "VISIBLEGRIDSIZE",
-        settings.visible_grid_size.to_param_value(),
+        visible_grid_value(settings.visible_grid_size),
     );
     params.insert(
         "DISPLAYUNIT",
@@ -1042,10 +1057,34 @@ fn write_board_settings(doc: &mut PcbDoc, settings: &BoardSettings) -> Result<()
             if param.kind == ParamSectionKind::Board6 && !param.records.is_empty())
     });
     if !has_record {
+        if !settings.layer_stack.layers.is_empty() {
+            return Err(crate::AltiumFormatError::InvalidParamValue {
+                key: "Board6".to_owned(),
+                detail: "the board has no Board6 record, and a layer stack cannot be written"
+                    .to_owned(),
+            });
+        }
         replace_param_section(doc, ParamSectionKind::Board6, build_board_record(settings));
         return Ok(());
     }
     let old = super::pcbdoc_read::convert_board_settings(doc).context("Board6 as stored")?;
+    // The layer stack is not written (only plane nets are), so any other edit
+    // to it is refused rather than lost.
+    let without_plane_nets = |stack: &LayerStack| {
+        let mut stack = stack.clone();
+        for layer in &mut stack.layers {
+            layer.plane_net = None;
+            layer.plane_multiple_nets = false;
+        }
+        stack
+    };
+    if without_plane_nets(&settings.layer_stack) != without_plane_nets(&old.layer_stack) {
+        return Err(crate::AltiumFormatError::InvalidParamValue {
+            key: "Board6".to_owned(),
+            detail: "the layer stack cannot be edited through update_board (only plane nets)"
+                .to_owned(),
+        });
+    }
     let record = doc
         .sections
         .iter_mut()
@@ -1057,29 +1096,31 @@ fn write_board_settings(doc: &mut PcbDoc, settings: &BoardSettings) -> Result<()
         })
         .expect("Board6 record checked above");
     let params = &mut record.params;
+    let mut put = |key: &str, value: String| {
+        if !params.replace_in_place(key, value.clone()) {
+            params.insert(key, value);
+        }
+    };
     if settings.document_name != old.document_name {
-        params.set("DOCUMENTNAME", settings.document_name.clone());
+        put("DOCUMENTNAME", settings.document_name.clone());
     }
     if settings.signal_layer_count != old.signal_layer_count {
-        params.set(
+        put(
             "SIGNALLAYERCOUNT",
             settings.signal_layer_count.to_param_value(),
         );
     }
     if settings.snap_grid_size != old.snap_grid_size {
-        params.set(
-            "SNAPGRIDSIZE",
-            format!("{:.6}", f64::from(settings.snap_grid_size.to_internal())),
-        );
+        put("SNAPGRIDSIZE", snap_grid_value(settings.snap_grid_size));
     }
     if settings.visible_grid_size != old.visible_grid_size {
-        params.set(
+        put(
             "VISIBLEGRIDSIZE",
-            format!("{:.3}", f64::from(settings.visible_grid_size.to_internal())),
+            visible_grid_value(settings.visible_grid_size),
         );
     }
     if settings.display_unit != old.display_unit {
-        params.set(
+        put(
             "DISPLAYUNIT",
             (settings.display_unit as u8).to_param_value(),
         );
@@ -1135,12 +1176,18 @@ fn write_plane_nets(doc: &mut PcbDoc, stack: &LayerStack) -> Result<()> {
             (None, false) => PLANE_NET_NAME_NONE,
         };
         let key = format!("PLANE{n}NETNAME");
-        let stored = record
+        match record
             .params
             .get(&key)
-            .map(|v| v.strip_suffix('\r').unwrap_or(v));
-        if stored != Some(value) {
-            record.params.set(&key, value.to_owned());
+            .map(|v| v.strip_suffix('\r').unwrap_or(v))
+        {
+            Some(stored) if stored == value => {}
+            Some(_) => {
+                record.params.replace_in_place(&key, value.to_owned());
+            }
+            // A plane without a stored key reads as no net; add none for it.
+            None if value == PLANE_NET_NAME_NONE => {}
+            None => record.params.insert(&key, value.to_owned()),
         }
     }
     Ok(())
