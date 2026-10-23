@@ -1,6 +1,5 @@
 //! Write path: convert public API types → internal SchLib records.
 
-use crate::Result;
 use crate::api::sch_common::{
     default_base, graphic_to_record, parameter_to_internal, pin_to_internal,
 };
@@ -11,6 +10,7 @@ use crate::sch_records::{
 };
 use crate::schlib::SchLibComponentIndex;
 use crate::util::generate_unique_id;
+use crate::{Result, ResultExt};
 
 use altium_format_types::color::Color;
 use altium_format_types::common::{ComponentKind, RotationBy90};
@@ -177,12 +177,19 @@ pub(crate) fn component_to_internal(
         }
     }
 
+    check_child_display_modes(comp, required_display_modes(comp))?;
+
     // Build the SchComponent header
     let sch_component = SchComponent {
         lib_reference: comp.lib_reference.clone(),
         component_description: comp.description.clone().unwrap_or_default(),
         part_count: comp.part_count,
-        display_mode_count: 0,
+        // A new component gets as many display modes as its children use (0 is
+        // normalised to 1 on save).
+        display_mode_count: {
+            let required = required_display_modes(comp);
+            if required > 1 { required } else { 0 }
+        },
         owner_index: 0,
         is_not_accessible: false,
         index_in_sheet: 0,
@@ -242,6 +249,32 @@ pub(crate) fn component_to_internal(
 }
 
 /// Rebuild internal representation from a Component, preserving existing SchComponent fields.
+/// The number of display modes a component's pins and graphics use.
+fn required_display_modes(comp: &Component) -> i32 {
+    comp.pins
+        .iter()
+        .map(|p| i32::from(p.owner_part_display_mode))
+        .chain(comp.graphics.iter().map(Graphic::owner_part_display_mode))
+        .max()
+        .map_or(1, |m| m + 1)
+}
+
+/// Every pin and graphic must belong to one of the component's display modes.
+fn check_child_display_modes(comp: &Component, count: i32) -> Result<()> {
+    for pin in &comp.pins {
+        crate::api::schdoc_read::checked_display_mode(
+            i32::from(pin.owner_part_display_mode),
+            count,
+        )
+        .with_context(|| format!("component {}: pin {}", comp.lib_reference, pin.designator))?;
+    }
+    for graphic in &comp.graphics {
+        crate::api::schdoc_read::checked_display_mode(graphic.owner_part_display_mode(), count)
+            .with_context(|| format!("component {}: graphic", comp.lib_reference))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn update_component_internal(
     comp: &Component,
     existing: &SchComponent,
@@ -275,6 +308,7 @@ pub(crate) fn update_component_internal(
     sch_comp.symbol_revision_guid = existing.symbol_revision_guid.clone();
     sch_comp.generic_component_template_guid = existing.generic_component_template_guid.clone();
     sch_comp.display_mode_count = existing.display_mode_count;
+    check_child_display_modes(comp, existing.display_mode_count)?;
     sch_comp.has_only_current_part_info = existing.has_only_current_part_info;
     sch_comp.key_component_unique_id = existing.key_component_unique_id.clone();
     sch_comp.custom_display_mode_names = existing.custom_display_mode_names.clone();

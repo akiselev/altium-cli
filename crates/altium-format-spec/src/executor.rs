@@ -1474,7 +1474,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
             Some(api::Graphic::RoundRectangle(api::RoundRectangleGraphic {
                 unique_id: spec.unique_id.clone(),
                 owner_part_id,
-            owner_part_display_mode: 0,
+                owner_part_display_mode: 0,
                 location: props.from.unwrap_or_default(),
                 corner: props.to.unwrap_or_default(),
                 corner_x_radius: props.corner_x_radius.unwrap_or_default(),
@@ -1500,7 +1500,7 @@ fn graphic_from_spec(spec: &GraphicSpec, owner_part_id: i32) -> Option<api::Grap
             Some(api::Graphic::EllipticalArc(api::EllipticalArcGraphic {
                 unique_id: spec.unique_id.clone(),
                 owner_part_id,
-            owner_part_display_mode: 0,
+                owner_part_display_mode: 0,
                 location: props.center.unwrap_or_default(),
                 radius: props.radius.unwrap_or_default(),
                 secondary_radius: props.secondary_radius.unwrap_or_default(),

@@ -950,9 +950,7 @@ mod corpus_tests {
             let second = SchDoc::open(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
             let (a, b) = (ids(&first), ids(&second));
             assert_eq!(a, b, "{}: ids differ between loads", path.display());
-            let distinct: std::collections::HashSet<&String> = a.iter().collect();
             assert!(a.iter().all(|id| !id.is_empty()), "{}", path.display());
-            assert!(distinct.len() <= a.len());
             docs += 1;
             records_with_ids += a.len();
         }

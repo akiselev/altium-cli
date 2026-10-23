@@ -446,6 +446,17 @@ fn emit_component(
 
     records.push(SchRecord::Component(sch_comp));
 
+    // Every pin and graphic must belong to one of the component's display modes.
+    for child in &comp.children {
+        let mode = match child {
+            ComponentChild::Pin(pin) => i32::from(pin.owner_part_display_mode),
+            ComponentChild::Graphic(graphic) => graphic.owner_part_display_mode(),
+            _ => continue,
+        };
+        crate::api::schdoc_read::checked_display_mode(mode, comp.display_mode_count)
+            .with_context(|| format!("component {}: child display mode", comp.unique_id))?;
+    }
+
     // Emit Designator (RECORD=34) re-synthesized from comp.designator
     if !comp.designator.is_empty() {
         records.push(SchRecord::Designator(SchDesignator {

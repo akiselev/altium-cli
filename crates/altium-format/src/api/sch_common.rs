@@ -864,3 +864,60 @@ pub(crate) fn graphic_to_record(graphic: &Graphic) -> SchRecord {
         }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::schlib_types::{Component, LineGraphic};
+    use altium_format_types::coord::CoordPoint;
+
+    fn line(mode: i32) -> Graphic {
+        Graphic::Line(LineGraphic {
+            unique_id: "ABCDEFGH".to_owned(),
+            owner_part_id: 1,
+            owner_part_display_mode: mode,
+            location: CoordPoint::zero(),
+            corner: CoordPoint::zero(),
+            line_width: Default::default(),
+            line_style: Default::default(),
+            color: Default::default(),
+        })
+    }
+
+    #[test]
+    fn graphic_display_mode_survives_record_round_trip() {
+        let record = graphic_to_record(&line(1));
+        let back = graphic_from_record(&record).expect("a line record is a graphic");
+        assert_eq!(back.owner_part_display_mode(), 1);
+        assert_eq!(back.owner_part_id(), 1);
+    }
+
+    fn component(graphics: Vec<Graphic>) -> Component {
+        Component {
+            lib_reference: "PART".to_owned(),
+            designator: None,
+            description: None,
+            component_kind: None,
+            part_count: 1,
+            show_hidden_pins: false,
+            pins: Vec::new(),
+            parameters: Vec::new(),
+            footprints: Vec::new(),
+            graphics,
+            aliases: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn schlib_display_mode_count_follows_children() {
+        use crate::api::schlib_write::{component_to_internal, update_component_internal};
+        let (internal, ..) = component_to_internal(&component(vec![line(0), line(1)])).unwrap();
+        assert_eq!(internal.display_mode_count, 2);
+        let (single, ..) = component_to_internal(&component(vec![line(0)])).unwrap();
+        // An existing one-mode component cannot take a mode-1 graphic.
+        let mut existing = single;
+        existing.display_mode_count = 1;
+        assert!(update_component_internal(&component(vec![line(1)]), &existing).is_err());
+        assert!(component_to_internal(&component(vec![line(-1)])).is_err());
+    }
+}
