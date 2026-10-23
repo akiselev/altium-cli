@@ -592,7 +592,10 @@ impl FromParamValue for ClearanceMatrix {
         }
         for entry in value.split(';') {
             if entry.is_empty() {
-                continue;
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: key.to_owned(),
+                    detail: format!("empty clearance entry in {value:?}"),
+                });
             }
             let (pair_str, val_str) =
                 entry
@@ -620,9 +623,10 @@ impl FromParamValue for ClearanceMatrix {
                     detail: format!("unknown clearance object type: {type2_str:?}"),
                 }
             })?;
-            let raw: i32 = val_str
-                .parse()
-                .map_err(|_| AltiumFormatError::InvalidParamValue {
+            let raw: i32 = Some(val_str)
+                .filter(|v| !v.starts_with('+'))
+                .and_then(|v| v.parse().ok())
+                .ok_or_else(|| AltiumFormatError::InvalidParamValue {
                     key: key.to_owned(),
                     detail: format!("invalid clearance value: {val_str:?}"),
                 })?;
@@ -802,6 +806,17 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("twice"), "{err}");
+        for bad in [
+            "ClearanceObj_Track-ClearanceObj_Arc:1;",
+            "ClearanceObj_Track-ClearanceObj_Arc:1;;ClearanceObj_Via-ClearanceObj_Via:1",
+            "ClearanceObj_Track-ClearanceObj_Arc:+1",
+            "ClearanceObj_Track-ClearanceObj_Sheet:1",
+        ] {
+            assert!(
+                ClearanceMatrix::from_param_value("OBJECTCLEARANCES", bad).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     use super::*;

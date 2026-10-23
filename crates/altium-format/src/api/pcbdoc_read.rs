@@ -186,6 +186,7 @@ pub(crate) fn board_from_internal(doc: &PcbDoc) -> Result<PcbDocBoard> {
     let violations = convert_violations(doc).context("stored violations")?;
     let waived_violations = convert_waived_violations(doc)?;
     let settings = convert_board_settings(doc)?;
+    check_plane_nets(&settings.layer_stack, &nets)?;
 
     // Step 3: Convert primitives from binary sections.
     let mut tracks = Vec::new();
@@ -1152,17 +1153,20 @@ fn convert_rules(doc: &PcbDoc) -> Vec<DesignRule> {
         .collect()
 }
 
+fn object_clearances(matrix: &crate::param_value::ClearanceMatrix) -> Vec<ObjectClearance> {
+    matrix
+        .entries()
+        .map(|(first, second, gap)| ObjectClearance { first, second, gap })
+        .collect()
+}
+
 fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -> RuleParams {
     match kind_data {
         PcbRuleKindData::Clearance(d) => RuleParams::Clearance {
             gap: d.gap.0,
             ignore_pad_to_pad: d.ignore_pad_to_pad,
             generic_clearance: d.generic_clearance.0,
-            object_clearances: d
-                .object_clearances
-                .entries()
-                .map(|(first, second, gap)| ObjectClearance { first, second, gap })
-                .collect(),
+            object_clearances: object_clearances(&d.object_clearances),
         },
         PcbRuleKindData::Width(d) => RuleParams::Width {
             min: d.min_limit.0,
@@ -1196,9 +1200,12 @@ fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -
             RuleParams::MinimumAnnularRing { min: d.min_limit.0 }
         }
         PcbRuleKindData::HoleToHoleClearance(d) => RuleParams::HoleToHoleClearance { gap: d.gap.0 },
-        PcbRuleKindData::BoardOutlineClearance(d) => {
-            RuleParams::BoardOutlineClearance { gap: d.gap.0 }
-        }
+        PcbRuleKindData::BoardOutlineClearance(d) => RuleParams::BoardOutlineClearance {
+            gap: d.gap.0,
+            ignore_pad_to_pad: d.ignore_pad_to_pad,
+            generic_clearance: d.generic_clearance.0,
+            object_clearances: object_clearances(&d.object_clearances),
+        },
         PcbRuleKindData::MaxMinHoleSize(d) => RuleParams::MaxMinHoleSize {
             min: d.min_limit.0,
             max: d.max_limit.0,
@@ -1314,7 +1321,7 @@ fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -
     }
 }
 
-fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
+pub(crate) fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
     let records = find_param_section(doc, ParamSectionKind::Board6);
     let mut settings = BoardSettings {
         document_name: String::new(),
@@ -1357,7 +1364,11 @@ fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
             let unit_raw: u8 = params
                 .remove_with_default("DISPLAYUNIT", 1u8)
                 .context("Board6 display unit")?;
-            settings.display_unit = Unit::try_from(unit_raw).unwrap_or(Unit::Imperial);
+            settings.display_unit =
+                Unit::try_from(unit_raw).map_err(|_| AltiumFormatError::InvalidParamValue {
+                    key: "DISPLAYUNIT".to_owned(),
+                    detail: format!("unknown display unit {unit_raw}"),
+                })?;
 
             // Parse full board config for layer stack extraction.
             // Re-parse from the original params (the above consumed only a few keys).
@@ -1366,6 +1377,8 @@ fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
                 .context("Board6 layer stack config")?;
             check_stack_layer_ids(&config).context("Board6 layer stack")?;
             settings.layer_stack = extract_layer_stack(&config);
+            assign_plane_nets(&first.params, &mut settings.layer_stack)
+                .context("Board6 plane nets")?;
 
             // Board6 is not consumed key by key, so the outline is taken from a
             // copy; remove_param_contour still rejects a partial vertex or a gap.
@@ -1376,6 +1389,86 @@ fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
     }
 
     Ok(settings)
+}
+
+/// Fill `plane_net` / `plane_multiple_nets` from Board6 `PLANEnNETNAME` on the
+/// stack's internal planes (a missing key leaves the plane without a net). An
+/// empty value is an error. Keys of planes that are not in the stack are left
+/// unread: four corpus boards keep plane nets after their planes were removed.
+/// The last key of the record carries the record's trailing CR (every corpus
+/// board ends Board6 with `PLANE16NETNAME=(No Net)\r`); one trailing CR is
+/// removed.
+fn assign_plane_nets(params: &ParameterCollection, stack: &mut LayerStack) -> Result<()> {
+    use altium_format_types::pcb::constants::{
+        PLANE_NET_NAME_COUNT, PLANE_NET_NAME_MULTIPLE, PLANE_NET_NAME_NONE,
+    };
+    let mut params = params.clone();
+    for n in 1..=PLANE_NET_NAME_COUNT {
+        let key = format!("PLANE{n}NETNAME");
+        let Some(raw) = params.remove_optional::<String>(&key)? else {
+            continue;
+        };
+        let v6 = V6Layer::try_from(V6Layer::InternalPlane1 as u8 + n - 1).map_err(|_| {
+            AltiumFormatError::InvalidParamValue {
+                key: key.clone(),
+                detail: "no V6 layer for this plane".to_owned(),
+            }
+        })?;
+        let layer = stack
+            .layers
+            .iter_mut()
+            .find(|l| l.is_plane && l.layer.legacy_v6() == Some(v6));
+        let raw = raw.strip_suffix('\r').unwrap_or(&raw);
+        let (net, multiple) = match raw {
+            PLANE_NET_NAME_NONE => (None, false),
+            PLANE_NET_NAME_MULTIPLE => (None, true),
+            "" => {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key,
+                    detail: "empty plane net name".to_owned(),
+                });
+            }
+            net => (Some(net.to_owned()), false),
+        };
+        if let Some(layer) = layer {
+            layer.plane_net = net;
+            layer.plane_multiple_nets = multiple;
+        }
+    }
+    Ok(())
+}
+
+/// Every plane net names a net of Nets6 (shared by reader and writer).
+pub(crate) fn check_plane_nets(stack: &LayerStack, nets: &[Net]) -> Result<()> {
+    for layer in &stack.layers {
+        if layer.plane_net.is_some() && (!layer.is_plane || layer.plane_multiple_nets) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "PLANENETNAME".to_owned(),
+                detail: format!(
+                    "layer {:?}: a net is only allowed on a single-net internal plane",
+                    layer.name
+                ),
+            });
+        }
+        if layer.plane_multiple_nets && !layer.is_plane {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "PLANENETNAME".to_owned(),
+                detail: format!("layer {:?}: multiple nets on a signal layer", layer.name),
+            });
+        }
+        if let Some(net) = &layer.plane_net {
+            if !nets.iter().any(|n| &n.name == net) {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: "PLANENETNAME".to_owned(),
+                    detail: format!(
+                        "layer {:?}: plane net {net:?} is not a board net",
+                        layer.name
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 // ── Layer stack extraction ──────────────────────────────────────────────────
@@ -1488,6 +1581,8 @@ fn extract_layer_stack_v7(config: &PcbBoardConfig) -> LayerStack {
                     dielectric_height: layer.diel_height,
                     dielectric_material: layer.diel_material.clone(),
                     component_placement: None,
+                    plane_net: None,
+                    plane_multiple_nets: false,
                 });
             }
             current = if layer.next >= 0 {
@@ -1529,6 +1624,8 @@ fn extract_layer_stack_legacy(config: &PcbBoardConfig) -> LayerStack {
                 dielectric_height: leg.diel_height,
                 dielectric_material: leg.diel_material.clone(),
                 component_placement: None,
+                plane_net: None,
+                plane_multiple_nets: false,
             });
         }
     }
@@ -1557,6 +1654,8 @@ fn stack_layer_from_v9_v8(
         dielectric_height: l.diel_height.unwrap_or(Coord::ZERO),
         dielectric_material: l.diel_material.clone().unwrap_or_default(),
         component_placement: l.component_placement,
+        plane_net: None,
+        plane_multiple_nets: false,
     }
 }
 

@@ -141,6 +141,12 @@ pub struct StackLayer {
     pub dielectric_material: String,
     /// Component placement allowed on this layer (top/bottom/not allowed).
     pub component_placement: Option<ComponentPlacementType>,
+    /// Net of an internal plane (Board6 `PLANEnNETNAME`); `None` for no net,
+    /// for a split plane with several nets (see `plane_multiple_nets`) and on
+    /// signal layers.
+    pub plane_net: Option<String>,
+    /// The plane is split between several nets (`(Multiple Nets)`).
+    pub plane_multiple_nets: bool,
 }
 
 impl LayerStack {
@@ -382,9 +388,10 @@ pub enum RuleParams {
         ignore_pad_to_pad: bool,
         /// `GENERICCLEARANCE`.
         generic_clearance: Coord,
-        /// `OBJECTCLEARANCES`: per object-kind pair clearances, in stored
-        /// order (each unordered pair at most once). Empty when the rule
-        /// stores no matrix.
+        /// `OBJECTCLEARANCES`: per object-kind pair clearances, pairs in
+        /// stored order; within a pair the lower `ObjectClearanceId` comes
+        /// first (every corpus pair is stored that way). Each unordered pair
+        /// at most once. Empty when the rule stores no matrix.
         object_clearances: Vec<ObjectClearance>,
     },
     Width {
@@ -427,6 +434,13 @@ pub enum RuleParams {
     },
     BoardOutlineClearance {
         gap: Coord,
+        /// `IGNOREPADTOPADCLEARANCEINFOOTPRINT`.
+        ignore_pad_to_pad: bool,
+        /// `GENERICCLEARANCE`.
+        generic_clearance: Coord,
+        /// `OBJECTCLEARANCES` (outline and cutout edge pairs), as in
+        /// [`RuleParams::Clearance`].
+        object_clearances: Vec<ObjectClearance>,
     },
     MaxMinHoleSize {
         min: Coord,

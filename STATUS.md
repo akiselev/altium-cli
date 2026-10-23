@@ -612,10 +612,22 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   and out-of-range rule indices are errors. Read-only: `update_board` keeps them when unchanged
   (and only while every list they index keeps its length; a reorder of equal length is not
   detected), clears an emptied list (after all other writes), and rejects edits.
-- Clearance matrix (R17): `RuleParams::Clearance` carries `generic_clearance` and
-  `object_clearances: Vec<ObjectClearance>` (OBJECTCLEARANCES, `ObjectClearanceId` pairs in stored
-  order; 944 entries in 65 of 145 corpus clearance rules). A pair given twice is now an error (it
-  was silently overwritten). Rules stay read-only on the board API.
+- Clearance matrix (R17): `RuleParams::Clearance` and `RuleParams::BoardOutlineClearance` carry
+  `generic_clearance`, `ignore_pad_to_pad` and `object_clearances: Vec<ObjectClearance>`
+  (OBJECTCLEARANCES, `ObjectClearanceId` pairs in stored order, lower id first; 944 entries in 65
+  of 145 corpus clearance rules, 183 in 18 of 46 outline rules). A pair given twice, an empty
+  entry (including a trailing `;`) or a `+` sign is now an error. `ClearanceObj_Sheet` (two corpus
+  files that do not open) is not supported. Rules stay read-only on the board API; the spec dump
+  does not emit the matrix.
+- Plane nets (R13): `StackLayer::plane_net` / `plane_multiple_nets` from Board6 `PLANEnNETNAME`
+  (plane n = V6 InternalPlane n; `(No Net)`, `(Multiple Nets)`; 33 corpus stack planes, 17 with a
+  net, 7 split). The net must be a board net. Keys of planes not in the stack are not read (stale
+  on four corpus boards); one trailing CR on the record's last key is removed. `update_board`
+  writes changed plane nets.
+- Board6 write fix: `update_board` merged Board6 by DOCUMENTNAME, a key no corpus board stores, so
+  every update replaced the whole record (layer stack, plane nets, display options) with five
+  keys. It now keeps the stored record and writes only the settings that changed, in the stored
+  format. An unknown DISPLAYUNIT is now an error (was Imperial).
 - Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
   boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
 

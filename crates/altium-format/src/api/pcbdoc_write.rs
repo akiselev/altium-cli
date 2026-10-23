@@ -365,6 +365,8 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
         });
     }
     let (keep_violations, keep_waived) = check_stored_violations(board, doc)?;
+    super::pcbdoc_read::check_plane_nets(&board.settings.layer_stack, &board.nets)
+        .context("layer stack")?;
     let ctx = WriteContext::new(board);
     attach_pad_unique_ids(doc).context("UniqueIDPrimitiveInformation")?;
 
@@ -405,13 +407,9 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
         ParamSectionKind::DifferentialPairs6,
         build_diff_pair_records(&board.differential_pairs),
     );
-    merge_param_section(
-        doc,
-        ParamSectionKind::Board6,
-        build_board_record(&board.settings),
-        "DOCUMENTNAME",
-    );
+    write_board_settings(doc, &board.settings)?;
     replace_board_outline(doc, board.settings.outline.as_ref())?;
+    write_plane_nets(doc, &board.settings.layer_stack)?;
 
     // ── Step 3: Replace primitive sections ──
     replace_primitives_with_preservation(
@@ -1018,6 +1016,63 @@ fn build_board_record(settings: &BoardSettings) -> Vec<StandardParamRecord> {
     vec![StandardParamRecord { params }]
 }
 
+/// Write the Board6 settings. The record holds far more than `BoardSettings`
+/// (layer stack, plane nets, display options), so the stored record is kept
+/// and only the keys of settings that changed are written, in the stored
+/// format (grid sizes are stored as fractional internal units, which the
+/// reader rounds). Only the first record is touched, the one the reader takes.
+/// Without a Board6 record a new one is built.
+fn write_board_settings(doc: &mut PcbDoc, settings: &BoardSettings) -> Result<()> {
+    let has_record = doc.sections.iter().any(|section| {
+        matches!(section, PcbDocSection::Parameter(param)
+            if param.kind == ParamSectionKind::Board6 && !param.records.is_empty())
+    });
+    if !has_record {
+        replace_param_section(doc, ParamSectionKind::Board6, build_board_record(settings));
+        return Ok(());
+    }
+    let old = super::pcbdoc_read::convert_board_settings(doc).context("Board6 as stored")?;
+    let record = doc
+        .sections
+        .iter_mut()
+        .find_map(|section| match section {
+            PcbDocSection::Parameter(param) if param.kind == ParamSectionKind::Board6 => {
+                param.records.first_mut()
+            }
+            _ => None,
+        })
+        .expect("Board6 record checked above");
+    let params = &mut record.params;
+    if settings.document_name != old.document_name {
+        params.set("DOCUMENTNAME", settings.document_name.clone());
+    }
+    if settings.signal_layer_count != old.signal_layer_count {
+        params.set(
+            "SIGNALLAYERCOUNT",
+            settings.signal_layer_count.to_param_value(),
+        );
+    }
+    if settings.snap_grid_size != old.snap_grid_size {
+        params.set(
+            "SNAPGRIDSIZE",
+            format!("{:.6}", f64::from(settings.snap_grid_size.to_internal())),
+        );
+    }
+    if settings.visible_grid_size != old.visible_grid_size {
+        params.set(
+            "VISIBLEGRIDSIZE",
+            format!("{:.3}", f64::from(settings.visible_grid_size.to_internal())),
+        );
+    }
+    if settings.display_unit != old.display_unit {
+        params.set(
+            "DISPLAYUNIT",
+            (settings.display_unit as u8).to_param_value(),
+        );
+    }
+    Ok(())
+}
+
 /// Replace the Board6 outline keys with `outline` (all of them removed when
 /// `None`). The merge above keeps the old record's keys, so a shorter new
 /// outline would otherwise leave the old record's trailing vertices behind.
@@ -1035,6 +1090,46 @@ fn replace_board_outline(doc: &mut PcbDoc, outline: Option<&PcbContour>) -> Resu
         }
         None => Ok(()),
     }
+}
+
+/// Store each stack plane's net in Board6 `PLANEnNETNAME` (first record, as
+/// read). A key whose value is unchanged is left in place.
+fn write_plane_nets(doc: &mut PcbDoc, stack: &LayerStack) -> Result<()> {
+    use altium_format_types::pcb::constants::{PLANE_NET_NAME_MULTIPLE, PLANE_NET_NAME_NONE};
+    let Some(record) = doc.sections.iter_mut().find_map(|section| match section {
+        PcbDocSection::Parameter(param) if param.kind == ParamSectionKind::Board6 => {
+            param.records.first_mut()
+        }
+        _ => None,
+    }) else {
+        return Ok(());
+    };
+    for layer in stack.layers.iter().filter(|l| l.is_plane) {
+        let n = layer
+            .layer
+            .legacy_v6()
+            .and_then(|v6| (v6 as u8).checked_sub(V6Layer::InternalPlane1 as u8))
+            .filter(|&i| i < V6Layer::InternalPlane16 as u8 - V6Layer::InternalPlane1 as u8 + 1)
+            .ok_or_else(|| crate::AltiumFormatError::InvalidParamValue {
+                key: "PLANENETNAME".to_owned(),
+                detail: format!("layer {:?} is not an internal plane", layer.name),
+            })?
+            + 1;
+        let value = match (&layer.plane_net, layer.plane_multiple_nets) {
+            (Some(net), _) => net.as_str(),
+            (None, true) => PLANE_NET_NAME_MULTIPLE,
+            (None, false) => PLANE_NET_NAME_NONE,
+        };
+        let key = format!("PLANE{n}NETNAME");
+        let stored = record
+            .params
+            .get(&key)
+            .map(|v| v.strip_suffix('\r').unwrap_or(v));
+        if stored != Some(value) {
+            record.params.set(&key, value.to_owned());
+        }
+    }
+    Ok(())
 }
 
 fn replace_record_outline(

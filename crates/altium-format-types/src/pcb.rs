@@ -2642,6 +2642,18 @@ pub mod constants {
     /// layers with no net. Not yet checked against the decompiled sources.
     pub const POLYGON_INDEX_PLANE_SPLIT_LINE: u16 = 0xFFFE;
 
+    /// Board6 `PLANEnNETNAME` value of an internal plane with no net. From the
+    /// test corpus (1,362 of 1,504 values); not checked against the decompiled
+    /// sources.
+    pub const PLANE_NET_NAME_NONE: &str = "(No Net)";
+
+    /// Board6 `PLANEnNETNAME` value of a split plane carrying several nets
+    /// (10 corpus values); not checked against the decompiled sources.
+    pub const PLANE_NET_NAME_MULTIPLE: &str = "(Multiple Nets)";
+
+    /// Number of `PLANEnNETNAME` keys (internal planes 1..=16).
+    pub const PLANE_NET_NAME_COUNT: u8 = 16;
+
     /// V7 layer id family byte of the full form (`0x01gg_ssss`). Observed on
     /// every non-V6-compatible layer id in the test corpus.
     pub const V7_FAMILY_LAYER: u8 = 0x01;

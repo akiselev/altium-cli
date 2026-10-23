@@ -97,10 +97,12 @@ pub use pcblib_types::{
 // ── PcbDoc types ────────────────────────────────────────────────────────────
 
 pub use pcbdoc_types::{
-    Arc, BoardConnectivity, BoardContour, BoardGeometry, BoardSettings, ComponentBody, DesignRule,
-    DifferentialPair, Dimension, DrillPairGroup, Fill, KeepoutZone, LayerPrimitives, LayerStack,
-    Model3D, Net, NetClass, NetPin, NetPinList, Pad as PcbDocPad, PcbDocBoard, PcbDocComponent,
-    Polygon, Region, RuleParams, StackLayer, Text as PcbDocText, Track, Via,
+    Arc, BoardConnectivity, BoardContour, BoardGeometry, BoardSettings, BoardViolation,
+    ComponentBody, DesignRule, DifferentialPair, Dimension, DrillPairGroup, Fill, KeepoutZone,
+    LayerPrimitives, LayerStack, Model3D, Net, NetClass, NetPin, NetPinList, ObjectClearance,
+    Pad as PcbDocPad, PcbDocBoard, PcbDocComponent, Polygon, Region, RuleParams, StackLayer,
+    Text as PcbDocText, Track, Via, ViolationArea, ViolationLocation, ViolationObject,
+    WaivedBoardViolation,
 };
 
 // ── PrjPcb types ────────────────────────────────────────────────────────────

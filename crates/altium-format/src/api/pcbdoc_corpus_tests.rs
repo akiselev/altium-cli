@@ -1107,24 +1107,38 @@ fn r16_write_checks(
     }
 }
 
-/// R17: clearance rules carry their object matrix (counts from a Python scan
+/// R17: clearance and board-outline clearance rules carry their object matrix (counts from a Python scan
 /// of the Rules6 streams of the boards checked here).
 #[test]
 fn corpus_r17_clearance_matrix() {
-    let (mut rules, mut with_matrix, mut entries) = (0, 0, 0);
+    // (rules, rules with a matrix, matrix entries)
+    let mut clearance_counts = (0, 0, 0);
+    let mut outline_counts = (0, 0, 0);
     for (name, doc) in corpus_docs() {
         if BOARDS_FAILING_AT_BASE.contains(&name.as_str()) {
             continue;
         }
         let board = doc.board().unwrap_or_else(|e| panic!("{name}: {e:#}"));
         for rule in &board.rules {
-            if let RuleParams::Clearance {
+            let (RuleParams::Clearance {
                 object_clearances, ..
-            } = &rule.params
+            }
+            | RuleParams::BoardOutlineClearance {
+                object_clearances, ..
+            }) = &rule.params
+            else {
+                continue;
+            };
             {
-                rules += 1;
-                with_matrix += usize::from(!object_clearances.is_empty());
-                entries += object_clearances.len();
+                let outline = matches!(rule.params, RuleParams::BoardOutlineClearance { .. });
+                let counts = if outline {
+                    &mut outline_counts
+                } else {
+                    &mut clearance_counts
+                };
+                counts.0 += 1;
+                counts.1 += usize::from(!object_clearances.is_empty());
+                counts.2 += object_clearances.len();
                 for (i, a) in object_clearances.iter().enumerate() {
                     assert!((a.first as u8) <= (a.second as u8), "{name}: {a:?}");
                     assert!(
@@ -1137,5 +1151,114 @@ fn corpus_r17_clearance_matrix() {
             }
         }
     }
-    assert_eq!((rules, with_matrix, entries), (145, 65, 944));
+    assert_eq!(clearance_counts, (145, 65, 944));
+    assert_eq!(outline_counts, (46, 18, 183));
+}
+
+/// R13: plane nets from Board6 `PLANEnNETNAME`, and the writer stores edits.
+#[test]
+fn corpus_r13_plane_nets() {
+    let docs = corpus_docs();
+    let board = |name: &str| {
+        let (_, doc) = docs.iter().find(|(n, _)| n == name).unwrap();
+        doc.board().unwrap_or_else(|e| panic!("{name}: {e:#}"))
+    };
+    let planes = |b: &PcbDocBoard| -> Vec<(String, Option<String>, bool)> {
+        b.settings
+            .layer_stack
+            .layers
+            .iter()
+            .filter(|l| l.is_plane)
+            .map(|l| (l.name.clone(), l.plane_net.clone(), l.plane_multiple_nets))
+            .collect()
+    };
+    let s = |v: &str| Some(v.to_owned());
+    assert_eq!(
+        planes(&board("mini-itx-motherboard.PcbDoc")),
+        [
+            ("Ground Plane 1 (GND)".to_owned(), None, true),
+            ("Power Plane (12V)".to_owned(), None, true),
+            ("Ground Plane 2 (GND)".to_owned(), s("GND"), false),
+        ]
+    );
+    assert_eq!(
+        planes(&board("textbook-smart-mcu.PcbDoc")),
+        [
+            ("GND_layer".to_owned(), s("GND"), false),
+            ("3.3V_layer".to_owned(), s("+3.3V"), false),
+        ]
+    );
+    // The only stack plane is plane 2; plane 1's key is stale.
+    assert_eq!(
+        planes(&board("rover-24v-buck.PcbDoc")),
+        [("GND".to_owned(), s("GND"), false)]
+    );
+    // Plane nets with no planes in the stack (stale keys) do not fail.
+    assert!(planes(&board("rover-bms.PcbDoc")).is_empty());
+    for name in [
+        "textbook-tiny-arduino.PcbDoc",
+        "thesis-cubesat-4layer-template.PcbDoc",
+    ] {
+        assert!(
+            planes(&board(name)).iter().all(|p| p.1.is_none() && !p.2),
+            "{name}"
+        );
+    }
+
+    let mut total = (0, 0, 0);
+    for (name, doc) in &docs {
+        if BOARDS_FAILING_AT_BASE.contains(&name.as_str()) {
+            continue;
+        }
+        for p in planes(&doc.board().unwrap()) {
+            total.0 += 1;
+            total.1 += usize::from(p.1.is_some());
+            total.2 += usize::from(p.2);
+        }
+    }
+    eprintln!("planes, with a net, with multiple nets: {total:?}");
+
+    // Write: unchanged keeps the stored key byte for byte; an edit is stored;
+    // an unknown net is refused.
+    let (_, doc) = docs
+        .into_iter()
+        .find(|(n, _)| n == "textbook-smart-mcu.PcbDoc")
+        .unwrap();
+    let mut doc = doc;
+    let b = doc.board().unwrap();
+    let key16 = |doc: &PcbDoc| {
+        find_param_section(doc, ParamSectionKind::Board6).unwrap()[0]
+            .params
+            .get("PLANE16NETNAME")
+            .map(str::to_owned)
+    };
+    let before = key16(&doc);
+    doc.update_board(&b).unwrap();
+    assert_eq!(key16(&doc), before);
+    assert_eq!(planes(&doc.board().unwrap()), planes(&b));
+    let mut edited = b.clone();
+    let plane = edited
+        .settings
+        .layer_stack
+        .layers
+        .iter_mut()
+        .find(|l| l.is_plane && l.plane_net.as_deref() == Some("+3.3V"))
+        .unwrap();
+    plane.plane_net = None;
+    plane.plane_multiple_nets = true;
+    doc.update_board(&edited).unwrap();
+    assert_eq!(
+        planes(&doc.board().unwrap())[1],
+        ("3.3V_layer".to_owned(), None, true)
+    );
+    let mut bad = b.clone();
+    bad.settings
+        .layer_stack
+        .layers
+        .iter_mut()
+        .find(|l| l.is_plane)
+        .unwrap()
+        .plane_net = s("NO_SUCH_NET");
+    let err = doc.update_board(&bad).unwrap_err();
+    assert!(format!("{err:#}").contains("NO_SUCH_NET"), "{err:#}");
 }

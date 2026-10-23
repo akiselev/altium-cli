@@ -769,7 +769,7 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
         RuleParams::HoleToHoleClearance { gap } => {
             props.push(format!("gap: {gap}"));
         }
-        RuleParams::BoardOutlineClearance { gap } => {
+        RuleParams::BoardOutlineClearance { gap, .. } => {
             props.push(format!("gap: {gap}"));
         }
         RuleParams::MaxMinHoleSize { min, max } => {
