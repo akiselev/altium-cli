@@ -1196,6 +1196,7 @@ fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {
             let mut config_params = first.params.clone();
             let config = crate::board_config::parse_board_config(&mut config_params)
                 .context("Board6 layer stack config")?;
+            check_stack_layer_ids(&config).context("Board6 layer stack")?;
             settings.layer_stack = extract_layer_stack(&config);
 
             // Board6 is not consumed key by key, so the outline is taken from a
@@ -1391,32 +1392,50 @@ fn stack_layer_from_v9_v8(
     }
 }
 
-/// Check if a layer_id corresponds to a copper layer.
-///
-/// Handles both V6 (family=0, genus=0) and V7/V9 (family=1) layer IDs.
-/// V9 genus encoding: 0=signal copper, 1=internal plane, 3=utility, 4=dielectric.
-/// Copper = signal (genus=0) OR internal plane (genus=1).
+/// Check if a layer_id corresponds to a copper layer: a V6-compatible copper id,
+/// or a full V7 id that [`V7Layer::copper_v6`] maps (signal or plane).
 fn is_copper_layer_id(id: i32) -> bool {
     let v7 = V7Layer::new(id as u32);
-    // V6-compatible IDs (genus=0, family=0): check via V6Layer
-    if let Ok(v6) = v7.to_v6() {
-        return v6.is_copper();
+    match v7.to_v6() {
+        Ok(v6) => v6.is_copper(),
+        Err(_) => v7.copper_v6().is_some(),
     }
-    // V9: genus=0 (signal copper) or genus=1 (internal plane) — both are copper
-    matches!(v7.genus(), 0 | 1)
 }
 
-/// Check if a layer_id is an internal plane layer.
-///
-/// Handles both V6 (39..=54) and V7/V9 (family=1, genus=1) layer IDs.
+/// Check if a layer_id is an internal plane layer (V6 39..=54 or its V7 form).
 fn is_internal_plane_id(id: i32) -> bool {
     let v7 = V7Layer::new(id as u32);
-    // V6-compatible IDs: check via V6Layer
-    if let Ok(v6) = v7.to_v6() {
-        return v6.is_internal_plane();
+    match v7.to_v6() {
+        Ok(v6) => v6.is_internal_plane(),
+        Err(_) => v7.copper_v6().is_some_and(V6Layer::is_internal_plane),
     }
-    // V9: genus=1 means internal plane layer
-    v7.genus() == 1
+}
+
+/// A stack layer id in the full V7 form with a signal or plane genus that
+/// [`V7Layer::copper_v6`] cannot map is an error, not a layer dropped from the
+/// copper stack.
+fn check_stack_layer_ids(config: &PcbBoardConfig) -> Result<()> {
+    use altium_format_types::pcb::constants::{V7_FAMILY_LAYER, V7_GENUS_PLANE, V7_GENUS_SIGNAL};
+    let ids = config
+        .v9_stack_layers
+        .iter()
+        .map(|l| l.layer_id)
+        .chain(config.v8_layers.iter().map(|l| l.layer_id))
+        .chain(config.v7_layers.iter().map(|l| l.layer_id));
+    for id in ids {
+        let v7 = V7Layer::new(id as u32);
+        if v7.to_v6().is_err()
+            && v7.family() == V7_FAMILY_LAYER
+            && matches!(v7.genus(), V7_GENUS_SIGNAL | V7_GENUS_PLANE)
+            && v7.copper_v6().is_none()
+        {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "layer stack".to_owned(),
+                detail: format!("copper layer id {:#010x} has no V6 layer", v7.raw()),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn is_copper_layer_num(num: usize) -> bool {
@@ -1486,12 +1505,23 @@ fn convert_primitive_section(
 
 // ── Per-type converters ─────────────────────────────────────────────────────
 
-fn resolve_layer_v6_v7(v6: altium_format_types::pcb::V6Layer, v7: V7Layer) -> LayerRef {
-    if v7.raw() != 0 {
-        LayerRef::from_v6_and_v7(v6, v7)
-    } else {
-        LayerRef::from_v6(v6)
+/// A primitive's layer from its stored V6 layer and V7 id (0 = absent). The two
+/// must agree ([`V7Layer::legacy_v6`]); the writer derives the V6 layer from the
+/// V7 id, so a disagreeing pair would otherwise be rewritten silently.
+fn resolve_layer_v6_v7(v6: V6Layer, v7: V7Layer) -> Result<LayerRef> {
+    if v7.raw() == 0 {
+        return Ok(LayerRef::from_v6(v6));
     }
+    if v7.legacy_v6() != Some(v6) {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "layer".to_owned(),
+            detail: format!(
+                "V7 layer {:#010x} does not match stored V6 layer {v6:?}",
+                v7.raw()
+            ),
+        });
+    }
+    Ok(LayerRef::from_v6_and_v7(v6, v7))
 }
 
 fn track_from_internal(
@@ -1502,7 +1532,7 @@ fn track_from_internal(
     let track_polygon = ctx.track_polygon(t.common.polygon_index, t.common.layer)?;
     Ok(Track {
         id: format!("track_{idx}"),
-        layer: resolve_layer_v6_v7(t.common.layer, t.layer_enum_index),
+        layer: resolve_layer_v6_v7(t.common.layer, t.layer_enum_index)?,
         net: ctx.resolve_net(t.common.net_index),
         component: ctx.resolve_component(t.common.component_index),
         unique_id: None,
@@ -1524,7 +1554,7 @@ fn arc_from_internal(
     let arc_polygon = ctx.track_polygon(a.common.polygon_index, a.common.layer)?;
     Ok(Arc {
         id: format!("arc_{idx}"),
-        layer: resolve_layer_v6_v7(a.common.layer, a.layer_enum_index),
+        layer: resolve_layer_v6_v7(a.common.layer, a.layer_enum_index)?,
         net: ctx.resolve_net(a.common.net_index),
         component: ctx.resolve_component(a.common.component_index),
         unique_id: None,
@@ -1602,10 +1632,7 @@ fn fill_from_internal(
     f: &crate::pcbdoc::primitives::PcbFill,
     ctx: &ConvertContext,
 ) -> Result<Fill> {
-    let layer = match f.layer_enum_index {
-        Some(v7) => LayerRef::from_v6_and_v7(f.common.layer, v7),
-        None => LayerRef::from_v6(f.common.layer),
-    };
+    let layer = resolve_layer_v6_v7(f.common.layer, f.layer_enum_index.unwrap_or_default())?;
     Ok(Fill {
         id: format!("fill_{idx}"),
         layer,
@@ -1820,7 +1847,7 @@ pub(crate) fn layer_from_param_value(key: &str, raw: &str) -> Result<LayerRef> {
 /// `TOP`, `BOTTOM`, `KEEPOUT`, `MIDn`, `PLANEn`, otherwise the upper-cased V6 name.
 pub(crate) fn layer_to_param_value(key: &str, layer: &LayerRef) -> Result<String> {
     let v6 = layer
-        .to_v6()
+        .legacy_v6()
         .ok_or_else(|| AltiumFormatError::InvalidParamValue {
             key: key.to_owned(),
             detail: format!("layer {layer} has no V6 form for a parameter record"),
@@ -2184,6 +2211,31 @@ mod tests {
         assert!(err.to_string().contains("non-plane"), "{err}");
         assert!(c.reject_polygon_index(PRIMITIVE_INDEX_NONE).is_ok());
         assert!(c.reject_polygon_index(0).is_err());
+    }
+
+    #[test]
+    fn primitive_layer_pairs_must_agree() {
+        let bottom = V7Layer::new(0x0100_FFFF);
+        let layer = resolve_layer_v6_v7(V6Layer::BottomLayer, bottom).unwrap();
+        assert_eq!(layer.copper_v6(), Some(V6Layer::BottomLayer));
+        assert_eq!(
+            resolve_layer_v6_v7(V6Layer::TopLayer, V7Layer::new(0)).unwrap(),
+            LayerRef::from_v6(V6Layer::TopLayer)
+        );
+        let err = resolve_layer_v6_v7(V6Layer::TopLayer, bottom).unwrap_err();
+        assert!(err.to_string().contains("0x0100ffff"), "{err}");
+    }
+
+    #[test]
+    fn stack_copper_ids_use_the_v7_mapping() {
+        assert!(is_copper_layer_id(0x0100_0001));
+        assert!(is_copper_layer_id(0x0100_FFFFu32 as i32));
+        assert!(is_copper_layer_id(0x0101_0002));
+        assert!(is_internal_plane_id(0x0101_0002));
+        assert!(!is_internal_plane_id(0x0100_0002));
+        assert!(!is_copper_layer_id(0x0200_0001)); // foreign family
+        assert!(!is_copper_layer_id(0x0103_0006)); // TopOverlay
+        assert!(is_copper_layer_id(1));
     }
 
     #[test]

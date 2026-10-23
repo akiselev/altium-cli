@@ -562,7 +562,10 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
 - Layer identity (R6): `V7Layer::legacy_v6` / `copper_v6` and the same on `LayerRef` map full V7
   ids (`0x0100_0001`, `0x0100_FFFF`, `0x0101_000p`, mechanical, utility) to the V6 layer Altium
   stores beside them; confirmed on all 484,977 corpus Track/Arc/Fill pairs, not against sources.
-  The writer stores that V6 layer (no name-based recovery).
+  The writer stores that V6 layer (no name-based recovery) and errors on a layer without one
+  (was NoLayer; via layers were TopLayer/BottomLayer). The reader rejects a Track/Arc/Fill whose
+  stored V6 and V7 layers disagree, and a stack copper id it cannot map. `LayerRef::is_signal`
+  and friends now see full V7 ids.
 - Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
   boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
 

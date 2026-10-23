@@ -793,8 +793,8 @@ impl V7Layer {
     /// Returns Err with the raw u32 value if not convertible.
     pub fn to_v6(self) -> Result<V6Layer, u32> {
         if self.genus() == 0 && self.family() == 0 {
-            let species_low = (self.species() & 0xFF) as u8;
-            V6Layer::try_from(species_low).map_err(|_| self.0)
+            let species = u8::try_from(self.species()).map_err(|_| self.0)?;
+            V6Layer::try_from(species).map_err(|_| self.0)
         } else {
             Err(self.0)
         }
@@ -826,7 +826,8 @@ impl V7Layer {
     pub fn legacy_v6(self) -> Option<V6Layer> {
         use constants::{
             V7_FAMILY_LAYER, V7_GENUS_MECHANICAL, V7_GENUS_PLANE, V7_GENUS_SIGNAL,
-            V7_GENUS_UTILITY, V7_SPECIES_BOTTOM_SIGNAL,
+            V7_GENUS_UTILITY, V7_MECHANICAL_SPECIES_V6_MAX, V7_PLANE_SPECIES_MAX,
+            V7_SIGNAL_SPECIES_MAX, V7_SPECIES_BOTTOM_SIGNAL, V7_UTILITY_SPECIES_V6,
         };
         if let Ok(v6) = self.to_v6() {
             return Some(v6);
@@ -837,25 +838,19 @@ impl V7Layer {
         let species = self.species();
         let id: u16 = match self.genus() {
             V7_GENUS_SIGNAL if species == V7_SPECIES_BOTTOM_SIGNAL => V6Layer::BottomLayer as u16,
-            V7_GENUS_SIGNAL if (1..=31).contains(&species) => species,
-            V7_GENUS_PLANE if (1..=16).contains(&species) => {
+            V7_GENUS_SIGNAL if (1..=V7_SIGNAL_SPECIES_MAX).contains(&species) => species,
+            V7_GENUS_PLANE if (1..=V7_PLANE_SPECIES_MAX).contains(&species) => {
                 V6Layer::InternalPlane1 as u16 + species - 1
             }
             V7_GENUS_MECHANICAL if species >= 1 => {
-                V6Layer::Mechanical1 as u16 + species.min(16) - 1
+                V6Layer::Mechanical1 as u16 + species.min(V7_MECHANICAL_SPECIES_V6_MAX) - 1
             }
-            V7_GENUS_UTILITY => match species {
-                6 => V6Layer::TopOverlay as u16,
-                7 => V6Layer::BottomOverlay as u16,
-                8 => V6Layer::TopPaste as u16,
-                9 => V6Layer::BottomPaste as u16,
-                10 => V6Layer::TopSolder as u16,
-                11 => V6Layer::BottomSolder as u16,
-                12 => V6Layer::DrillGuide as u16,
-                13 => V6Layer::KeepOutLayer as u16,
-                14 => V6Layer::DrillDrawing as u16,
-                _ => return None,
-            },
+            V7_GENUS_UTILITY => {
+                return V7_UTILITY_SPECIES_V6
+                    .iter()
+                    .find(|(s, _)| *s == species)
+                    .map(|(_, v6)| *v6);
+            }
             _ => return None,
         };
         u8::try_from(id)
@@ -950,32 +945,33 @@ impl LayerRef {
 
     /// Signal layers: TopLayer through BottomLayer.
     pub fn is_signal(&self) -> bool {
-        self.to_v6().map_or(false, |v6| v6.is_signal())
+        self.legacy_v6().is_some_and(|v6| v6.is_signal())
     }
 
     /// Copper-carrying layers (signal + MultiLayer + internal planes).
     pub fn is_copper(&self) -> bool {
-        self.to_v6().map_or(false, |v6| v6.is_copper())
+        self.legacy_v6().is_some_and(|v6| v6.is_copper())
     }
 
-    /// Mechanical layers 1-16.
+    /// Mechanical layers (V6 Mechanical1-16; V7 mechanical layers above 16
+    /// map to Mechanical16, see [`V7Layer::legacy_v6`]).
     pub fn is_mechanical(&self) -> bool {
-        self.to_v6().map_or(false, |v6| v6.is_mechanical())
+        self.legacy_v6().is_some_and(|v6| v6.is_mechanical())
     }
 
     /// Overlay (silkscreen) layers.
     pub fn is_overlay(&self) -> bool {
-        self.to_v6().map_or(false, |v6| v6.is_overlay())
+        self.legacy_v6().is_some_and(|v6| v6.is_overlay())
     }
 
     /// Solder mask layers.
     pub fn is_solder_mask(&self) -> bool {
-        self.to_v6().map_or(false, |v6| v6.is_solder_mask())
+        self.legacy_v6().is_some_and(|v6| v6.is_solder_mask())
     }
 
     /// Paste mask layers.
     pub fn is_paste_mask(&self) -> bool {
-        self.to_v6().map_or(false, |v6| v6.is_paste_mask())
+        self.legacy_v6().is_some_and(|v6| v6.is_paste_mask())
     }
 }
 
@@ -2589,6 +2585,27 @@ pub mod constants {
     pub const V7_GENUS_UTILITY: u8 = 3;
     /// V7 signal-layer species of the bottom layer.
     pub const V7_SPECIES_BOTTOM_SIGNAL: u16 = 0xFFFF;
+    /// Highest V7 signal species with a V6 layer (MidLayer30 = V6 31); the
+    /// corpus shows 1..=9.
+    pub const V7_SIGNAL_SPECIES_MAX: u16 = 31;
+    /// Highest V7 plane species with a V6 layer (InternalPlane16); the corpus
+    /// shows 1..=9.
+    pub const V7_PLANE_SPECIES_MAX: u16 = 16;
+    /// Highest V7 mechanical species with its own V6 layer; Altium stores
+    /// Mechanical16 beside higher mechanical layers (corpus: species 17..=30).
+    pub const V7_MECHANICAL_SPECIES_V6_MAX: u16 = 16;
+    /// V7 utility species and the V6 layer stored beside them (corpus).
+    pub const V7_UTILITY_SPECIES_V6: [(u16, super::V6Layer); 9] = [
+        (6, super::V6Layer::TopOverlay),
+        (7, super::V6Layer::BottomOverlay),
+        (8, super::V6Layer::TopPaste),
+        (9, super::V6Layer::BottomPaste),
+        (10, super::V6Layer::TopSolder),
+        (11, super::V6Layer::BottomSolder),
+        (12, super::V6Layer::DrillGuide),
+        (13, super::V6Layer::KeepOutLayer),
+        (14, super::V6Layer::DrillDrawing),
+    ];
 }
 
 /// IPC-4761 via structure type for via fill/plug/tent classification.

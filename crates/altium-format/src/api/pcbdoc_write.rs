@@ -91,7 +91,7 @@ impl WriteContext {
         layer: &LayerRef,
     ) -> Result<u16> {
         if plane_split_line {
-            let on_plane = layer_v6_for_write(layer).is_some_and(V6Layer::is_internal_plane);
+            let on_plane = layer.legacy_v6().is_some_and(V6Layer::is_internal_plane);
             if polygon.is_some() || !on_plane {
                 return Err(crate::AltiumFormatError::InvalidParamValue {
                     key: "polygon".to_owned(),
@@ -184,8 +184,16 @@ impl WriteContext {
 /// ([`V7Layer::legacy_v6`](altium_format_types::pcb::V7Layer::legacy_v6), e.g.
 /// `0x0100_FFFF` → BottomLayer). Before, primitives with a full V7 id were
 /// written with `NoLayer`.
-fn layer_v6_for_write(layer: &LayerRef) -> Option<V6Layer> {
-    layer.legacy_v6()
+fn layer_v6_for_write(layer: &LayerRef) -> Result<V6Layer> {
+    layer
+        .legacy_v6()
+        .ok_or_else(|| crate::AltiumFormatError::InvalidParamValue {
+            key: "layer".to_owned(),
+            detail: format!(
+                "layer {layer} (V7 id {:#010x}) has no V6 layer to store",
+                layer.v7().raw()
+            ),
+        })
 }
 
 /// Build a `PcbPrimitiveCommon` for a board context with net/component resolution.
@@ -200,7 +208,7 @@ fn primitive_common_for_board(
     ctx: &WriteContext,
 ) -> Result<PcbPrimitiveCommon> {
     Ok(PcbPrimitiveCommon {
-        layer: layer_v6_for_write(layer).unwrap_or(V6Layer::NoLayer),
+        layer: layer_v6_for_write(layer)?,
         flags,
         net_index: ctx.resolve_net_index(net),
         polygon_index: ctx.resolve_polygon_index(polygon, plane_split_line, layer)?,
@@ -414,20 +422,18 @@ fn build_component_records(components: &[PcbDocComponent]) -> Result<Vec<Standar
             });
         }
     }
-    Ok(components
+    components
         .iter()
         .map(|comp| {
             let mut params = ParameterCollection::new();
             // Standard Altium component fields with sensible defaults.
             // These are written in the order Altium Designer expects.
             params.insert("SELECTION", "FALSE".to_string());
-            let layer_v6 = comp.layer.to_v6().unwrap_or(V6Layer::TopLayer);
-            let layer_name = match layer_v6 {
-                V6Layer::TopLayer => "TOP".to_string(),
-                V6Layer::BottomLayer => "BOTTOM".to_string(),
-                other => other.to_string_name().to_uppercase(),
-            };
-            params.insert("LAYER", layer_name);
+            params.insert(
+                "LAYER",
+                layer_to_param_value("LAYER", &comp.layer)
+                    .with_context(|| format!("component {}", comp.designator))?,
+            );
             params.insert("LOCKED", comp.locked.to_param_value());
             params.insert("POLYGONOUTLINE", "FALSE".to_string());
             params.insert("USERROUTED", "TRUE".to_string());
@@ -464,9 +470,9 @@ fn build_component_records(components: &[PcbDocComponent]) -> Result<Vec<Standar
                 comp.unique_id.clone()
             };
             params.insert("UNIQUEID", unique_id);
-            StandardParamRecord { params }
+            Ok(StandardParamRecord { params })
         })
-        .collect())
+        .collect()
 }
 
 /// Generate an 8-character uppercase alphabetic unique ID in the same format
@@ -891,8 +897,10 @@ fn build_via_records(vias: &[Via], ctx: &WriteContext) -> Result<Vec<ParsedPrimi
                     location: v.location,
                     diameter: v.diameter,
                     hole_size: v.hole_size,
-                    from_layer: v.from_layer.to_v6().unwrap_or(V6Layer::TopLayer),
-                    to_layer: v.to_layer.to_v6().unwrap_or(V6Layer::BottomLayer),
+                    from_layer: layer_v6_for_write(&v.from_layer)
+                        .with_context(|| format!("via {} from layer", v.id))?,
+                    to_layer: layer_v6_for_write(&v.to_layer)
+                        .with_context(|| format!("via {} to layer", v.id))?,
                     via_properties_version: 0,
                     thermal_relief_air_gap: Coord::ZERO,
                     thermal_relief_conductor_count: 0,
@@ -1621,13 +1629,15 @@ fn compute_ratsnest(board: &PcbDocBoard, ctx: &WriteContext) -> Vec<BinaryLenRec
             .unwrap_or(0);
 
         let hub = pads[hub_idx];
-        let hub_layer = hub.layer.to_v6().unwrap_or(V6Layer::MultiLayer);
+        // Connections6 is derived (ratsnest); a pad layer without a V6 form is
+        // drawn on MultiLayer here, the pad record itself rejects such a layer.
+        let hub_layer = hub.layer.legacy_v6().unwrap_or(V6Layer::MultiLayer);
 
         for (i, pad) in pads.iter().enumerate() {
             if i == hub_idx {
                 continue;
             }
-            let pad_layer = pad.layer.to_v6().unwrap_or(V6Layer::MultiLayer);
+            let pad_layer = pad.layer.legacy_v6().unwrap_or(V6Layer::MultiLayer);
             connections.push(BinaryLenRecord {
                 common: ConnectionCommonHeader {
                     layer: V6Layer::MultiLayer,
@@ -2115,12 +2125,27 @@ mod tests {
             V6Layer::InternalPlane1,
             altium_format_types::pcb::V7Layer::new(0x0101_0001),
         );
-        assert_eq!(layer_v6_for_write(&v7_plane), Some(V6Layer::InternalPlane1));
+        assert_eq!(
+            layer_v6_for_write(&v7_plane).unwrap(),
+            V6Layer::InternalPlane1
+        );
         // The V6 layer comes from the id, never from a display name.
         let named = LayerRef::from_v7(altium_format_types::pcb::V7Layer::new(0x0104_0001))
             .with_name("TopLayer".to_owned());
-        assert_eq!(layer_v6_for_write(&named), None);
+        assert!(layer_v6_for_write(&named).is_err());
         assert!(ctx.resolve_polygon_index(None, true, &named).is_err());
+        let err = primitive_common_for_board(
+            &named,
+            &None,
+            &None,
+            None,
+            PcbFlags::default(),
+            None,
+            false,
+            &ctx,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("0x01040001"), "{err}");
         assert_eq!(
             ctx.resolve_polygon_index(None, true, &v7_plane).unwrap(),
             POLYGON_INDEX_PLANE_SPLIT_LINE
