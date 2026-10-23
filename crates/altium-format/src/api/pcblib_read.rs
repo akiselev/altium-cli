@@ -49,6 +49,7 @@ pub(crate) fn footprint_from_internal(fp: &PcbFootprint) -> Footprint {
         description: fp.description.clone(),
         pattern: fp.pattern.clone(),
         height: fp.height,
+        kind: fp.component_kind.unwrap_or_default(),
         pads,
         graphics,
     }

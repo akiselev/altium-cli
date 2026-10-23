@@ -62,7 +62,7 @@ pub(crate) struct PcbFootprint {
     pub(crate) description: String,
     pub(crate) item_guid: String,
     pub(crate) revision_guid: String,
-    pub(crate) component_kind: Option<i32>,
+    pub(crate) component_kind: Option<altium_format_types::ComponentKind>,
     pub(crate) primitives: Vec<PcbPrimitive>,
     pub(crate) extended_primitive_info: Vec<ExtendedPrimitiveInfoEntry>,
     pub(crate) primitive_guids: Vec<PrimitiveGuidEntry>,
@@ -1461,7 +1461,7 @@ fn serialize_footprint_parameters(fp: &PcbFootprint) -> Vec<u8> {
     params.insert("ITEMGUID", fp.item_guid.clone());
     params.insert("REVISIONGUID", fp.revision_guid.clone());
     if let Some(kind) = fp.component_kind {
-        params.insert("COMPONENTKIND", kind.to_string());
+        params.insert("COMPONENTKIND", (kind as u8).to_string());
     }
     let data = params.to_bytes();
     let mut w = BinaryWriter::new();
@@ -2223,6 +2223,7 @@ mod tests {
             description: format!("Test footprint {name}"),
             pattern: name.to_owned(),
             height: Coord::from_mils(50).expect("50 mils fits Coord"),
+            kind: altium_format_types::ComponentKind::Standard,
             pads: vec![Pad {
                 pad_name: "1".to_owned(),
                 unique_id: None,

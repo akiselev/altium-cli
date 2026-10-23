@@ -10,6 +10,7 @@ use crate::pcblib::{
 };
 use crate::util::generate_unique_id;
 use crate::{Result, ResultExt};
+use altium_format_types::ComponentKind;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
     BarcodeRenderMode, DaisyChainStyle, HoleType, LayerRef, MaskExpansionState, PadShape,
@@ -61,7 +62,9 @@ pub(crate) fn footprint_to_internal(fp: &Footprint, cfb_key: &str) -> Result<Pcb
         description: fp.description.clone(),
         item_guid: generate_unique_id(),
         revision_guid: generate_unique_id(),
-        component_kind: None,
+        // COMPONENTKIND is stored only for a non-standard kind (no corpus
+        // footprint stores one).
+        component_kind: (fp.kind != ComponentKind::Standard).then_some(fp.kind),
         primitives,
         extended_primitive_info: Vec::new(),
         primitive_guids: Vec::new(),
@@ -88,7 +91,10 @@ pub(crate) fn update_footprint_internal(
     // Preserve footprint-level format-internal fields
     updated.item_guid = existing.item_guid.clone();
     updated.revision_guid = existing.revision_guid.clone();
-    updated.component_kind = existing.component_kind;
+    // Keep an explicit stored kind (e.g. COMPONENTKIND=0) when the kind is unchanged.
+    if existing.component_kind.unwrap_or_default() == fp.kind {
+        updated.component_kind = existing.component_kind;
+    }
     updated.extended_primitive_info = existing.extended_primitive_info.clone();
     updated.primitive_guids = existing.primitive_guids.clone();
     updated.custom_shapes = existing.custom_shapes.clone();

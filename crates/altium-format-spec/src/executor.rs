@@ -321,6 +321,7 @@ fn apply_pcbdoc_components(board: &mut api::PcbDocBoard, specs: &[PcbDocComponen
                 locked: false,
                 primitive_lock: true,
                 source_designator: Some(spec.designator.clone()),
+                kind: altium_format_types::ComponentKind::Standard,
                 parameters: spec
                     .parameters
                     .iter()
@@ -1629,6 +1630,7 @@ fn footprint_from_pcblib_spec(spec: &FootprintSpec) -> Result<api::Footprint, Sp
             .clone()
             .unwrap_or_else(|| spec.display_name.clone()),
         height: spec.height.unwrap_or(Coord::ZERO),
+        kind: altium_format_types::ComponentKind::Standard,
         pads: spec.pads.iter().map(pad_from_pcblib_spec).collect(),
         graphics: spec
             .graphics

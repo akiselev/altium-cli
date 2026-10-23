@@ -600,6 +600,9 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   `PcbDocComponent::source_designator` keeps the stored key, and the writer stores exactly it.
   Known defect (pre-existing): the reader never fills `PcbDocComponent::parameters`, and the
   writer rebuilds PrimitiveParameters from them, so `update_board` empties the BOM section.
+- Component kind (R12): `PcbDocComponent::kind` (COMPONENTKIND / VERSION2 / VERSION3, newest
+  wins, Standard when absent; the keys must agree) and `Footprint::kind` (PcbLib COMPONENTKIND).
+  Writers store the corpus forms; writing Jumper is an error (storage form unknown).
 - Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
   boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
 

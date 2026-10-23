@@ -826,3 +826,51 @@ fn corpus_r8_designators() {
     assert_eq!(without_source, 603);
     assert_eq!(boards_round_tripped, 79);
 }
+
+/// R12: component kinds (corpus: 409 StandardNoBom, 24 NetTieNoBom, the rest
+/// Standard) read on every board and survive `update_board` with the kind keys
+/// of every Components6 record unchanged.
+#[test]
+fn corpus_r12_component_kinds() {
+    use altium_format_types::ComponentKind;
+    let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut boards_round_tripped = 0;
+    let kind_keys = |doc: &PcbDoc| -> Vec<Vec<(String, String)>> {
+        find_param_section(doc, ParamSectionKind::Components6)
+            .unwrap_or(&[])
+            .iter()
+            .map(|r| {
+                r.params
+                    .iter()
+                    .filter(|(k, _)| k.starts_with("COMPONENTKIND"))
+                    .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                    .collect()
+            })
+            .collect()
+    };
+    for (name, mut doc) in corpus_docs() {
+        let ctx = build_context(&doc).unwrap_or_else(|e| panic!("{name}: {e}"));
+        for c in convert_components(&doc, &ctx).unwrap_or_else(|e| panic!("{name}: {e}")) {
+            *counts.entry(format!("{:?}", c.kind)).or_default() += 1;
+        }
+        let Ok(board) = doc.board() else {
+            assert!(BOARDS_FAILING_AT_BASE.contains(&name.as_str()), "{name}");
+            continue;
+        };
+        let before = kind_keys(&doc);
+        doc.update_board(&board)
+            .unwrap_or_else(|e| panic!("{name}: update_board: {e}"));
+        assert_eq!(kind_keys(&doc), before, "{name}: kind keys changed");
+        let after = doc.board().unwrap_or_else(|e| panic!("{name}: {e}"));
+        let kinds = |b: &PcbDocBoard| -> Vec<ComponentKind> {
+            b.components.iter().map(|c| c.kind).collect()
+        };
+        assert_eq!(kinds(&after), kinds(&board), "{name}");
+        boards_round_tripped += 1;
+    }
+    eprintln!("corpus_r12_component_kinds: {counts:?}; {boards_round_tripped} boards written");
+    assert_eq!(counts.get("StandardNoBom"), Some(&409));
+    assert_eq!(counts.get("NetTieNoBom"), Some(&24));
+    assert_eq!(counts.get("Standard"), Some(&(14_409 - 433)));
+    assert_eq!(boards_round_tripped, 79);
+}

@@ -19,6 +19,7 @@ use crate::pcblib::sidecar::{
 use crate::pcblib::wide_strings::parse_pcblib_wide_strings;
 use crate::tracked_cfb::TrackedCfbDocument;
 use crate::{AltiumFormatError, Result, ResultExt};
+use altium_format_types::ComponentKind;
 
 pub(crate) fn load_footprint(
     doc: &mut TrackedCfbDocument,
@@ -92,7 +93,7 @@ pub(crate) fn load_footprint(
 
 fn parse_parameters_stream(
     data: &[u8],
-) -> Result<(String, Coord, String, String, String, Option<i32>)> {
+) -> Result<(String, Coord, String, String, String, Option<ComponentKind>)> {
     let mut reader = BinaryReader::new(data);
     let str_len = reader.read_u32_le()? as usize;
     let str_bytes = reader.read_bytes(str_len)?;
@@ -114,7 +115,7 @@ fn parse_parameters_stream(
     let revision_guid = params
         .remove_optional::<String>("REVISIONGUID")?
         .unwrap_or_default();
-    let component_kind = params.remove_optional::<i32>("COMPONENTKIND")?;
+    let component_kind = params.remove_optional::<ComponentKind>("COMPONENTKIND")?;
     // Known optional metadata parameters in footprint Parameters streams.
     let _area = params.remove_optional::<String>("AREA")?;
     let _title = params.remove_optional::<String>("TITLE")?;

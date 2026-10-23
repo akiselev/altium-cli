@@ -5,6 +5,7 @@
 //! `pcblib_write.rs` handle conversion to/from internal `PcbFootprint` types.
 
 use super::pcb_common::{PadStack, PcbContour};
+use altium_format_types::ComponentKind;
 use altium_format_types::color::Color;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
@@ -22,6 +23,8 @@ pub struct Footprint {
     pub description: String,
     pub pattern: String,
     pub height: Coord,
+    /// The footprint's component kind (`COMPONENTKIND`; Standard when absent).
+    pub kind: ComponentKind,
 
     pub pads: Vec<Pad>,
     pub graphics: Vec<PcbGraphic>,

@@ -2408,6 +2408,7 @@ mod tests {
             locked: false,
             primitive_lock: true,
             source_designator: Some(designator.to_string()),
+            kind: altium_format_types::ComponentKind::Standard,
             parameters: Vec::new(),
         }
     }

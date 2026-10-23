@@ -21,8 +21,8 @@ use altium_format_types::pcb::{
     PlaneConnectionStyle, PolyHatchStyle, PolygonType, RegionKind, RuleKind,
 };
 use altium_format_types::{
-    ComponentPlacementType, ConfinementStyle, DielectricType, LayerStackStyle, NetScope,
-    RuleLayerKind,
+    ComponentKind, ComponentPlacementType, ConfinementStyle, DielectricType, LayerStackStyle,
+    NetScope, RuleLayerKind,
 };
 
 // ── Root type ───────────────────────────────────────────────────────────────
@@ -232,6 +232,9 @@ pub struct PcbDocComponent {
     /// component's designator Text primitive. The writer stores exactly this
     /// key (absent for `None`).
     pub source_designator: Option<String>,
+    /// The component kind: `COMPONENTKINDVERSION3`, else `COMPONENTKINDVERSION2`,
+    /// else `COMPONENTKIND`, else Standard (no key: 13,976 corpus components).
+    pub kind: ComponentKind,
     /// BOM parameters (name, value) pairs, e.g. ("Value", "100R").
     pub parameters: Vec<(String, String)>,
 }

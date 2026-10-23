@@ -13,7 +13,7 @@ use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, PolyHatchStyle,
     PolySegmentKind, PolygonType, RegionKind, RuleKind, V6Layer, V7Layer,
 };
-use altium_format_types::{DielectricType, LayerStackStyle, PcbObjectId};
+use altium_format_types::{ComponentKind, DielectricType, LayerStackStyle, PcbObjectId};
 use std::collections::HashMap;
 
 use crate::AltiumFormatError;
@@ -550,6 +550,36 @@ fn convert_nets(doc: &PcbDoc) -> Result<Vec<Net>> {
     Ok(nets)
 }
 
+/// A component's kind from `COMPONENTKIND` (kinds 0–4), `COMPONENTKINDVERSION2`
+/// (adds StandardNoBom) and `COMPONENTKINDVERSION3` (adds Jumper): the newest
+/// key present wins, Standard when none is. When version 2 is present the
+/// older key must hold its legacy form (the same kind, or Standard for
+/// StandardNoBom), as all 409 corpus records with both do.
+pub(crate) fn component_kind_from_params(
+    params: &mut ParameterCollection,
+) -> Result<ComponentKind> {
+    let v1: Option<ComponentKind> = params.remove_optional("COMPONENTKIND")?;
+    let v2: Option<ComponentKind> = params.remove_optional("COMPONENTKINDVERSION2")?;
+    let v3: Option<ComponentKind> = params.remove_optional("COMPONENTKINDVERSION3")?;
+    if let (Some(v1), Some(v2)) = (v1, v2) {
+        if v1 != legacy_component_kind(v2) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "COMPONENTKIND".to_owned(),
+                detail: format!("{v1:?} disagrees with COMPONENTKINDVERSION2 {v2:?}"),
+            });
+        }
+    }
+    Ok(v3.or(v2).or(v1).unwrap_or_default())
+}
+
+/// The kind stored in `COMPONENTKIND` for a kind (the first key knows 0–4).
+pub(crate) fn legacy_component_kind(kind: ComponentKind) -> ComponentKind {
+    match kind {
+        ComponentKind::StandardNoBom | ComponentKind::Jumper => ComponentKind::Standard,
+        other => other,
+    }
+}
+
 fn convert_components(doc: &PcbDoc, ctx: &ConvertContext) -> Result<Vec<PcbDocComponent>> {
     let records = match find_param_section(doc, ParamSectionKind::Components6) {
         Some(r) => r,
@@ -601,6 +631,8 @@ fn convert_components(doc: &PcbDoc, ctx: &ConvertContext) -> Result<Vec<PcbDocCo
         let primitive_lock: bool = params
             .remove_required("PRIMITIVELOCK")
             .context("Components6 PRIMITIVELOCK")?;
+        let kind = component_kind_from_params(&mut params)
+            .with_context(|| format!("Components6 record #{index} kind"))?;
 
         let id = designator.clone();
         components.push(PcbDocComponent {
@@ -619,6 +651,7 @@ fn convert_components(doc: &PcbDoc, ctx: &ConvertContext) -> Result<Vec<PcbDocCo
             locked,
             primitive_lock,
             source_designator,
+            kind,
             parameters: Vec::new(),
         });
     }
@@ -2371,6 +2404,26 @@ mod tests {
         assert!(err.to_string().contains("2 designator texts"), "{err}");
         let err = designators_from_texts(&[None], &HashMap::new()).unwrap_err();
         assert!(err.to_string().contains("0 designator texts"), "{err}");
+    }
+
+    #[test]
+    fn component_kind_keys() {
+        let kind = |text: &str| component_kind_from_params(&mut params(text));
+        assert_eq!(kind("|X=1|").unwrap(), ComponentKind::Standard);
+        assert_eq!(
+            kind("|COMPONENTKIND=4|").unwrap(),
+            ComponentKind::NetTieNoBom
+        );
+        assert_eq!(
+            kind("|COMPONENTKIND=0|COMPONENTKINDVERSION2=5|").unwrap(),
+            ComponentKind::StandardNoBom
+        );
+        assert_eq!(
+            kind("|COMPONENTKINDVERSION3=6|").unwrap(),
+            ComponentKind::Jumper
+        );
+        assert!(kind("|COMPONENTKIND=3|COMPONENTKINDVERSION2=5|").is_err());
+        assert!(kind("|COMPONENTKIND=9|").is_err());
     }
 
     #[test]

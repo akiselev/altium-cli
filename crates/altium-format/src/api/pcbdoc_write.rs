@@ -284,6 +284,7 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
     );
     check_component_designators(board)?;
     drop_absent_source_designators(doc, &board.components)?;
+    write_component_kinds(doc, &board.components)?;
     replace_param_section(
         doc,
         ParamSectionKind::Polygons6,
@@ -478,6 +479,54 @@ fn drop_absent_source_designators(doc: &mut PcbDoc, components: &[PcbDocComponen
                             .context("Components6 SOURCEDESIGNATOR")?;
                     }
                 }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Store each component's kind (the merge keeps the old record's keys, so all
+/// three kind keys are replaced): Standard writes none, kinds 0–4 write
+/// `COMPONENTKIND`, StandardNoBom writes `COMPONENTKIND=0` and
+/// `COMPONENTKINDVERSION2=5` (as all 409 corpus records). How Altium stores
+/// Jumper is not known (no corpus record), so writing one is an error.
+fn write_component_kinds(doc: &mut PcbDoc, components: &[PcbDocComponent]) -> Result<()> {
+    use altium_format_types::ComponentKind;
+    for section in &mut doc.sections {
+        let PcbDocSection::Parameter(param) = section else {
+            continue;
+        };
+        if param.kind != ParamSectionKind::Components6 {
+            continue;
+        }
+        for (i, (record, comp)) in param.records.iter_mut().zip(components).enumerate() {
+            for key in [
+                "COMPONENTKIND",
+                "COMPONENTKINDVERSION2",
+                "COMPONENTKINDVERSION3",
+            ] {
+                record
+                    .params
+                    .remove_optional::<String>(key)
+                    .with_context(|| format!("component #{i} {key}"))?;
+            }
+            match comp.kind {
+                ComponentKind::Standard => {}
+                ComponentKind::StandardNoBom => {
+                    record.params.insert("COMPONENTKIND", "0".to_owned());
+                    record
+                        .params
+                        .insert("COMPONENTKINDVERSION2", (comp.kind as u8).to_string());
+                }
+                ComponentKind::Jumper => {
+                    return Err(crate::AltiumFormatError::InvalidParamValue {
+                        key: "COMPONENTKINDVERSION3".to_owned(),
+                        detail: format!("component #{i}: writing kind Jumper is not supported"),
+                    });
+                }
+                other => record
+                    .params
+                    .insert("COMPONENTKIND", (other as u8).to_string()),
             }
         }
     }
@@ -2447,6 +2496,7 @@ mod tests {
             locked: true,
             primitive_lock: false,
             source_designator: Some(designator.to_owned()),
+            kind: altium_format_types::ComponentKind::Standard,
             parameters: Vec::new(),
         }
     }
