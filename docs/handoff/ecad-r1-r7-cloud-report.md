@@ -517,11 +517,33 @@ the corpus tests above.
 
 ## Handoff
 
-All queued requests (R1–R17) are committed and pushed. The session stopped here because its
-context was near the lane's limit. Next work, in order: Q16 (PcbLib text layout, then R14 for
+All of R1–R17 is committed and pushed (R18–R21 status above). The session stopped here because its
+context was near the lane's limit. Next work, in order: R20's fail-fast level parse, R21, Q16 (PcbLib text layout, then R14 for
 `TextGraphic`), Q15 (DifferentialPairs6, Nets6 and Classes6 write defects), Q13 (Board6 block
 framing and signal layer count), Q4 (body/text section routing, PcbLib layer fallback), then the
 dev-machine checks in Q2, Q3, Q11 and Q14.
+
+### R18–R21 (queued after the stop, not started)
+
+The coordinator queued R18–R21 after this lane reached its context limit. Their state at the head:
+
+- **R18 component text visibility: already done by R14.** `PcbDocComponent::designator_visible`
+  (NAMEON) and `comment_visible` (COMMENTON) are typed bools; `Text::hidden` derives from them,
+  and `update_board` writes them (it used to reset them to TRUE/FALSE).
+- **R19 polygon settings: mostly present from R2.** On `Polygon`: `remove_dead`,
+  `remove_islands_by_area` + `area_threshold`, `arc_approximation` (ARCRESOLUTION), `pour_over` +
+  `pour_over_style`, `track_width`, `min_prim_length`, `remove_necks` +
+  `neck_width_threshold`. Not checked: whether "minimum width" means `min_prim_length` or the neck
+  threshold (no AD26 sources here). The PolygonConnect rule is already typed:
+  `RuleParams::PolygonConnectStyle { connect_style: PlaneConnectionStyle, relief_conductor_width,
+  relief_entries: i32, relief_angle: PolygonReliefAngle, air_gap_width }`. Open: `relief_entries` is
+  a raw `i32` (2/4), and this lane has not verified the rule's keys against the corpus.
+- **R20 project ERC: exposed but not fail-fast.** `Project::erc_matrix: ErcConnectionMatrix` and
+  `erc_levels: Vec<ErcLevel>` exist (api/project_types.rs). `parse_erc_levels`
+  (api/project_read.rs:210) uses `value.parse::<i32>().unwrap_or(0)`, so an unparsable level
+  silently becomes level 0. That is the error the request forbids. It needs a `Result` with context
+  and a check of the matrix parser against Altium's ParseFromStrings.
+- **R21 pad class members: not started.** No populated pad class was looked for in the corpus.
 
 ## Setup as it ran
 
