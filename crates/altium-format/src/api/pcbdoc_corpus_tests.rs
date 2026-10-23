@@ -442,3 +442,91 @@ fn corpus_r1_board_outline() {
     assert_eq!(open, 1);
     assert_eq!(boards_round_tripped, 79);
 }
+
+/// R6: on every corpus board, each Track/Arc/Fill that stores both a V6 and a
+/// V7 layer satisfies `legacy_v6(v7) == v6`; every stack copper layer has a
+/// distinct `copper_v6`; on readable boards every copper via/pad layer is one
+/// of them; and primitive layers survive `update_board` → `board()`.
+#[test]
+fn corpus_r6_layer_identity() {
+    let (mut pairs, mut full_form, mut stack_layers, mut boards_round_tripped) = (0, 0, 0, 0);
+    for (name, mut doc) in corpus_docs() {
+        for section in &doc.sections {
+            if let PcbDocSection::Primitive(prim) = section {
+                for record in &prim.records {
+                    let (v6, v7) = match &record.primitive {
+                        PcbPrimitive::Track(p) => (p.common.layer, Some(p.layer_enum_index)),
+                        PcbPrimitive::Arc(p) => (p.common.layer, Some(p.layer_enum_index)),
+                        PcbPrimitive::Fill(p) => (p.common.layer, p.layer_enum_index),
+                        _ => continue,
+                    };
+                    let Some(v7) = v7.filter(|v| v.raw() != 0) else {
+                        continue;
+                    };
+                    pairs += 1;
+                    full_form += usize::from(v7.to_v6().is_err());
+                    assert_eq!(v7.legacy_v6(), Some(v6), "{name}: {:#010x}", v7.raw());
+                }
+            }
+        }
+        let settings = convert_board_settings(&doc).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let copper: Vec<V6Layer> = settings
+            .layer_stack
+            .layers
+            .iter()
+            .map(|l| {
+                l.layer
+                    .copper_v6()
+                    .unwrap_or_else(|| panic!("{name}: stack layer {} not copper", l.layer))
+            })
+            .collect();
+        stack_layers += copper.len();
+        let mut distinct = copper.clone();
+        distinct.sort_by_key(|v| *v as u8);
+        distinct.dedup();
+        assert_eq!(distinct.len(), copper.len(), "{name}: repeated stack layer");
+        let Ok(board) = doc.board() else {
+            assert!(BOARDS_FAILING_AT_BASE.contains(&name.as_str()), "{name}");
+            continue;
+        };
+        let in_stack = |layer: &LayerRef, what: &str| {
+            if let Some(v6) = layer.copper_v6() {
+                assert!(
+                    copper.contains(&v6),
+                    "{name}: {what} on {layer} not in the stack"
+                );
+            }
+        };
+        for v in &board.vias {
+            in_stack(&v.from_layer, &v.id);
+            in_stack(&v.to_layer, &v.id);
+        }
+        for p in &board.pads {
+            in_stack(&p.layer, &p.id);
+        }
+        let layers = |b: &PcbDocBoard| -> Vec<String> {
+            let mut out: Vec<String> = Vec::new();
+            out.extend(b.tracks.iter().map(|p| format!("{:?}", p.layer)));
+            out.extend(b.arcs.iter().map(|p| format!("{:?}", p.layer)));
+            out.extend(b.fills.iter().map(|p| format!("{:?}", p.layer)));
+            out.extend(b.pads.iter().map(|p| format!("{:?}", p.layer)));
+            out.extend(b.regions.iter().map(|p| format!("{:?}", p.layer)));
+            out
+        };
+        let before = layers(&board);
+        doc.update_board(&board)
+            .unwrap_or_else(|e| panic!("{name}: update_board: {e}"));
+        let after = doc.board().unwrap_or_else(|e| panic!("{name}: {e}"));
+        let after = layers(&after);
+        assert_eq!(after.len(), before.len(), "{name}");
+        if let Some((a, b)) = after.iter().zip(&before).find(|(a, b)| a != b) {
+            panic!("{name}: layer changed on write: {b} became {a}");
+        }
+        boards_round_tripped += 1;
+    }
+    eprintln!(
+        "corpus_r6_layer_identity: {pairs} V6/V7 layer pairs ({full_form} in full V7 form), \
+         {stack_layers} stack copper layers; {boards_round_tripped} boards written and re-read"
+    );
+    assert_eq!(boards_round_tripped, 79);
+}

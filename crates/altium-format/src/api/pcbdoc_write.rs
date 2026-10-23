@@ -180,15 +180,12 @@ impl WriteContext {
 }
 
 /// The V6 layer to store in a primitive's common header: the V6 form of a
-/// V6-compatible layer, else the V6 layer the primitive was read with. A
-/// primitive stored with both a V6 and a full V7 layer id (`0x0100_00ss`, …)
-/// reads as a `LayerRef` carrying the V7 id and the V6 layer's canonical name;
-/// `to_v6()` fails on such a reference, so the name is the V6 source. (Before,
-/// these primitives were written with `NoLayer`.)
+/// V6-compatible layer, or the V6 layer Altium stores beside a full V7 id
+/// ([`V7Layer::legacy_v6`](altium_format_types::pcb::V7Layer::legacy_v6), e.g.
+/// `0x0100_FFFF` → BottomLayer). Before, primitives with a full V7 id were
+/// written with `NoLayer`.
 fn layer_v6_for_write(layer: &LayerRef) -> Option<V6Layer> {
-    layer
-        .to_v6()
-        .or_else(|| layer.display_name().and_then(V6Layer::from_string_name))
+    layer.legacy_v6()
 }
 
 /// Build a `PcbPrimitiveCommon` for a board context with net/component resolution.
@@ -2119,6 +2116,11 @@ mod tests {
             altium_format_types::pcb::V7Layer::new(0x0101_0001),
         );
         assert_eq!(layer_v6_for_write(&v7_plane), Some(V6Layer::InternalPlane1));
+        // The V6 layer comes from the id, never from a display name.
+        let named = LayerRef::from_v7(altium_format_types::pcb::V7Layer::new(0x0104_0001))
+            .with_name("TopLayer".to_owned());
+        assert_eq!(layer_v6_for_write(&named), None);
+        assert!(ctx.resolve_polygon_index(None, true, &named).is_err());
         assert_eq!(
             ctx.resolve_polygon_index(None, true, &v7_plane).unwrap(),
             POLYGON_INDEX_PLANE_SPLIT_LINE

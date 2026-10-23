@@ -804,6 +804,73 @@ impl V7Layer {
     pub fn from_v6(layer: V6Layer) -> Self {
         Self(layer as u32)
     }
+
+    /// The V6 layer Altium stores beside this id in primitives that carry both
+    /// (the common-header layer of Tracks6, Arcs6, Fills6), for V6-compatible ids
+    /// and the full V7 form (family [`V7_FAMILY_LAYER`](constants::V7_FAMILY_LAYER)):
+    ///
+    /// - signal (genus 0): species `s` → V6 `s` (1 = top, 2..=31 mid layers),
+    ///   species 0xFFFF → bottom (32);
+    /// - plane (genus 1): species `p` (1..=16) → internal plane `p` (V6 38 + p);
+    /// - mechanical (genus 2): species `m` → Mechanical`m` (V6 56 + m) for
+    ///   1..=16; higher mechanical layers have no V6 layer of their own and
+    ///   Altium stores Mechanical16 for them;
+    /// - utility (genus 3): species 6..=14 → TopOverlay, BottomOverlay,
+    ///   TopPaste, BottomPaste, TopSolder, BottomSolder, DrillGuide,
+    ///   KeepOutLayer, DrillDrawing.
+    ///
+    /// Confirmed on every Track/Arc/Fill of the test corpus
+    /// (akiselev/altium-cli-test-pcbdoc `6bc5aa7`, 53 distinct pairs, about
+    /// 600,000 primitives); not checked against decompiled sources. `None` for
+    /// any other id.
+    pub fn legacy_v6(self) -> Option<V6Layer> {
+        use constants::{
+            V7_FAMILY_LAYER, V7_GENUS_MECHANICAL, V7_GENUS_PLANE, V7_GENUS_SIGNAL,
+            V7_GENUS_UTILITY, V7_SPECIES_BOTTOM_SIGNAL,
+        };
+        if let Ok(v6) = self.to_v6() {
+            return Some(v6);
+        }
+        if self.family() != V7_FAMILY_LAYER {
+            return None;
+        }
+        let species = self.species();
+        let id: u16 = match self.genus() {
+            V7_GENUS_SIGNAL if species == V7_SPECIES_BOTTOM_SIGNAL => V6Layer::BottomLayer as u16,
+            V7_GENUS_SIGNAL if (1..=31).contains(&species) => species,
+            V7_GENUS_PLANE if (1..=16).contains(&species) => {
+                V6Layer::InternalPlane1 as u16 + species - 1
+            }
+            V7_GENUS_MECHANICAL if species >= 1 => {
+                V6Layer::Mechanical1 as u16 + species.min(16) - 1
+            }
+            V7_GENUS_UTILITY => match species {
+                6 => V6Layer::TopOverlay as u16,
+                7 => V6Layer::BottomOverlay as u16,
+                8 => V6Layer::TopPaste as u16,
+                9 => V6Layer::BottomPaste as u16,
+                10 => V6Layer::TopSolder as u16,
+                11 => V6Layer::BottomSolder as u16,
+                12 => V6Layer::DrillGuide as u16,
+                13 => V6Layer::KeepOutLayer as u16,
+                14 => V6Layer::DrillDrawing as u16,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        u8::try_from(id)
+            .ok()
+            .and_then(|b| V6Layer::try_from(b).ok())
+    }
+
+    /// The V6 copper layer (signal, internal plane) of this id in either form;
+    /// `None` for non-copper layers. Use it to compare V8/V9 stack layers
+    /// (`0x0100_0001`, `0x0100_FFFF`, `0x0101_0001`, …) with primitives that
+    /// carry V6 ids (`1`, `32`, `39`, …).
+    pub fn copper_v6(self) -> Option<V6Layer> {
+        self.legacy_v6()
+            .filter(|v6| v6.is_signal() || v6.is_internal_plane())
+    }
 }
 
 /// Unified layer reference wrapping a V7 32-bit layer ID with optional display name.
@@ -845,6 +912,19 @@ impl LayerRef {
     /// Look up a layer by its V6 canonical name string (case-insensitive).
     pub fn from_string_name(name: &str) -> Option<Self> {
         V6Layer::from_string_name(name).map(Self::from_v6)
+    }
+
+    /// See [`V7Layer::legacy_v6`]: the V6 layer for this layer's id, in either
+    /// the V6-compatible or the full V7 form. Unlike [`LayerRef::to_v6`], this
+    /// also maps full V7 ids such as `0x0100_FFFF` (bottom).
+    pub fn legacy_v6(&self) -> Option<V6Layer> {
+        self.v7.legacy_v6()
+    }
+
+    /// See [`V7Layer::copper_v6`]: the V6 copper layer, so that a stack layer
+    /// `0x0100_0001` and a pad on V6 layer 1 compare equal.
+    pub fn copper_v6(&self) -> Option<V6Layer> {
+        self.v7.copper_v6()
     }
 
     /// The underlying V7 layer ID (always available).
@@ -2495,6 +2575,20 @@ pub mod constants {
     /// all 2,448 primitives with this value are tracks or arcs on internal plane
     /// layers with no net. Not yet checked against the decompiled sources.
     pub const POLYGON_INDEX_PLANE_SPLIT_LINE: u16 = 0xFFFE;
+
+    /// V7 layer id family byte of the full form (`0x01gg_ssss`). Observed on
+    /// every non-V6-compatible layer id in the test corpus.
+    pub const V7_FAMILY_LAYER: u8 = 0x01;
+    /// V7 genus of signal (copper routing) layers.
+    pub const V7_GENUS_SIGNAL: u8 = 0;
+    /// V7 genus of internal plane layers.
+    pub const V7_GENUS_PLANE: u8 = 1;
+    /// V7 genus of mechanical layers.
+    pub const V7_GENUS_MECHANICAL: u8 = 2;
+    /// V7 genus of utility layers (overlay, paste, solder, drill, keep-out).
+    pub const V7_GENUS_UTILITY: u8 = 3;
+    /// V7 signal-layer species of the bottom layer.
+    pub const V7_SPECIES_BOTTOM_SIGNAL: u16 = 0xFFFF;
 }
 
 /// IPC-4761 via structure type for via fill/plug/tent classification.
@@ -3044,5 +3138,102 @@ impl ComponentOrientationFlags {
 
     pub fn allows_all(self) -> bool {
         self.0 & Self::ALL.0 != 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every distinct (V7 id, stored V6 layer) pair found on Tracks6/Arcs6/
+    /// Fills6 in the test corpus (akiselev/altium-cli-test-pcbdoc `6bc5aa7`).
+    const CORPUS_PAIRS: [(u32, u8); 53] = [
+        (0x0100_0001, 1),
+        (0x0100_0002, 2),
+        (0x0100_0003, 3),
+        (0x0100_0004, 4),
+        (0x0100_0005, 5),
+        (0x0100_0006, 6),
+        (0x0100_0007, 7),
+        (0x0100_0008, 8),
+        (0x0100_0009, 9),
+        (0x0100_FFFF, 32),
+        (0x0101_0001, 39),
+        (0x0101_0002, 40),
+        (0x0101_0003, 41),
+        (0x0101_0004, 42),
+        (0x0101_0005, 43),
+        (0x0101_0006, 44),
+        (0x0101_0007, 45),
+        (0x0101_0008, 46),
+        (0x0101_0009, 47),
+        (0x0102_0001, 57),
+        (0x0102_0002, 58),
+        (0x0102_0003, 59),
+        (0x0102_0004, 60),
+        (0x0102_0005, 61),
+        (0x0102_0006, 62),
+        (0x0102_0007, 63),
+        (0x0102_0008, 64),
+        (0x0102_0009, 65),
+        (0x0102_000A, 66),
+        (0x0102_000B, 67),
+        (0x0102_000C, 68),
+        (0x0102_000D, 69),
+        (0x0102_000E, 70),
+        (0x0102_000F, 71),
+        (0x0102_0010, 72),
+        (0x0102_0011, 72),
+        (0x0102_0012, 72),
+        (0x0102_0013, 72),
+        (0x0102_0014, 72),
+        (0x0102_0015, 72),
+        (0x0102_0017, 72),
+        (0x0102_0018, 72),
+        (0x0102_001E, 72),
+        (0x0103_0006, 33),
+        (0x0103_0007, 34),
+        (0x0103_0008, 35),
+        (0x0103_0009, 36),
+        (0x0103_000A, 37),
+        (0x0103_000B, 38),
+        (0x0103_000C, 55),
+        (0x0103_000D, 56),
+        (0x0103_000E, 73),
+        (0x0000_0001, 1),
+    ];
+
+    #[test]
+    fn legacy_v6_matches_every_corpus_pair() {
+        for (v7, v6) in CORPUS_PAIRS {
+            let expected = V6Layer::try_from(v6).unwrap();
+            assert_eq!(V7Layer::new(v7).legacy_v6(), Some(expected), "{v7:#010x}");
+        }
+    }
+
+    #[test]
+    fn copper_v6_equates_both_forms() {
+        let top = LayerRef::from_v7(V7Layer::new(0x0100_0001));
+        let bottom = LayerRef::from_v7(V7Layer::new(0x0100_FFFF));
+        let plane2 = LayerRef::from_v7(V7Layer::new(0x0101_0002));
+        assert_eq!(top.to_v6(), None);
+        assert_eq!(
+            top.copper_v6(),
+            LayerRef::from_v6(V6Layer::TopLayer).copper_v6()
+        );
+        assert_eq!(bottom.copper_v6(), Some(V6Layer::BottomLayer));
+        assert_eq!(plane2.copper_v6(), Some(V6Layer::InternalPlane2));
+        assert_eq!(V7Layer::new(0x0103_0006).copper_v6(), None); // TopOverlay
+        assert_eq!(V7Layer::new(0x0102_0001).copper_v6(), None); // Mechanical1
+        for unknown in [
+            0x0100_0000,
+            0x0100_0020,
+            0x0101_0011,
+            0x0103_0005,
+            0x0104_0001,
+            0x0200_0001,
+        ] {
+            assert_eq!(V7Layer::new(unknown).legacy_v6(), None, "{unknown:#010x}");
+        }
     }
 }

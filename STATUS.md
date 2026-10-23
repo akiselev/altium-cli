@@ -559,6 +559,10 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   board region was duplicated on every `update_board` and the following regions' attributes
   shifted by one (65 of 79 corpus boards). Known gap: the spec dump (`altium-format-spec`
   `dump.rs`) still emits pour members and split-plane lines as authored primitives.
+- Layer identity (R6): `V7Layer::legacy_v6` / `copper_v6` and the same on `LayerRef` map full V7
+  ids (`0x0100_0001`, `0x0100_FFFF`, `0x0101_000p`, mechanical, utility) to the V6 layer Altium
+  stores beside them; confirmed on all 484,977 corpus Track/Arc/Fill pairs, not against sources.
+  The writer stores that V6 layer (no name-based recovery).
 - Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
   boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
 
