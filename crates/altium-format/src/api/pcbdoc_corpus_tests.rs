@@ -159,6 +159,9 @@ fn r4_identity(board: &PcbDocBoard) -> Vec<(String, Option<String>, Option<usize
     collect!(board.fills);
     collect!(board.texts);
     collect!(board.regions);
+    for b in &board.component_bodies {
+        out.push((b.id.clone(), None, b.component_index, b.flags.raw()));
+    }
     out
 }
 

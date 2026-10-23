@@ -19,6 +19,7 @@ use altium_format_types::{BarcodeKind, PcbObjectId};
 use crate::api::pcb_common::{ContourSegment, PcbContour};
 use crate::api::pcbdoc_read::{
     hatch_style_to_param_value, layer_to_param_value, polygon_type_to_param_value,
+    validate_unique_id,
 };
 use crate::api::pcbdoc_types::*;
 use crate::param_collection::ParameterCollection;
@@ -247,8 +248,9 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
     merge_param_section(
         doc,
         ParamSectionKind::Components6,
-        build_component_records(&board.components),
-        "SOURCEDESIGNATOR",
+        build_component_records(&board.components)?,
+        // Designators repeat (test-padshapes has ten R14); the unique id does not.
+        "UNIQUEID",
     );
     replace_param_section(
         doc,
@@ -380,8 +382,27 @@ fn build_net_records(nets: &[Net]) -> Vec<StandardParamRecord> {
         .collect()
 }
 
-fn build_component_records(components: &[PcbDocComponent]) -> Vec<StandardParamRecord> {
-    components
+/// Build Components6 records. A component's `unique_id` must be 8 uppercase
+/// letters (or empty, to generate one) and may not repeat another component's.
+fn build_component_records(components: &[PcbDocComponent]) -> Result<Vec<StandardParamRecord>> {
+    let mut seen: HashMap<&str, usize> = HashMap::with_capacity(components.len());
+    for (i, comp) in components.iter().enumerate() {
+        if comp.unique_id.is_empty() {
+            continue;
+        }
+        validate_unique_id("UNIQUEID", &comp.unique_id)
+            .with_context(|| format!("component #{i} ({})", comp.designator))?;
+        if let Some(first) = seen.insert(comp.unique_id.as_str(), i) {
+            return Err(crate::AltiumFormatError::InvalidParamValue {
+                key: "UNIQUEID".to_owned(),
+                detail: format!(
+                    "components #{first} and #{i} share unique id {:?}",
+                    comp.unique_id
+                ),
+            });
+        }
+    }
+    Ok(components
         .iter()
         .map(|comp| {
             let mut params = ParameterCollection::new();
@@ -433,7 +454,7 @@ fn build_component_records(components: &[PcbDocComponent]) -> Vec<StandardParamR
             params.insert("UNIQUEID", unique_id);
             StandardParamRecord { params }
         })
-        .collect()
+        .collect())
 }
 
 /// Generate an 8-character uppercase alphabetic unique ID in the same format
@@ -891,6 +912,9 @@ fn build_via_records(vias: &[Via], ctx: &WriteContext) -> Result<Vec<ParsedPrimi
 fn build_pad_records(pads: &[Pad], ctx: &WriteContext) -> Result<Vec<ParsedPrimitiveRecord>> {
     pads.iter()
         .map(|p| {
+            if let Some(id) = &p.unique_id {
+                validate_unique_id("UNIQUEID", id).with_context(|| format!("pad {}", p.id))?;
+            }
             Ok(ParsedPrimitiveRecord {
                 object_id: PcbObjectId::Pad,
                 primitive: PcbPrimitive::Pad(PcbPad {
@@ -1141,7 +1165,7 @@ fn build_body_records(
                         &None,
                         &b.component,
                         b.component_index,
-                        PcbFlags::default(),
+                        b.flags,
                         None,
                         false,
                         ctx,
@@ -1353,9 +1377,9 @@ fn preserve_pad_fields(new: &mut PcbPad, old: &PcbPad) {
     new.sub4_extension = old.sub4_extension.clone();
     new.thermal_reliefs = old.thermal_reliefs.clone();
     new.stack_data = old.stack_data.clone();
-    if new.unique_id.is_none() {
-        new.unique_id = old.unique_id.clone();
-    }
+    // The API pad's `unique_id` is authoritative: `None` means "generate one"
+    // (assign_and_rebuild_unique_id_section). Taking the id of the old pad at
+    // the same position would duplicate it when pads are inserted.
 }
 
 fn preserve_fill_fields(new: &mut PcbFill, old: &PcbFill) {
@@ -2047,6 +2071,50 @@ mod tests {
             ctx.resolve_polygon_index(None, true, &v7_plane).unwrap(),
             POLYGON_INDEX_PLANE_SPLIT_LINE
         );
+    }
+
+    fn component(designator: &str, unique_id: &str) -> PcbDocComponent {
+        PcbDocComponent {
+            id: designator.to_owned(),
+            designator: designator.to_owned(),
+            pattern: String::new(),
+            comment: String::new(),
+            location: CoordPoint::new(Coord::ZERO, Coord::ZERO),
+            rotation: 0.0,
+            layer: LayerRef::from_v6(V6Layer::TopLayer),
+            source_library: String::new(),
+            source_lib_reference: String::new(),
+            source_unique_id: String::new(),
+            source_hierarchical_path: String::new(),
+            unique_id: unique_id.to_owned(),
+            locked: true,
+            primitive_lock: false,
+            parameters: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn component_records_keep_identity_and_reject_bad_ids() {
+        let records =
+            build_component_records(&[component("R14", "OYNEOHXI"), component("R14", "")]).unwrap();
+        assert_eq!(records[0].params.get("UNIQUEID"), Some("OYNEOHXI"));
+        assert_eq!(records[0].params.get("LOCKED"), Some("TRUE"));
+        assert_eq!(records[0].params.get("PRIMITIVELOCK"), Some("FALSE"));
+        let generated = records[1].params.get("UNIQUEID").unwrap();
+        assert!(
+            validate_unique_id("UNIQUEID", generated).is_ok(),
+            "{generated}"
+        );
+
+        let dup =
+            build_component_records(&[component("R1", "OYNEOHXI"), component("R2", "OYNEOHXI")])
+                .err()
+                .expect("shared id must fail");
+        assert!(dup.to_string().contains("share"), "{dup}");
+        let bad = build_component_records(&[component("R1", "short")])
+            .err()
+            .expect("malformed id must fail");
+        assert!(bad.to_string().contains("8 uppercase"), "{bad}");
     }
 
     #[test]

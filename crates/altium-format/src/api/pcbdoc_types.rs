@@ -744,6 +744,8 @@ pub struct ComponentBody {
     pub component: Option<String>,
     /// Index into [`PcbDocBoard::components`] of the owning component.
     pub component_index: Option<usize>,
+    /// Primitive flags as stored (selected, locked, …).
+    pub flags: PcbFlags,
     pub standoff_height: Coord,
     pub overall_height: Coord,
     pub body_color_3d: Color,

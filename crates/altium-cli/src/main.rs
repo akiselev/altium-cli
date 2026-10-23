@@ -1579,6 +1579,7 @@ fn instantiate_footprint_primitives(
                                 layer: body.layer.clone(),
                                 component: Some(comp.designator.clone()),
                                 component_index: Some(comp_index),
+                                flags: altium_format_types::pcb::PcbFlags::default(),
                                 standoff_height: body.standoff_height,
                                 overall_height: body.overall_height,
                                 body_color_3d: body.body_color_3d,

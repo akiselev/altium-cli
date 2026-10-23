@@ -546,8 +546,10 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   stale arc keys on line edges are written as zeros, `AREATHRESHOLD` digits beyond f64 are lost.
 - Identity (R4): primitives carry `unique_id` (pads, from UniqueIDPrimitiveInformation; other
   kinds have none in the corpus), `component_index` and `flags`; components carry `unique_id`,
-  `locked`, `primitive_lock`. The writer keeps them (an ambiguous or unknown designator without
-  `component_index` is an error). Known pre-existing defect: `update_board` → `board()` adds one
+  `locked`, `primitive_lock`; component bodies carry `component_index` and `flags`. The writer
+  keeps them (an ambiguous or unknown designator without `component_index` is an error; ids must
+  be 8 uppercase letters; component ids may not repeat; Components6 records merge by UNIQUEID).
+  Spec documents naming a missing or duplicated designator now fail at `update_board`. Known pre-existing defect: `update_board` → `board()` adds one
   region on 65 of 79 corpus boards (also at `18062d6`).
 - Polygon membership (R3): `polygon: Option<usize>` on Track, Arc, Via, Pad, Fill, Region;
   `plane_split_line` on Track/Arc for the 0xFFFE marker (split-plane lines on plane layers).

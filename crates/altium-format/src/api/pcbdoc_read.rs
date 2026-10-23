@@ -312,6 +312,19 @@ fn build_context(doc: &PcbDoc) -> Result<ConvertContext> {
     })
 }
 
+/// Check an Altium object id: 8 uppercase ASCII letters, as every id in the
+/// test corpus is (58,719 pad and 14,409 component ids).
+pub(crate) fn validate_unique_id(key: &str, value: &str) -> Result<()> {
+    if value.len() == 8 && value.bytes().all(|b| b.is_ascii_uppercase()) {
+        Ok(())
+    } else {
+        Err(AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("unique id {value:?} is not 8 uppercase letters"),
+        })
+    }
+}
+
 /// Read UniqueIDPrimitiveInformation: `PRIMITIVEINDEX`, `PRIMITIVEOBJECTID`,
 /// `UNIQUEID` per record. Only `Pad` entries occur in the test corpus (58,719
 /// of them) and only those are mapped; another object kind, an index outside
@@ -345,6 +358,7 @@ fn pad_unique_ids_from_records(
             let index: usize = params.remove_required("PRIMITIVEINDEX")?;
             let object: String = params.remove_required("PRIMITIVEOBJECTID")?;
             let unique_id: String = params.remove_required("UNIQUEID")?;
+            validate_unique_id("UNIQUEID", &unique_id)?;
             params.assert_exhausted()?;
             if object != PcbObjectId::Pad.to_string() {
                 return Err(AltiumFormatError::InvalidParamValue {
@@ -484,6 +498,7 @@ fn convert_components(doc: &PcbDoc) -> Result<Vec<PcbDocComponent>> {
         let unique_id: String = params
             .remove_required("UNIQUEID")
             .context("Components6 UNIQUEID")?;
+        validate_unique_id("UNIQUEID", &unique_id).context("Components6")?;
         let locked: bool = params
             .remove_required("LOCKED")
             .context("Components6 LOCKED")?;
@@ -1660,6 +1675,7 @@ fn body_from_internal(
         layer,
         component: ctx.resolve_component(b.common.component_index),
         component_index: ctx.component_index(b.common.component_index)?,
+        flags: b.common.flags,
         standoff_height: b.standoff_height,
         overall_height: b.overall_height,
         body_color_3d: b.body_color_3d,
@@ -2073,25 +2089,29 @@ mod tests {
     fn pad_unique_ids_reject_bad_records() {
         for (records, needle) in [
             (
-                vec!["|PRIMITIVEINDEX=0|PRIMITIVEOBJECTID=Track|UNIQUEID=A|"],
+                vec!["|PRIMITIVEINDEX=0|PRIMITIVEOBJECTID=Track|UNIQUEID=AAAAAAAA|"],
                 "Track",
             ),
             (
-                vec!["|PRIMITIVEINDEX=3|PRIMITIVEOBJECTID=Pad|UNIQUEID=A|"],
+                vec!["|PRIMITIVEINDEX=3|PRIMITIVEOBJECTID=Pad|UNIQUEID=AAAAAAAA|"],
                 "outside Pads6",
             ),
             (
                 vec![
-                    "|PRIMITIVEINDEX=1|PRIMITIVEOBJECTID=Pad|UNIQUEID=A|",
-                    "|PRIMITIVEINDEX=1|PRIMITIVEOBJECTID=Pad|UNIQUEID=B|",
+                    "|PRIMITIVEINDEX=1|PRIMITIVEOBJECTID=Pad|UNIQUEID=AAAAAAAA|",
+                    "|PRIMITIVEINDEX=1|PRIMITIVEOBJECTID=Pad|UNIQUEID=BBBBBBBB|",
                 ],
                 "repeated",
             ),
             (
-                vec!["|PRIMITIVEINDEX=1|PRIMITIVEOBJECTID=Pad|UNIQUEID=A|EXTRA=1|"],
+                vec!["|PRIMITIVEINDEX=1|PRIMITIVEOBJECTID=Pad|UNIQUEID=AAAAAAAA|EXTRA=1|"],
                 "EXTRA",
             ),
             (vec!["|PRIMITIVEINDEX=1|PRIMITIVEOBJECTID=Pad|"], "UNIQUEID"),
+            (
+                vec!["|PRIMITIVEINDEX=1|PRIMITIVEOBJECTID=Pad|UNIQUEID=abc|"],
+                "8 uppercase",
+            ),
         ] {
             let err = pad_unique_ids_from_records(&uid_records(&records), 3).unwrap_err();
             assert!(format!("{err}").contains(needle), "{needle}: {err}");
