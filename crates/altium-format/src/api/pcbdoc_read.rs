@@ -9,15 +9,19 @@ use altium_format_types::color::Color;
 use altium_format_types::common::Unit;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, RegionKind, RuleKind, V6Layer,
-    V7Layer,
+    ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, PolyHatchStyle,
+    PolySegmentKind, PolygonType, RegionKind, RuleKind, V6Layer, V7Layer,
 };
 use altium_format_types::{DielectricType, LayerStackStyle};
 
-use crate::api::pcb_common::{contour_to_pcb_contour, extract_pad_stack};
+use crate::AltiumFormatError;
+use crate::api::pcb_common::{
+    ContourSegment, PcbContour, contour_to_pcb_contour, extract_pad_stack,
+};
 use crate::api::pcbdoc_types::*;
 use crate::board_config::PcbBoardConfig;
-use crate::param_value::MilCoord;
+use crate::param_collection::ParameterCollection;
+use crate::param_value::{ExactMilCoord, MilCoord};
 use crate::pcbdoc::drc::PcbRuleKindData;
 use crate::pcbdoc::primitives::PcbPrimitive;
 use crate::pcbdoc::records::{ParamSectionKind, PrefixedParamSectionKind, PrimitiveSectionKind};
@@ -25,6 +29,7 @@ use crate::pcbdoc::{
     ModelsSectionData, ParamSectionData, PcbDoc, PcbDocSection, PrefixedParamSectionData,
     PrimitiveSectionData, WideStringsSectionData,
 };
+use crate::pcblib::wide_strings::decode_encoded_text;
 use crate::pcblib::{Contour, PcbComponentBody, PcbPad, PcbRegion, PcbVia};
 use crate::{Result, ResultExt};
 
@@ -54,6 +59,26 @@ impl ConvertContext {
             return None;
         }
         self.component_designators.get(index as usize).cloned()
+    }
+
+    /// Resolve a parameter-section net index (`NET=n`): -1 is "no net", an index
+    /// outside Nets6 is an error.
+    fn net_param_index(&self, index: i32) -> Result<Option<String>> {
+        if index == -1 {
+            return Ok(None);
+        }
+        usize::try_from(index)
+            .ok()
+            .and_then(|i| self.net_names.get(i))
+            .cloned()
+            .map(Some)
+            .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                key: "NET".to_owned(),
+                detail: format!(
+                    "net index {index} outside Nets6 ({} nets)",
+                    self.net_names.len()
+                ),
+            })
     }
 
     fn resolve_wide_string(&self, index: i32) -> Option<String> {
@@ -344,85 +369,275 @@ fn convert_polygons(doc: &PcbDoc, ctx: &ConvertContext) -> Result<Vec<Polygon>> 
 
     let mut polygons = Vec::with_capacity(records.len());
     for (idx, rec) in records.iter().enumerate() {
-        let mut params = rec.params.clone();
-        let name: String = params
-            .remove_with_default("NAME", String::new())
-            .context("Polygons6 name")?;
-        let net_index: i32 = params
-            .remove_with_default("NET", -1)
-            .context("Polygons6 net")?;
-        let net = if net_index >= 0 {
-            ctx.net_names.get(net_index as usize).cloned()
-        } else {
-            None
-        };
-        let layer = parse_layer_param(&mut params, V6Layer::TopLayer).context("Polygons6 layer")?;
-        let connect_style_raw: u8 = params
-            .remove_with_default("CONNECTSTYLE", 1u8)
-            .context("Polygons6 connect style")?;
-        let connect_style = PlaneConnectionStyle::try_from(connect_style_raw)
-            .unwrap_or(PlaneConnectionStyle::Relief);
-        let pour_order: i32 = params
-            .remove_with_default("POURORDER", 0)
-            .context("Polygons6 pour order")?;
-        let relief_conductor_width: i32 = params
-            .remove_with_default("RELIEFCONDUCTORWIDTH", 254_000)
-            .context("Polygons6 relief conductor width")?;
-        let relief_entries: i32 = params
-            .remove_with_default("RELIEFENTRIES", 4)
-            .context("Polygons6 relief entries")?;
-        let relief_air_gap: i32 = params
-            .remove_with_default("RELIEFAIRGAP", 254_000)
-            .context("Polygons6 relief air gap")?;
-
-        // Extract vertices from indexed coordinate keys.
-        let vertices = extract_polygon_vertices(&mut params)?;
-
-        let id = if name.is_empty() {
-            format!("polygon_{idx}")
-        } else {
-            name.clone()
-        };
-
-        polygons.push(Polygon {
-            id,
-            name,
-            net,
-            layer,
-            connect_style,
-            pour_order,
-            vertices,
-            relief_conductor_width: Coord::from_internal(relief_conductor_width),
-            relief_entries,
-            relief_air_gap: Coord::from_internal(relief_air_gap),
-        });
+        let polygon = convert_polygon(idx, &rec.params, ctx)
+            .with_context(|| format!("Polygons6 record #{idx}"))?;
+        polygons.push(polygon);
     }
     Ok(polygons)
 }
 
-fn extract_polygon_vertices(
-    params: &mut crate::param_collection::ParameterCollection,
-) -> Result<Vec<CoordPoint>> {
-    // Polygons use VX0/VY0, VX1/VY1, ... for vertices.
-    let mut vertices = Vec::new();
-    let mut i = 0;
-    loop {
-        let x_key = format!("VX{i}");
-        let y_key = format!("VY{i}");
-        let x: Option<i32> = params.remove_optional(&x_key).unwrap_or(None);
-        let y: Option<i32> = params.remove_optional(&y_key).unwrap_or(None);
-        match (x, y) {
-            (Some(xv), Some(yv)) => {
-                vertices.push(CoordPoint::new(
-                    Coord::from_internal(xv),
-                    Coord::from_internal(yv),
-                ));
+/// Convert one Polygons6 record. Every key is consumed into a typed field;
+/// a key left over at the end is an error.
+fn convert_polygon(
+    idx: usize,
+    record: &ParameterCollection,
+    ctx: &ConvertContext,
+) -> Result<Polygon> {
+    let mut params = record.clone();
+    let name = match params.remove_optional::<String>("NAME").context("NAME")? {
+        Some(encoded) => decode_encoded_text("NAME", &encoded)?,
+        None => String::new(),
+    };
+    let net = match params.remove_optional::<i32>("NET").context("NET")? {
+        Some(index) => ctx.net_param_index(index).context("NET")?,
+        None => None,
+    };
+    let layer = parse_layer_param(&mut params, V6Layer::TopLayer).context("LAYER")?;
+    let connect_style = match params
+        .remove_optional::<u8>("CONNECTSTYLE")
+        .context("CONNECTSTYLE")?
+    {
+        Some(raw) => PlaneConnectionStyle::try_from(raw).map_err(|e| {
+            AltiumFormatError::InvalidParamValue {
+                key: "CONNECTSTYLE".to_owned(),
+                detail: e.to_string(),
             }
-            _ => break,
-        }
-        i += 1;
+        })?,
+        None => PlaneConnectionStyle::Relief,
+    };
+    let pour_order: i32 = params
+        .remove_with_default("POURINDEX", 0)
+        .context("POURINDEX")?;
+    let relief_conductor_width: i32 = params
+        .remove_with_default("RELIEFCONDUCTORWIDTH", 254_000)
+        .context("RELIEFCONDUCTORWIDTH")?;
+    let relief_entries: i32 = params
+        .remove_with_default("RELIEFENTRIES", 4)
+        .context("RELIEFENTRIES")?;
+    let relief_air_gap: i32 = params
+        .remove_with_default("RELIEFAIRGAP", 254_000)
+        .context("RELIEFAIRGAP")?;
+
+    let contour = remove_param_contour(&mut params)?;
+    if contour.segments.is_empty() {
+        return Err(AltiumFormatError::MissingParam("VX0".to_owned()));
     }
-    Ok(vertices)
+
+    let polygon_type = parse_polygon_type(&params.remove_required::<String>("POLYGONTYPE")?)?;
+    let hatch_style = match params.remove_optional::<String>("HATCHSTYLE")? {
+        Some(s) => Some(parse_hatch_style(&s)?),
+        None => None,
+    };
+    let mil = |params: &mut ParameterCollection, key: &str| -> Result<Option<Coord>> {
+        Ok(params
+            .remove_optional::<ExactMilCoord>(key)
+            .context(key)?
+            .map(|m| m.0))
+    };
+    let grid_size = mil(&mut params, "GRIDSIZE")?;
+    let track_width = mil(&mut params, "TRACKWIDTH")?;
+    let min_prim_length = mil(&mut params, "MINPRIMLENGTH")?;
+    let arc_approximation = mil(&mut params, "ARCRESOLUTION")?;
+    let neck_width_threshold = mil(&mut params, "NECKWIDTHTHRESHOLD")?;
+    let restore_layer = match params.remove_optional::<String>("RESTORELAYER")? {
+        Some(s) if s.eq_ignore_ascii_case("UNKNOWN") => None,
+        Some(s) => Some(layer_from_param_value("RESTORELAYER", &s)?),
+        None => None,
+    };
+
+    let polygon = Polygon {
+        id: if name.is_empty() {
+            format!("polygon_{idx}")
+        } else {
+            name.clone()
+        },
+        name,
+        net,
+        layer,
+        connect_style,
+        pour_order,
+        vertices: contour.to_points(),
+        relief_conductor_width: Coord::from_internal(relief_conductor_width),
+        relief_entries,
+        relief_air_gap: Coord::from_internal(relief_air_gap),
+        contour,
+        polygon_type,
+        hatch_style,
+        grid_size,
+        track_width,
+        min_prim_length,
+        arc_approximation,
+        remove_dead: params.remove_optional("REMOVEDEAD")?,
+        pour_over: params.remove_optional("POUROVER")?,
+        pour_over_style: params.remove_optional("POUROVERSTYLE")?,
+        use_octagons: params.remove_optional("USEOCTAGONS")?,
+        remove_islands_by_area: params.remove_optional("REMOVEISLANDSBYAREA")?,
+        area_threshold: params.remove_optional("AREATHRESHOLD")?,
+        remove_necks: params.remove_optional("REMOVENECKS")?,
+        neck_width_threshold,
+        neck_width_from_rule: params.remove_optional("NECKWIDTHFROMRULE")?,
+        shelved: params.remove_optional("SHELVED")?,
+        restore_layer,
+        restore_net: params.remove_optional("RESTORENET")?,
+        ignore_violations: params.remove_optional("IGNOREVIOLATIONS")?,
+        auto_name: params.remove_optional("AUTONAME")?,
+        optimal_void_rotation: params.remove_optional("OPTIMALVOIDROTATION")?,
+        obey_polygon_cutout: params.remove_optional("OBEYPOLYGONCUTOUT")?,
+        copper_invalidate: params.remove_optional("COPPERINVALIDATE")?,
+        selected: params.remove_required("SELECTION")?,
+        locked: params.remove_required("LOCKED")?,
+        primitive_lock: params.remove_required("PRIMITIVELOCK")?,
+        polygon_outline: params.remove_required("POLYGONOUTLINE")?,
+        user_routed: params.remove_required("USERROUTED")?,
+        keepout: params.remove_required("KEEPOUT")?,
+        union_index: params.remove_required("UNIONINDEX")?,
+    };
+    params.assert_exhausted()?;
+    Ok(polygon)
+}
+
+/// `POLYGONTYPE` strings as stored in Polygons6.
+fn parse_polygon_type(value: &str) -> Result<PolygonType> {
+    match value {
+        "Polygon" => Ok(PolygonType::SignalLayer),
+        "Split Plane" => Ok(PolygonType::SplitPlane),
+        other => Err(AltiumFormatError::InvalidParamValue {
+            key: "POLYGONTYPE".to_owned(),
+            detail: format!("unknown polygon type {other:?}"),
+        }),
+    }
+}
+
+pub(crate) fn polygon_type_to_param_value(value: PolygonType) -> Result<&'static str> {
+    match value {
+        PolygonType::SignalLayer => Ok("Polygon"),
+        PolygonType::SplitPlane => Ok("Split Plane"),
+        other => Err(AltiumFormatError::InvalidParamValue {
+            key: "POLYGONTYPE".to_owned(),
+            detail: format!("no Polygons6 string known for {other:?}"),
+        }),
+    }
+}
+
+/// `HATCHSTYLE` strings as stored in Polygons6. `Solid` and `90Degree` occur in
+/// the test corpus; the other four follow Altium's hatch-style names.
+fn parse_hatch_style(value: &str) -> Result<PolyHatchStyle> {
+    match value {
+        "Solid" => Ok(PolyHatchStyle::Solid),
+        "90Degree" => Ok(PolyHatchStyle::Hatch90),
+        "45Degree" => Ok(PolyHatchStyle::Hatch45),
+        "Vertical" => Ok(PolyHatchStyle::VerticalHatch),
+        "Horizontal" => Ok(PolyHatchStyle::HorizontalHatch),
+        "None" => Ok(PolyHatchStyle::NoHatch),
+        other => Err(AltiumFormatError::InvalidParamValue {
+            key: "HATCHSTYLE".to_owned(),
+            detail: format!("unknown hatch style {other:?}"),
+        }),
+    }
+}
+
+pub(crate) fn hatch_style_to_param_value(value: PolyHatchStyle) -> Result<&'static str> {
+    match value {
+        PolyHatchStyle::Solid => Ok("Solid"),
+        PolyHatchStyle::Hatch90 => Ok("90Degree"),
+        PolyHatchStyle::Hatch45 => Ok("45Degree"),
+        PolyHatchStyle::VerticalHatch => Ok("Vertical"),
+        PolyHatchStyle::HorizontalHatch => Ok("Horizontal"),
+        PolyHatchStyle::NoHatch => Ok("None"),
+        other => Err(AltiumFormatError::InvalidParamValue {
+            key: "HATCHSTYLE".to_owned(),
+            detail: format!("no Polygons6 string known for {other:?}"),
+        }),
+    }
+}
+
+/// Per-vertex keys of a parameter contour (Polygons6, Board6 outline).
+const CONTOUR_KEYS: [&str; 8] = ["KIND", "VX", "VY", "CX", "CY", "SA", "EA", "R"];
+
+/// True for `KIND3`, `VX12`, `R0`, …: a contour key prefix followed by digits only.
+fn is_contour_key(key: &str) -> bool {
+    CONTOUR_KEYS.iter().any(|prefix| {
+        key.len() > prefix.len()
+            && key[..prefix.len()].eq_ignore_ascii_case(prefix)
+            && key[prefix.len()..].bytes().all(|b| b.is_ascii_digit())
+    })
+}
+
+/// Remove an arc-preserving contour stored as indexed parameters
+/// (`KINDn`, `VXn`, `VYn`, `CXn`, `CYn`, `SAn`, `EAn`, `Rn`, n = 0, 1, …).
+///
+/// Vertex `n` must carry all eight keys; a partial vertex, a malformed value or a
+/// contour key left after the first absent index (a gap) is an error. Line
+/// edges carry the arc keys too (usually zero, sometimes stale values left from
+/// an edited arc); they are parsed and validated, and not part of a line edge.
+pub(crate) fn remove_param_contour(params: &mut ParameterCollection) -> Result<PcbContour> {
+    let mut segments = Vec::new();
+    for i in 0usize.. {
+        let keys: Vec<String> = CONTOUR_KEYS.iter().map(|k| format!("{k}{i}")).collect();
+        let present = keys.iter().filter(|k| params.get(k).is_some()).count();
+        if present == 0 {
+            break;
+        }
+        if present != keys.len() {
+            let missing: Vec<&str> = keys
+                .iter()
+                .filter(|k| params.get(k).is_none())
+                .map(String::as_str)
+                .collect();
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: format!("vertex {i}"),
+                detail: format!("incomplete contour vertex, missing {missing:?}"),
+            });
+        }
+        let kind_raw: u8 = params.remove_required(&keys[0])?;
+        let kind = PolySegmentKind::try_from(kind_raw).map_err(|e| {
+            AltiumFormatError::InvalidParamValue {
+                key: keys[0].clone(),
+                detail: e.to_string(),
+            }
+        })?;
+        let vx: ExactMilCoord = params.remove_required(&keys[1])?;
+        let vy: ExactMilCoord = params.remove_required(&keys[2])?;
+        let cx: ExactMilCoord = params.remove_required(&keys[3])?;
+        let cy: ExactMilCoord = params.remove_required(&keys[4])?;
+        let start_angle: f64 = params.remove_required(&keys[5])?;
+        let end_angle: f64 = params.remove_required(&keys[6])?;
+        let radius: ExactMilCoord = params.remove_required(&keys[7])?;
+        for (key, angle) in [(&keys[5], start_angle), (&keys[6], end_angle)] {
+            if !angle.is_finite() {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: key.clone(),
+                    detail: format!("non-finite angle {angle}"),
+                });
+            }
+        }
+        let endpoint = CoordPoint::new(vx.0, vy.0);
+        segments.push(match kind {
+            PolySegmentKind::Line => ContourSegment::Line { endpoint },
+            PolySegmentKind::Arc => ContourSegment::Arc {
+                endpoint,
+                center: CoordPoint::new(cx.0, cy.0),
+                radius: radius.0,
+                start_angle,
+                end_angle,
+            },
+        });
+    }
+    let stray: Vec<String> = params
+        .iter()
+        .filter(|(k, _)| is_contour_key(k))
+        .map(|(k, _)| k.to_owned())
+        .collect();
+    if !stray.is_empty() {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: stray[0].clone(),
+            detail: format!(
+                "contour key after the last complete vertex {} (gap in the vertex list): {stray:?}",
+                segments.len()
+            ),
+        });
+    }
+    Ok(PcbContour { segments })
 }
 
 fn convert_classes(doc: &PcbDoc) -> Result<Vec<NetClass>> {
@@ -1307,32 +1522,71 @@ fn extract_board_geometry(internal_regions: &[&PcbRegion]) -> BoardGeometry {
 // contour_to_pcb_contour is imported from pcb_common
 
 /// Parse a LAYER parameter that may be either a numeric V6 layer ID (e.g. "1")
-/// or a string layer name (e.g. "TopLayer", "MULTILAYER", "TOP").
-/// Falls back to `default` if the key is absent or the name is unrecognized.
-fn parse_layer_param(
-    params: &mut crate::param_collection::ParameterCollection,
-    default: V6Layer,
-) -> Result<LayerRef> {
+/// or a layer name (see [`layer_from_param_value`]).
+/// Returns `default` only when the key is absent or empty; an unrecognized
+/// value is an error.
+fn parse_layer_param(params: &mut ParameterCollection, default: V6Layer) -> Result<LayerRef> {
     let raw: String = params.remove_with_default("LAYER", String::new())?;
     if raw.is_empty() {
         return Ok(LayerRef::from_v6(default));
     }
-    // Try numeric V6 layer ID first.
+    layer_from_param_value("LAYER", &raw)
+}
+
+/// Parse a layer as stored in parameter records: a numeric V6 layer ID, a
+/// canonical V6 name (`TopLayer`, `MULTILAYER`, `Mechanical3`, case-insensitive)
+/// or the short form used by Polygons6/Components6 (`TOP`, `BOTTOM`, `MID1`…`MID30`,
+/// `PLANE1`…`PLANE16`).
+pub(crate) fn layer_from_param_value(key: &str, raw: &str) -> Result<LayerRef> {
+    let unknown = || AltiumFormatError::InvalidParamValue {
+        key: key.to_owned(),
+        detail: format!("unknown layer {raw:?}"),
+    };
     if let Ok(id) = raw.parse::<u8>() {
-        return Ok(match V6Layer::try_from(id) {
-            Ok(v6) => LayerRef::from_v6(v6),
-            Err(_) => LayerRef::from_v6(default),
-        });
+        return V6Layer::try_from(id)
+            .map(LayerRef::from_v6)
+            .map_err(|_| unknown());
     }
-    // Try canonical layer name lookup (case-insensitive, e.g. "TopLayer", "MULTILAYER").
-    if let Some(layer) = LayerRef::from_string_name(&raw) {
+    if let Some(layer) = LayerRef::from_string_name(raw) {
         return Ok(layer);
     }
-    // Try abbreviated names used in some newer Altium files (e.g. "TOP", "BOTTOM").
-    let layer = match raw.to_ascii_uppercase().as_str() {
-        "TOP" => LayerRef::from_v6(V6Layer::TopLayer),
-        "BOTTOM" => LayerRef::from_v6(V6Layer::BottomLayer),
-        _ => LayerRef::from_v6(default),
+    let upper = raw.to_ascii_uppercase();
+    let numbered = |prefix: &str, max: u8, first_v6: u8| -> Option<V6Layer> {
+        let n: u8 = upper.strip_prefix(prefix)?.parse().ok()?;
+        if (1..=max).contains(&n) {
+            V6Layer::try_from(first_v6 + n - 1).ok()
+        } else {
+            None
+        }
     };
-    Ok(layer)
+    let v6 = match upper.as_str() {
+        "TOP" => Some(V6Layer::TopLayer),
+        "BOTTOM" => Some(V6Layer::BottomLayer),
+        _ => numbered("MID", 30, V6Layer::MidLayer1 as u8)
+            .or_else(|| numbered("PLANE", 16, V6Layer::InternalPlane1 as u8)),
+    };
+    v6.map(LayerRef::from_v6).ok_or_else(unknown)
+}
+
+/// The parameter-record form of a layer, the inverse of [`layer_from_param_value`]:
+/// `TOP`, `BOTTOM`, `MIDn`, `PLANEn`, otherwise the upper-cased V6 name.
+pub(crate) fn layer_to_param_value(key: &str, layer: &LayerRef) -> Result<String> {
+    let v6 = layer
+        .to_v6()
+        .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("layer {layer} has no V6 form for a parameter record"),
+        })?;
+    let id = v6 as u8;
+    Ok(match v6 {
+        V6Layer::TopLayer => "TOP".to_owned(),
+        V6Layer::BottomLayer => "BOTTOM".to_owned(),
+        _ if (V6Layer::MidLayer1 as u8..=V6Layer::MidLayer30 as u8).contains(&id) => {
+            format!("MID{}", id - V6Layer::MidLayer1 as u8 + 1)
+        }
+        _ if (V6Layer::InternalPlane1 as u8..=V6Layer::InternalPlane16 as u8).contains(&id) => {
+            format!("PLANE{}", id - V6Layer::InternalPlane1 as u8 + 1)
+        }
+        _ => v6.to_string_name().to_ascii_uppercase(),
+    })
 }

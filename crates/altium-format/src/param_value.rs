@@ -480,6 +480,80 @@ impl ToParamValue for MilCoord {
     }
 }
 
+// ── ExactMilCoord ───────────────────────────────────────────────────────────
+// A length stored as "<decimal>mil" (e.g. "1901.8898mil", "-3mil", "0mil") in
+// Polygons6 and Board6 vertex records. One internal unit is 1/10,000 mil, so a
+// value with at most four fractional digits is an exact integer number of units.
+// Parsed with integer arithmetic (no f64 rounding); the "mil" suffix is required,
+// more than four fractional digits and out-of-range values are errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct ExactMilCoord(pub Coord);
+
+/// Internal units per mil.
+const UNITS_PER_MIL: i64 = 10_000;
+/// Maximum number of fractional mil digits that are an exact number of units.
+const MAX_MIL_FRACTION_DIGITS: usize = 4;
+
+fn parse_exact_mils(value: &str) -> Option<Coord> {
+    let number = value.strip_suffix("mil")?;
+    let (negative, digits) = match number.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, number),
+    };
+    let (int_part, frac_part) = match digits.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (digits, ""),
+    };
+    if int_part.is_empty()
+        || !int_part.bytes().all(|b| b.is_ascii_digit())
+        || !frac_part.bytes().all(|b| b.is_ascii_digit())
+        || frac_part.len() > MAX_MIL_FRACTION_DIGITS
+        || (digits.contains('.') && frac_part.is_empty())
+    {
+        return None;
+    }
+    let int_units = int_part.parse::<i64>().ok()?.checked_mul(UNITS_PER_MIL)?;
+    let frac_units = if frac_part.is_empty() {
+        0
+    } else {
+        let scale = 10i64.pow((MAX_MIL_FRACTION_DIGITS - frac_part.len()) as u32);
+        frac_part.parse::<i64>().ok()? * scale
+    };
+    let magnitude = int_units.checked_add(frac_units)?;
+    let units = if negative { -magnitude } else { magnitude };
+    i32::try_from(units).ok().map(Coord::from_internal)
+}
+
+impl FromParamValue for ExactMilCoord {
+    fn from_param_value(key: &str, value: &str) -> Result<Self> {
+        parse_exact_mils(value).map(ExactMilCoord).ok_or_else(|| {
+            AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!(
+                    "expected '<decimal>mil' with at most {MAX_MIL_FRACTION_DIGITS} fractional \
+                     digits within the i32 unit range, got {value:?}"
+                ),
+            }
+        })
+    }
+}
+
+impl ToParamValue for ExactMilCoord {
+    fn to_param_value(&self) -> String {
+        let units = i64::from(self.0.to_internal());
+        let sign = if units < 0 { "-" } else { "" };
+        let magnitude = units.abs();
+        let int_part = magnitude / UNITS_PER_MIL;
+        let frac_part = magnitude % UNITS_PER_MIL;
+        if frac_part == 0 {
+            format!("{sign}{int_part}mil")
+        } else {
+            let frac = format!("{frac_part:04}");
+            format!("{sign}{int_part}.{}mil", frac.trim_end_matches('0'))
+        }
+    }
+}
+
 // ── ClearanceMatrix ─────────────────────────────────────────────────────────
 // Sparse symmetric clearance matrix indexed by ObjectClearanceId pairs.
 // Serialized as semicolon-delimited "Type1-Type2:value" entries.
@@ -681,6 +755,62 @@ impl ToParamValue for SheetSymbolType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_mil_coord_parses_corpus_forms_exactly() {
+        let cases = [
+            ("1901.8898mil", 19_018_898),
+            ("5836.89mil", 58_368_900),
+            ("0mil", 0),
+            ("19.685mil", 196_850),
+            ("-3mil", -30_000),
+            ("-0.0001mil", -1),
+            ("214748.3647mil", i32::MAX),
+            ("-214748.3648mil", i32::MIN),
+        ];
+        for (text, units) in cases {
+            let parsed = ExactMilCoord::from_param_value("VX0", text).unwrap();
+            assert_eq!(parsed.0.to_internal(), units, "{text}");
+        }
+    }
+
+    #[test]
+    fn exact_mil_coord_rejects_everything_else() {
+        for text in [
+            "1901",
+            "1901.8898",
+            "1901.88981mil",
+            "214748.3648mil",
+            "1.mil",
+            ".5mil",
+            "mil",
+            "1,5mil",
+            " 1mil",
+            "1e3mil",
+            "1901.8898mm",
+        ] {
+            let err = ExactMilCoord::from_param_value("VX0", text).unwrap_err();
+            assert!(err.to_string().contains("VX0"), "{text}: {err}");
+        }
+    }
+
+    #[test]
+    fn exact_mil_coord_writes_altium_form() {
+        for (units, text) in [
+            (19_018_898, "1901.8898mil"),
+            (58_368_900, "5836.89mil"),
+            (0, "0mil"),
+            (-30_000, "-3mil"),
+            (-1, "-0.0001mil"),
+        ] {
+            assert_eq!(
+                ExactMilCoord(Coord::from_internal(units)).to_param_value(),
+                text
+            );
+            let back = ExactMilCoord::from_param_value("VX0", text).unwrap();
+            assert_eq!(back.0.to_internal(), units);
+        }
+    }
 
     #[test]
     fn sch_angle_rejects_non_finite_values_at_the_parse_boundary() {

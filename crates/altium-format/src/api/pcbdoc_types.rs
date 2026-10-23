@@ -8,7 +8,7 @@
 //! resolved net names and component designators. Indices are resolved to human-
 //! readable strings during the `board()` conversion.
 
-use super::pcb_common::PadStack;
+use super::pcb_common::{PadStack, PcbContour};
 use altium_format_types::color::Color;
 use altium_format_types::common::Unit;
 use altium_format_types::coord::{Coord, CoordPoint};
@@ -18,7 +18,7 @@ use altium_format_types::pcb::{
 };
 use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, PadShape, PadStackMode, PlaneConnectionStyle,
-    RegionKind, RuleKind,
+    PolyHatchStyle, PolygonType, RegionKind, RuleKind,
 };
 use altium_format_types::{
     ComponentPlacementType, ConfinementStyle, DielectricType, LayerStackStyle, NetScope,
@@ -216,19 +216,101 @@ pub struct PcbDocComponent {
     pub parameters: Vec<(String, String)>,
 }
 
-/// A copper polygon pour.
+/// A copper polygon pour (one Polygons6 record).
+///
+/// Every key of the record is parsed into a typed field; an unknown key, a
+/// malformed value or an incomplete vertex is an error from
+/// [`PcbDoc::board()`](crate::PcbDoc::board), never a silently shorter outline.
+/// Fields marked "absent on split planes" are `None` when the record does not
+/// store the key (Altium omits the pour settings for split-plane polygons).
 #[derive(Debug, Clone)]
 pub struct Polygon {
     pub id: String,
+    /// Polygon name (`NAME`, stored as comma-separated UTF-16 code units and
+    /// decoded here). Empty when the record has no name.
     pub name: String,
     pub net: Option<String>,
     pub layer: LayerRef,
+    /// `CONNECTSTYLE`; Polygons6 records in current files do not store it (the
+    /// connect style comes from the polygon-connect rule), so this is the
+    /// default `Relief` unless the key is present.
     pub connect_style: PlaneConnectionStyle,
+    /// Pour order (`POURINDEX`); 0 when the record does not store one.
     pub pour_order: i32,
+    /// Outline vertices without arc data: `contour.to_points()`.
     pub vertices: Vec<CoordPoint>,
+    /// `RELIEFCONDUCTORWIDTH`, default 10 mil when absent (as for `connect_style`).
     pub relief_conductor_width: Coord,
+    /// `RELIEFENTRIES`, default 4 when absent.
     pub relief_entries: i32,
+    /// `RELIEFAIRGAP`, default 10 mil when absent.
     pub relief_air_gap: Coord,
+
+    /// Outline with arc segments (`KINDn`, `VXn`, `VYn`, `CXn`, `CYn`, `Rn`,
+    /// `SAn`, `EAn`), in stored order; the last vertex repeats the first.
+    pub contour: PcbContour,
+    /// `POLYGONTYPE`: `Polygon` (signal-layer pour) or `Split Plane`.
+    pub polygon_type: PolygonType,
+    /// `HATCHSTYLE` (absent on split planes).
+    pub hatch_style: Option<PolyHatchStyle>,
+    /// Hatch grid size, `GRIDSIZE` (absent on split planes).
+    pub grid_size: Option<Coord>,
+    /// Hatch track width, `TRACKWIDTH` (absent on split planes).
+    pub track_width: Option<Coord>,
+    /// `MINPRIMLENGTH` (absent on split planes).
+    pub min_prim_length: Option<Coord>,
+    /// Arc approximation, `ARCRESOLUTION` (absent on split planes).
+    pub arc_approximation: Option<Coord>,
+    /// Remove dead copper, `REMOVEDEAD` (absent on split planes).
+    pub remove_dead: Option<bool>,
+    /// `POUROVER` (absent on split planes).
+    pub pour_over: Option<bool>,
+    /// `POUROVERSTYLE`, stored as an integer (0, 1 and 2 seen in files; Altium's
+    /// pour-over modes). Absent on split planes.
+    pub pour_over_style: Option<u8>,
+    /// `USEOCTAGONS` (absent on split planes).
+    pub use_octagons: Option<bool>,
+    /// `REMOVEISLANDSBYAREA` (absent on split planes).
+    pub remove_islands_by_area: Option<bool>,
+    /// `AREATHRESHOLD`: island area threshold in square internal units
+    /// (absent on split planes).
+    pub area_threshold: Option<f64>,
+    /// `REMOVENECKS` (absent on split planes).
+    pub remove_necks: Option<bool>,
+    /// `NECKWIDTHTHRESHOLD` (absent on split planes).
+    pub neck_width_threshold: Option<Coord>,
+    /// `NECKWIDTHFROMRULE` (optional).
+    pub neck_width_from_rule: Option<bool>,
+    /// `SHELVED` (absent on split planes).
+    pub shelved: Option<bool>,
+    /// Layer restored when unshelving, `RESTORELAYER`; `None` for `UNKNOWN` or absent.
+    pub restore_layer: Option<LayerRef>,
+    /// Net name restored when unshelving, `RESTORENET` (absent on split planes).
+    pub restore_net: Option<String>,
+    /// `IGNOREVIOLATIONS` (absent on split planes).
+    pub ignore_violations: Option<bool>,
+    /// `AUTONAME` (optional).
+    pub auto_name: Option<bool>,
+    /// `OPTIMALVOIDROTATION` (optional).
+    pub optimal_void_rotation: Option<bool>,
+    /// `OBEYPOLYGONCUTOUT` (optional).
+    pub obey_polygon_cutout: Option<bool>,
+    /// `COPPERINVALIDATE` (optional).
+    pub copper_invalidate: Option<bool>,
+    /// `SELECTION`.
+    pub selected: bool,
+    /// `LOCKED`.
+    pub locked: bool,
+    /// `PRIMITIVELOCK`.
+    pub primitive_lock: bool,
+    /// `POLYGONOUTLINE`.
+    pub polygon_outline: bool,
+    /// `USERROUTED`.
+    pub user_routed: bool,
+    /// `KEEPOUT`.
+    pub keepout: bool,
+    /// `UNIONINDEX`.
+    pub union_index: i32,
 }
 
 /// A net/component/layer class.

@@ -11,14 +11,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
     BarcodeRenderMode, DaisyChainStyle, LayerRef, MaskExpansionState, PadStackMode, PcbFlags,
-    PlaneConnectionStyle, TCacheState, TextKind, V6Layer,
+    PlaneConnectionStyle, PolySegmentKind, PolygonType, TCacheState, TextKind, V6Layer,
 };
 use altium_format_types::{BarcodeKind, PcbObjectId};
 
-use crate::Result;
+use crate::api::pcb_common::{ContourSegment, PcbContour};
+use crate::api::pcbdoc_read::{
+    hatch_style_to_param_value, layer_to_param_value, polygon_type_to_param_value,
+};
 use crate::api::pcbdoc_types::*;
 use crate::param_collection::ParameterCollection;
-use crate::param_value::{MilCoord, ToParamValue};
+use crate::param_value::{ExactMilCoord, MilCoord, ToParamValue};
 use crate::pcbdoc::primitives::{
     ParsedPrimitiveRecord, PcbArc, PcbFill, PcbPrimitive, PcbText, PcbTrack,
 };
@@ -31,9 +34,11 @@ use crate::pcbdoc::{
     BinarySectionData, ParamSectionData, PcbDoc, PcbDocSection, PrimitiveParametersSectionData,
     PrimitiveSectionData, WideStringsSectionData,
 };
+use crate::pcblib::wide_strings::encode_text_for_wide_strings;
 use crate::pcblib::{
     Contour, PcbComponentBody, PcbPad, PcbPadCache, PcbPrimitiveCommon, PcbRegion, PcbVia,
 };
+use crate::{Result, ResultExt};
 
 // ── Write context ──────────────────────────────────────────────────────────
 
@@ -146,7 +151,7 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
     replace_param_section(
         doc,
         ParamSectionKind::Polygons6,
-        build_polygon_records(&board.polygons, &ctx),
+        build_polygon_records(&board.polygons, &ctx)?,
     );
     let enriched_classes = ensure_standard_classes(board);
     merge_param_section(
@@ -344,36 +349,190 @@ fn generate_unique_id() -> String {
     id
 }
 
-fn build_polygon_records(polygons: &[Polygon], ctx: &WriteContext) -> Vec<StandardParamRecord> {
+/// Build Polygons6 records in Altium's stored form, the inverse of
+/// `pcbdoc_read::convert_polygon`: every typed field is written back, `None`
+/// fields are omitted.
+///
+/// The outline comes from `contour`; a polygon built by hand with only
+/// `vertices` (empty `contour`) is written with line edges through them.
+fn build_polygon_records(
+    polygons: &[Polygon],
+    ctx: &WriteContext,
+) -> Result<Vec<StandardParamRecord>> {
     polygons
         .iter()
-        .map(|poly| {
-            let mut params = ParameterCollection::new();
-            params.insert("NAME", poly.name.clone());
-            params.insert(
-                "NET",
-                ctx.resolve_net_param_index(&poly.net).to_param_value(),
-            );
-            let layer_v6 = poly.layer.to_v6().unwrap_or(V6Layer::TopLayer);
-            params.insert("LAYER", (layer_v6 as u8).to_param_value());
-            params.insert("CONNECTSTYLE", (poly.connect_style as u8).to_param_value());
-            params.insert("POURORDER", poly.pour_order.to_param_value());
-            params.insert(
-                "RELIEFCONDUCTORWIDTH",
-                poly.relief_conductor_width.to_param_value(),
-            );
-            params.insert("RELIEFENTRIES", poly.relief_entries.to_param_value());
-            params.insert("RELIEFAIRGAP", poly.relief_air_gap.to_param_value());
-
-            // Vertices are 0-indexed: VX0, VY0, VX1, VY1, ...
-            for (i, vertex) in poly.vertices.iter().enumerate() {
-                params.insert(&format!("VX{i}"), vertex.x.to_param_value());
-                params.insert(&format!("VY{i}"), vertex.y.to_param_value());
-            }
-
-            StandardParamRecord { params }
+        .enumerate()
+        .map(|(idx, poly)| {
+            build_polygon_record(poly, ctx).with_context(|| format!("Polygons6 record #{idx}"))
         })
         .collect()
+}
+
+fn build_polygon_record(poly: &Polygon, ctx: &WriteContext) -> Result<StandardParamRecord> {
+    let mut params = ParameterCollection::new();
+    let flag = |params: &mut ParameterCollection, key: &str, v: Option<bool>| {
+        if let Some(v) = v {
+            params.insert(key, v.to_param_value());
+        }
+    };
+    let mil = |params: &mut ParameterCollection, key: &str, v: Option<Coord>| {
+        if let Some(v) = v {
+            params.insert(key, ExactMilCoord(v).to_param_value());
+        }
+    };
+    params.insert("SELECTION", poly.selected.to_param_value());
+    params.insert("LAYER", layer_to_param_value("LAYER", &poly.layer)?);
+    params.insert("LOCKED", poly.locked.to_param_value());
+    params.insert("POLYGONOUTLINE", poly.polygon_outline.to_param_value());
+    params.insert("USERROUTED", poly.user_routed.to_param_value());
+    params.insert("KEEPOUT", poly.keepout.to_param_value());
+    params.insert("UNIONINDEX", poly.union_index.to_param_value());
+    params.insert("PRIMITIVELOCK", poly.primitive_lock.to_param_value());
+    params.insert(
+        "POLYGONTYPE",
+        polygon_type_to_param_value(poly.polygon_type)?.to_owned(),
+    );
+    flag(&mut params, "POUROVER", poly.pour_over);
+    flag(&mut params, "REMOVEDEAD", poly.remove_dead);
+    mil(&mut params, "GRIDSIZE", poly.grid_size);
+    mil(&mut params, "TRACKWIDTH", poly.track_width);
+    if let Some(h) = poly.hatch_style {
+        params.insert("HATCHSTYLE", hatch_style_to_param_value(h)?.to_owned());
+    }
+    flag(&mut params, "USEOCTAGONS", poly.use_octagons);
+    mil(&mut params, "MINPRIMLENGTH", poly.min_prim_length);
+
+    let contour = if poly.contour.segments.is_empty() {
+        PcbContour {
+            segments: poly
+                .vertices
+                .iter()
+                .map(|&endpoint| ContourSegment::Line { endpoint })
+                .collect(),
+        }
+    } else {
+        poly.contour.clone()
+    };
+    insert_param_contour(&mut params, &contour);
+
+    flag(&mut params, "SHELVED", poly.shelved);
+    if let Some(layer) = &poly.restore_layer {
+        params.insert("RESTORELAYER", layer_to_param_value("RESTORELAYER", layer)?);
+    } else if poly.shelved.is_some() {
+        params.insert("RESTORELAYER", "UNKNOWN".to_owned());
+    }
+    if let Some(net) = &poly.restore_net {
+        params.insert("RESTORENET", net.clone());
+    }
+    flag(
+        &mut params,
+        "REMOVEISLANDSBYAREA",
+        poly.remove_islands_by_area,
+    );
+    flag(&mut params, "REMOVENECKS", poly.remove_necks);
+    if let Some(a) = poly.area_threshold {
+        params.insert("AREATHRESHOLD", a.to_param_value());
+    }
+    mil(&mut params, "ARCRESOLUTION", poly.arc_approximation);
+    mil(&mut params, "NECKWIDTHTHRESHOLD", poly.neck_width_threshold);
+    flag(&mut params, "NECKWIDTHFROMRULE", poly.neck_width_from_rule);
+    if let Some(s) = poly.pour_over_style {
+        params.insert("POUROVERSTYLE", s.to_param_value());
+    }
+    if !poly.name.is_empty() {
+        params.insert("NAME", encode_text_for_wide_strings(&poly.name));
+    }
+    if poly.pour_order != 0 || poly.polygon_type == PolygonType::SignalLayer {
+        params.insert("POURINDEX", poly.pour_order.to_param_value());
+    }
+    flag(&mut params, "IGNOREVIOLATIONS", poly.ignore_violations);
+    flag(&mut params, "AUTONAME", poly.auto_name);
+    flag(
+        &mut params,
+        "OPTIMALVOIDROTATION",
+        poly.optimal_void_rotation,
+    );
+    flag(&mut params, "OBEYPOLYGONCUTOUT", poly.obey_polygon_cutout);
+    flag(&mut params, "COPPERINVALIDATE", poly.copper_invalidate);
+    if poly.connect_style != PlaneConnectionStyle::Relief {
+        params.insert("CONNECTSTYLE", (poly.connect_style as u8).to_param_value());
+    }
+    if poly.relief_conductor_width != Coord::from_internal(254_000) {
+        params.insert(
+            "RELIEFCONDUCTORWIDTH",
+            poly.relief_conductor_width.to_param_value(),
+        );
+    }
+    if poly.relief_entries != 4 {
+        params.insert("RELIEFENTRIES", poly.relief_entries.to_param_value());
+    }
+    if poly.relief_air_gap != Coord::from_internal(254_000) {
+        params.insert("RELIEFAIRGAP", poly.relief_air_gap.to_param_value());
+    }
+    let net = ctx.resolve_net_param_index(&poly.net);
+    if net >= 0 {
+        params.insert("NET", net.to_param_value());
+    }
+    Ok(StandardParamRecord { params })
+}
+
+/// Write a contour as indexed parameters (`KINDn`, `VXn`, `VYn`, `CXn`, `CYn`,
+/// `SAn`, `EAn`, `Rn`), the inverse of `pcbdoc_read::remove_param_contour`.
+/// Line edges get zero arc fields.
+pub(crate) fn insert_param_contour(params: &mut ParameterCollection, contour: &PcbContour) {
+    const ZERO_ANGLE: &str = " 0.00000000000000E+0000";
+    for (i, seg) in contour.segments.iter().enumerate() {
+        let (kind, endpoint, arc) = match seg {
+            ContourSegment::Line { endpoint } => (PolySegmentKind::Line, endpoint, None),
+            ContourSegment::Arc {
+                endpoint,
+                center,
+                radius,
+                start_angle,
+                end_angle,
+            } => (
+                PolySegmentKind::Arc,
+                endpoint,
+                Some((center, radius, start_angle, end_angle)),
+            ),
+        };
+        params.insert(&format!("KIND{i}"), (kind as u8).to_param_value());
+        params.insert(
+            &format!("VX{i}"),
+            ExactMilCoord(endpoint.x).to_param_value(),
+        );
+        params.insert(
+            &format!("VY{i}"),
+            ExactMilCoord(endpoint.y).to_param_value(),
+        );
+        match arc {
+            Some((center, radius, sa, ea)) => {
+                params.insert(&format!("CX{i}"), ExactMilCoord(center.x).to_param_value());
+                params.insert(&format!("CY{i}"), ExactMilCoord(center.y).to_param_value());
+                params.insert(&format!("SA{i}"), format_altium_angle(*sa));
+                params.insert(&format!("EA{i}"), format_altium_angle(*ea));
+                params.insert(&format!("R{i}"), ExactMilCoord(*radius).to_param_value());
+            }
+            None => {
+                params.insert(&format!("CX{i}"), "0mil".to_owned());
+                params.insert(&format!("CY{i}"), "0mil".to_owned());
+                params.insert(&format!("SA{i}"), ZERO_ANGLE.to_owned());
+                params.insert(&format!("EA{i}"), ZERO_ANGLE.to_owned());
+                params.insert(&format!("R{i}"), "0mil".to_owned());
+            }
+        }
+    }
+}
+
+/// Altium's angle form in contour records: ` d.ddddddddddddddE+dddd`
+/// (leading space for non-negative values, 14 fractional digits, 4-digit exponent).
+fn format_altium_angle(value: f64) -> String {
+    let s = format!("{value:.14E}");
+    let (mantissa, exp) = s.split_once('E').expect("{:E} output has an exponent");
+    let exp: i32 = exp.parse().expect("{:E} exponent is an integer");
+    let sign = if exp < 0 { '-' } else { '+' };
+    let lead = if value.is_sign_negative() { "" } else { " " };
+    format!("{lead}{mantissa}E{sign}{:04}", exp.abs())
 }
 
 fn ensure_standard_classes(board: &PcbDocBoard) -> Vec<NetClass> {

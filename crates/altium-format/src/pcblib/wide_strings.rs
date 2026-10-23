@@ -88,7 +88,7 @@ pub(crate) fn parse_pcblib_wide_strings(data: &[u8]) -> Result<HashMap<usize, St
 /// Decodes a comma-separated decimal UTF-16 code-unit list to a string.
 ///
 /// An empty value or a value with only empty tokens represents an empty string.
-fn decode_encoded_text(key: &str, value: &str) -> Result<String> {
+pub(crate) fn decode_encoded_text(key: &str, value: &str) -> Result<String> {
     let code_units: Vec<u16> = value
         .split(',')
         .filter(|token| !token.trim().is_empty())
@@ -114,7 +114,7 @@ fn decode_encoded_text(key: &str, value: &str) -> Result<String> {
 }
 
 /// Encodes a UTF-8 string as comma-separated decimal UTF-16 code units.
-fn encode_text_for_wide_strings(text: &str) -> String {
+pub(crate) fn encode_text_for_wide_strings(text: &str) -> String {
     text.encode_utf16()
         .map(|code_unit| code_unit.to_string())
         .collect::<Vec<_>>()

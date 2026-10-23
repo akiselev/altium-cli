@@ -14,12 +14,23 @@ use altium_format_types::pcb::{HoleType, PadShape};
 /// A contour (closed path) preserving arc segments.
 ///
 /// Used by both PcbDoc board geometry and PcbLib region/component body outlines.
+///
+/// Segment `i` stores vertex `i` of the path (in the field named `endpoint`) and
+/// the kind of the edge from vertex `i` to vertex `i + 1`. For an
+/// [`ContourSegment::Arc`], that edge is the arc around `center` with `radius`,
+/// running counter-clockwise from `start_angle` to `end_angle` (degrees); either
+/// end of the edge can be the one at `start_angle`, so the traversal direction
+/// follows from which vertex lies there. This is Altium's `TPolySegment` layout,
+/// shared by ShapeBasedRegions6, Polygons6 and the Board6 outline. Contours read
+/// from those records repeat the first vertex as the last one, as stored.
 #[derive(Debug, Clone)]
 pub struct PcbContour {
     pub segments: Vec<ContourSegment>,
 }
 
 /// A segment in a contour — either a line or an arc.
+///
+/// See [`PcbContour`] for what `endpoint` and the arc fields describe.
 #[derive(Debug, Clone)]
 pub enum ContourSegment {
     Line {
