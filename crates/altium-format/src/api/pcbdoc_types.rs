@@ -773,7 +773,7 @@ pub struct Text {
     pub is_designator: bool,
     /// Stroke, TrueType or barcode text (`FONTTYPE`).
     pub font_kind: TextKind,
-    /// Stroke font (`FONTID`: 0 default, 1 sans serif, 2 serif, as stored).
+    /// Stroke font id as stored (corpus: 1 default, 2 sans serif, 3 serif).
     pub stroke_font_id: u16,
     pub bold: bool,
     pub italic: bool,

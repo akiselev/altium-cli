@@ -563,7 +563,8 @@ fn primitive_to_text(prim: &PcbDocPrimitiveSpec) -> Result<Option<api::PcbDocTex
         is_designator: prop_bool(p, "is_designator").unwrap_or(false),
         // The spec has no text style syntax: the writer's previous defaults.
         font_kind: altium_format_types::pcb::TextKind::StrokeFont,
-        stroke_font_id: 0,
+        // Corpus stroke font ids are 1-3 (1 = default).
+        stroke_font_id: 1,
         bold: false,
         italic: false,
         inverted: false,
@@ -1809,16 +1810,6 @@ fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Result<api::PcbGraphic, SpecE
             color: altium_format_types::color::Color::default(),
             font_name: String::new(),
             is_mirrored: false,
-            font_kind: altium_format_types::pcb::TextKind::StrokeFont,
-            font_id: 0,
-            bold: false,
-            italic: false,
-            inverted: false,
-            inverted_border: Coord::ZERO,
-            use_inverted_rectangle: false,
-            inverted_rect_width: Coord::ZERO,
-            inverted_rect_height: Coord::ZERO,
-            justification: None,
         }),
         PcbGraphicType::Via => api::PcbGraphic::Via(api::ViaGraphic {
             unique_id: Some(spec.unique_id.clone()),

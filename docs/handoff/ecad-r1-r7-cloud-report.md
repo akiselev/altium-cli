@@ -31,7 +31,7 @@ Date: 2026-10-23. Lane brief: `docs/handoff/ecad-r1-r7-cloud-lane.md`. Previous 
 | `084b579`, `04acd51` | R17 clearance matrix; review fixes (in the R13 commit) |
 | `04acd51`, `eb632c4` | R13 plane nets plus the Board6 write fix; review fixes |
 | `9445d1a`, `eb632c4` | R15 region indices; review fixes |
-| R14 commit (see `git log`) | R14 text style, component visibility, Components6 default keys, R12 PcbLib kind 5 fix |
+| `21ac553`, next commit | R14 text style, component visibility, Components6 default keys, R12 PcbLib kind 5 fix; review fixes (PcbLib text style withdrawn) |
 
 ## State per request
 
@@ -57,7 +57,7 @@ are listed below as open.
 | R17 clearance matrix | Done for Clearance and BoardOutlineClearance; rules stay read-only |
 | R13 plane net | Done (`plane_net`, plus `plane_multiple_nets` for split planes), see Q13 |
 | R15 region kind/indices | Done; PADINDEX exposed as stored, its meaning is open, see Q14 |
-| R14 text style, hidden | Done for PcbDoc `Text` and PcbLib `TextGraphic`; `hidden` derived from the component |
+| R14 text style, hidden | Done for PcbDoc `Text`; `hidden` derived from the component. PcbLib `TextGraphic`: not done, its parser mislabels the text fields, see Q16 |
 
 ### Public API added
 
@@ -167,13 +167,13 @@ pub pad_index: Option<u32>,         // PADINDEX as stored (-1 → None); NOT an 
 pub subpoly_index: Option<u32>,     // SUBPOLYINDEX (-1 → None); Some on every pour region
 // OBJECTKIND: `board_region` (existing) must agree with it; checked, not a new field
 
-// R14: Text (PcbDoc) and TextGraphic (PcbLib)
+// R14: Text (PcbDoc only)
 pub font_kind: TextKind, pub bold: bool, pub italic: bool, pub inverted: bool,
 pub inverted_border: Coord, pub use_inverted_rectangle: bool,
 pub inverted_rect_width: Coord, pub inverted_rect_height: Coord,
-pub stroke_font_id: u16,            // Text; TextGraphic has `font_id: i32` as stored
-pub justification: TextAutoposition, // TextGraphic: Option<TextAutoposition>
-pub hidden: bool,                   // Text only; derived, must agree with the component
+pub stroke_font_id: u16,            // as stored; corpus 1 default, 2 sans serif, 3 serif
+pub justification: TextAutoposition, // TEXTJUSTIFICATION
+pub hidden: bool,                   // derived, must agree with the (resolved) component
 // R14: PcbDocComponent
 pub designator_visible: bool,       // NAMEON
 pub comment_visible: bool,          // COMMENTON
@@ -198,6 +198,8 @@ Departures from the request texts, and why:
   `PcbViolation` variant); it needs your approval like any new domain type (Q1).
 - **R14.** The designator/comment hidden flag lives on the component (NAMEON/COMMENTON) in the
   file; `Text::hidden` is a derived copy and the writer refuses a disagreeing one.
+  `stroke_font_id` is a raw `u16` as stored; a domain type would need your approval (Q1). PcbLib
+  `TextGraphic` gets no style fields (Q16).
 
 ### Evidence and corpus counts
 
@@ -229,7 +231,7 @@ Departures from the request texts, and why:
 | R17 | 145 clearance rules (65 with a matrix, 944 entries) and 46 board-outline rules (18, 183 entries), matching a Python scan of Rules6; every pair lower-id first, none repeated (`corpus_r17_clearance_matrix`). |
 | R13 | 33 stack planes on readable boards, 17 with a net, 7 split (`(Multiple Nets)`); mini-itx `P3=GND` on "Ground Plane 2 (GND)", smart-mcu `+3.3V` on "3.3V_layer". Unchanged keys stay byte for byte, an edit is stored in place, an unknown net and a stack edit are refused (`corpus_r13_plane_nets`). |
 | R15 | 79 board regions (OBJECTKIND=BoardRegion, exactly the BoardRegions records), 43,631 pour regions all with SUBPOLYINDEX, 25 regions with PADINDEX (no pad lies inside its region, so it is not an index into `pads`). Fields unchanged by `update_board`, edits stored (`corpus_r15_region_indices`). |
-| R14 | PcbDoc: 29,609 texts on readable boards, 16,442 hidden by their component, 6,524 TrueType, 259 inverted. PcbLib: 5,104 texts, 2,788 TrueType, 200 bold, 145 inverted. Style and visibility unchanged by `update_board`, Components6 default-only keys byte for byte, a visibility/bold/justification edit stored, a disagreeing `hidden` refused; PcbLib text style unchanged by `update_footprint`. |
+| R14 | PcbDoc: 29,609 texts on readable boards, 16,442 hidden by their component, 6,524 TrueType, 259 inverted. Style and visibility unchanged by `update_board`, Components6 default-only keys byte for byte, a visibility/bold/justification edit stored, a disagreeing `hidden` refused (`corpus_r14_text_style`). |
 
 ### Defects found and fixed on the way
 
@@ -292,14 +294,15 @@ the corpus tests above.
     ran from a worktree at `b327bde` because R12 work had started in the main tree.
   - R12–R17 names: `corpus_r12_component_kinds`, `corpus_r16_violations`,
     `corpus_r17_clearance_matrix`, `corpus_r13_plane_nets`, `corpus_r15_region_indices`,
-    `corpus_r14_text_style`, `corpus_r14_pcblib_text_style`. Each passed on its final code.
+    `corpus_r14_text_style`. Each passed on its final code. (`corpus_r14_pcblib_text_style` was
+    removed with the PcbLib style fields.)
   - Because the Board6, region, Components6 and merge changes touch earlier items, these were
     re-run after them and passed: `corpus_r1_board_outline`, `corpus_r3_polygon_membership`,
     `corpus_r4_identity`, `corpus_r5_pcblib_pad_modes`, `corpus_r6_layer_identity`,
-    `corpus_r7_region_contours`, `corpus_r8_designators`, `corpus_r12_component_kinds`. Not re-run
-    after the R13–R14 changes: `corpus_board_reads`, `corpus_r2_polygons`, `corpus_r5_pad_modes`,
-    `corpus_r9_display_mode`, `corpus_r10_unique_ids_reproducible` (the last two are SchDoc and
-    untouched; the first three read paths only gained checks that the runs above also exercise).
+    `corpus_r7_region_contours`, `corpus_r8_designators`, `corpus_r12_component_kinds`,
+    `corpus_board_reads` (79/94, same set), `corpus_r2_polygons`, `corpus_r5_pad_modes` (its pad
+    insertion now clears the stored violations, as R16 requires). Not re-run: the SchDoc tests
+    `corpus_r9_display_mode` and `corpus_r10_unique_ids_reproducible` (code untouched since).
   - Opt-level 2 was used because the debug build takes 440 s per test.
   - Temporary survey tests were run and then deleted before commit: V6/V7 pairs, region forms,
     pad cache states, pad separate expansions, designator texts and SchDoc display modes.
@@ -333,7 +336,7 @@ the corpus tests above.
 | R17 | **incomplete** (types not re-exported; outline rule's matrix hidden; empty entries skipped) | fixed all three, plus the R16 types' re-export. Open: `ClearanceObj_Sheet` (two files that do not open), spec dump does not emit the matrix |
 | R13 | **incomplete** (CR is a block separator; `set` moved keys; stack edits lost) | fixed: in-place replacement keeping the CR, stack edits refused, no `(No Net)` added, stored grid format. Open: Board6 block framing not modelled (STATUS), SIGNALLAYERCOUNT reads 2 when absent (Q13) |
 | R15 | **incomplete** (Regions6 copy stale; pour region without index; key label) | fixed the last two. Open: Regions6 copy (Q4) |
-| R14 | see the R14 commit | review ran after the commit; verdict and fixes in the commit that follows it, if any |
+| R14 | **incomplete** (PcbLib text fields read the wrong bytes; PcbLib writer drops text fields; `hidden` checked on the unresolved component) | PcbDoc mapping confirmed byte for byte. Fixed: PcbLib style withdrawn from `TextGraphic` (wrong data is worse than none), `hidden` checked on the resolved component with the right key, stroke font default 1 (corpus 1-3). Open: Q16 |
 
 ## API breaks
 
@@ -364,11 +367,11 @@ the corpus tests above.
   written Valid (a rule value).
 - **Values.** `LayerRef::is_signal`, `is_copper` and the other `is_*` methods now see full V7
   ids. No caller in the workspace uses them on a `LayerRef`.
-- **R12–R17 struct literals.** PcbDocBoard (violations), StackLayer, Region, Text, TextGraphic,
+- **R12–R17 struct literals.** PcbDocBoard (violations), StackLayer, Region, Text,
   PcbDocComponent and the `RuleParams::Clearance` / `BoardOutlineClearance` variants gained fields;
   filled in altium-format-spec (`executor.rs`, `dump.rs`, `reconciler.rs`) and altium-cli
-  (`main.rs`, which now copies footprint text style onto the board). `LayerStack`/`StackLayer`
-  now derive `PartialEq`.
+  (`main.rs`). New texts from the spec executor and from footprint placement use stroke font id 1
+  (was 0, a value the corpus never stores). `LayerStack`/`StackLayer` now derive `PartialEq`.
 - **R12–R17 stricter behaviour.** Errors now: an unknown violation object kind or out-of-range
   rule index; a repeated, empty or `+`-signed clearance matrix entry; an empty plane net or one
   that is not a board net; a layer stack edit in `update_board`; an edited stored violation list;
@@ -457,6 +460,14 @@ the corpus tests above.
     kinds, and removed members' `Mk` keys stay. Recommendation: fix these three next; they are the
     same class as the Board6 and Components6 fixes made here.
 
+16. **R14 PcbLib text layout.** The review compared the raw text records (5,000 PcbLib, 39,000
+    PcbDoc): the PcbLib parser reads byte 25 (the stroke font id, values 1-3) as `text_kind`,
+    byte 43 (the kind) as `is_italic`, ignores byte 45 (italic, written as 0), and reads bytes
+    132-136 (justification, then offset width) as one `font_id`; `update_footprint` writes texts
+    with default style, barcode, multiline and advance fields. Recommendation: relabel the PcbLib
+    text layout to the PcbDoc one in altium-format, add a positional/unique-id preserve to the
+    PcbLib writer, then expose the same style on `TextGraphic`. Also: the PcbDoc parser reads the
+    barcode font name at byte 160; the corpus has it at 161.
 
 ## What ecadabra's importer must change (per field)
 
@@ -500,8 +511,17 @@ the corpus tests above.
   come from its split-plane polygons.
 - **R15.** Use `subpoly_index` to group pour fill regions; do not use `pad_index` until Q14 is
   answered.
-- **R14.** Map the text style fields; skip or mark `hidden` texts; read visibility from
-  `PcbDocComponent::designator_visible` / `comment_visible`.
+- **R14.** Map the PcbDoc text style fields; skip or mark `hidden` texts; read visibility from
+  `PcbDocComponent::designator_visible` / `comment_visible`. Do not take style from PcbLib
+  footprints yet (Q16).
+
+## Handoff
+
+All queued requests (R1–R17) are committed and pushed. The session stopped here because its
+context was near the lane's limit. Next work, in order: Q16 (PcbLib text layout, then R14 for
+`TextGraphic`), Q15 (DifferentialPairs6, Nets6 and Classes6 write defects), Q13 (Board6 block
+framing and signal layer count), Q4 (body/text section routing, PcbLib layer fallback), then the
+dev-machine checks in Q2, Q3, Q11 and Q14.
 
 ## Setup as it ran
 

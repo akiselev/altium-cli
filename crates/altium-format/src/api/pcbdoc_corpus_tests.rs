@@ -618,6 +618,10 @@ fn corpus_r5_pad_modes() {
             let mut new_pad = first;
             new_pad.unique_id = None;
             inserted.pads.insert(0, new_pad);
+            // Stored violations index pads; with a pad inserted they must be
+            // cleared (R16).
+            inserted.violations.clear();
+            inserted.waived_violations.clear();
             doc.update_board(&inserted)
                 .unwrap_or_else(|e| panic!("{name}: update_board (inserted): {e}"));
             assert_eq!(

@@ -634,10 +634,13 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   `inverted`, `inverted_border`, `use_inverted_rectangle`, `inverted_rect_width/height`,
   `justification` (`TextAutoposition`) and a derived `hidden` (designator/comment text of a
   component with NAMEON/COMMENTON false, now `PcbDocComponent::designator_visible` /
-  `comment_visible`). PcbLib `TextGraphic` carries the same style (font id as stored; its meaning
-  next to PcbDoc's stroke font id is unconfirmed; justification `Option`). Both writers store them
-  (before: PcbDoc preserved them by position, PcbLib wrote defaults, so `update_footprint`
-  dropped bold, italic, TrueType and inverted settings). Components6 keys the API does not carry
+  `comment_visible`). The PcbDoc writer stores them (before: preserved by position).
+- Known defect (pre-existing): the PcbLib text parser mislabels its fields against the PcbDoc
+  layout (byte 25 is the stroke font id but read as `text_kind`; byte 43 is the kind but read as
+  `is_italic`; byte 45 `unknown_45` is italic; bytes 132-136 are justification + offset width but
+  read as `font_id`), and `update_footprint` writes texts with default style, barcode and
+  multiline fields. PcbLib `TextGraphic` therefore exposes no text style. The PcbDoc parser reads
+  the barcode font name one byte early (160, corpus 161). Components6 keys the API does not carry
   (HEIGHT, COMMENTAUTOPOSITION, UNIONINDEX, CHANNELOFFSET, descriptions, …) are now written only
   for new components; before, every `update_board` overwrote them with defaults and reset NAMEON
   to TRUE and COMMENTON to FALSE.

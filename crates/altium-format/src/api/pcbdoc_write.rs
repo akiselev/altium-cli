@@ -366,17 +366,6 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
             ),
         });
     }
-    for (i, text) in board.texts.iter().enumerate() {
-        if text.hidden != super::pcbdoc_read::text_hidden_by_component(text, &board.components) {
-            return Err(crate::AltiumFormatError::InvalidParamValue {
-                key: "NAMEON".to_owned(),
-                detail: format!(
-                    "text #{i}: `hidden` disagrees with its component; set the component's \
-                     designator_visible / comment_visible instead"
-                ),
-            });
-        }
-    }
     let (keep_violations, keep_waived) = check_stored_violations(board, doc)?;
     super::pcbdoc_read::check_plane_nets(&board.settings.layer_stack, &board.nets)
         .context("layer stack")?;
@@ -398,6 +387,32 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
         }
     }
     let ctx = WriteContext::new(board);
+    // `hidden` is derived from the owning component (resolved as the writer
+    // resolves it: by index, else by designator); a disagreeing value is refused.
+    for (i, text) in board.texts.iter().enumerate() {
+        let owner = ctx
+            .resolve_component_index(&text.component, text.component_index)
+            .with_context(|| format!("text #{i}"))?;
+        let resolved = Text {
+            component_index: (owner != PRIMITIVE_INDEX_NONE).then_some(usize::from(owner)),
+            ..text.clone()
+        };
+        if text.hidden != super::pcbdoc_read::text_hidden_by_component(&resolved, &board.components)
+        {
+            return Err(crate::AltiumFormatError::InvalidParamValue {
+                key: if text.is_comment {
+                    "COMMENTON"
+                } else {
+                    "NAMEON"
+                }
+                .to_owned(),
+                detail: format!(
+                    "text #{i}: `hidden` disagrees with its component; set the component's \
+                     designator_visible / comment_visible instead"
+                ),
+            });
+        }
+    }
     attach_pad_unique_ids(doc).context("UniqueIDPrimitiveInformation")?;
 
     // ── Step 1: Rebuild WideStrings first (needed for text primitive indices) ──

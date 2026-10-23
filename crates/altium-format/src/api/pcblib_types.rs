@@ -11,7 +11,6 @@ use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
     LayerRef, MaskExpansionMode, PadShape, PadStackMode, PcbFlags, PlaneConnectionStyle, RegionKind,
 };
-use altium_format_types::pcb::{TextAutoposition, TextKind};
 
 // ── Footprint ────────────────────────────────────────────────────────────────
 
@@ -176,23 +175,6 @@ pub struct TextGraphic {
     pub color: Color,
     pub font_name: String,
     pub is_mirrored: bool,
-    /// Stroke, TrueType or barcode text.
-    pub font_kind: TextKind,
-    /// The text record's font id, as stored (whether it is the stroke font id
-    /// of PcbDoc texts is not confirmed).
-    pub font_id: i32,
-    pub bold: bool,
-    pub italic: bool,
-    pub inverted: bool,
-    /// Border width around inverted text.
-    pub inverted_border: Coord,
-    /// The inverted border is a fixed rectangle of the size below.
-    pub use_inverted_rectangle: bool,
-    pub inverted_rect_width: Coord,
-    pub inverted_rect_height: Coord,
-    /// Justification of text in its rectangle; `None` in records too old to
-    /// store it.
-    pub justification: Option<TextAutoposition>,
 }
 
 #[derive(Debug, Clone)]

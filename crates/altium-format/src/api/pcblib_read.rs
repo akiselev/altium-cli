@@ -154,16 +154,6 @@ fn text_from_internal(t: &PcbText) -> TextGraphic {
         color: Color::default(),
         font_name: t.font_name.clone(),
         is_mirrored: t.is_mirrored,
-        font_kind: t.text_kind,
-        font_id: t.font_id,
-        bold: t.is_bold,
-        italic: t.is_italic,
-        inverted: t.inverted,
-        inverted_border: t.inverted_tt_text_border,
-        use_inverted_rectangle: t.is_inverted_rect,
-        inverted_rect_width: t.ttf_text_width,
-        inverted_rect_height: t.ttf_text_height,
-        justification: t.ttf_inverted_justify,
     }
 }
 
@@ -212,7 +202,7 @@ fn body_from_internal(b: &PcbComponentBody) -> ComponentBodyGraphic {
 mod corpus_tests {
     use crate::pcblib::{PcbLib, PcbPrimitive};
     use altium_format_types::PcbObjectId;
-    use altium_format_types::pcb::{MaskExpansionMode, TCacheState, TextKind};
+    use altium_format_types::pcb::{MaskExpansionMode, TCacheState};
     use std::path::Path;
 
     /// Pad modes come from the cache states (no corpus pad has an
@@ -292,69 +282,5 @@ mod corpus_tests {
         assert_eq!(pads, 80_866);
         assert_eq!(solder_manual, 19_844);
         assert_eq!(paste_manual, 5_954);
-    }
-
-    /// R14: PcbLib text style (font kind and id, bold, italic, inverted
-    /// settings, justification) is read and survives `update_footprint`.
-    #[test]
-    fn corpus_r14_pcblib_text_style() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/pcblib");
-        let mut paths: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-            .map(|e| e.expect("dir entry").path())
-            .filter(|p| {
-                p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("pcblib"))
-            })
-            .collect();
-        paths.sort();
-        let style = |lib: &PcbLib| -> Vec<String> {
-            lib.footprints
-                .iter()
-                .flat_map(|fp| fp.primitives.iter())
-                .filter_map(|p| match p {
-                    PcbPrimitive::Text(t) => Some(format!(
-                        "{:?} {} {} {} {} {:?} {} {:?} {:?} {:?}",
-                        t.text_kind,
-                        t.font_id,
-                        t.is_bold,
-                        t.is_italic,
-                        t.inverted,
-                        t.inverted_tt_text_border,
-                        t.is_inverted_rect,
-                        t.ttf_text_width,
-                        t.ttf_text_height,
-                        t.ttf_inverted_justify
-                    )),
-                    _ => None,
-                })
-                .collect()
-        };
-        let (mut texts, mut truetype, mut bold, mut inverted) = (0, 0, 0, 0);
-        for path in &paths {
-            let mut lib = PcbLib::open(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-            let before = style(&lib);
-            let footprints = lib.footprints();
-            for t in footprints.iter().flat_map(|f| f.graphics.iter()) {
-                if let crate::api::PcbGraphic::Text(t) = t {
-                    texts += 1;
-                    truetype += usize::from(t.font_kind == TextKind::TrueTypeFont);
-                    bold += usize::from(t.bold);
-                    inverted += usize::from(t.inverted);
-                }
-            }
-            for fp in &footprints {
-                lib.update_footprint(fp)
-                    .unwrap_or_else(|e| panic!("{}: {}: {e}", path.display(), fp.display_name));
-            }
-            assert_eq!(
-                style(&lib),
-                before,
-                "{}: text style changed",
-                path.display()
-            );
-        }
-        eprintln!("{texts} texts, {truetype} TrueType, {bold} bold, {inverted} inverted");
-        assert!(texts > 0);
     }
 }
