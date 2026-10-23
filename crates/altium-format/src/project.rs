@@ -122,6 +122,26 @@ enum Section {
 /// Default INI content for a blank AD26 project (no document references).
 const BLANK_AD26_INI: &str = include_str!("blank_project_ad26.ini");
 
+/// Strictly decode a legacy code-page project file (see
+/// [`AltiumProject::open_with_code_page`]).
+fn decode_code_page(bytes: &[u8], code_page: &str) -> crate::Result<String> {
+    let error = |detail: String| crate::AltiumFormatError::InvalidParamValue {
+        key: "project encoding".to_owned(),
+        detail,
+    };
+    let encoding = encoding_rs::Encoding::for_label(code_page.as_bytes())
+        .ok_or_else(|| error(format!("unknown code page label {code_page:?}")))?;
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return Err(error(
+            "the file starts with a UTF-8 BOM; open it as UTF-8".to_owned(),
+        ));
+    }
+    encoding
+        .decode_without_bom_handling_and_without_replacement(bytes)
+        .map(std::borrow::Cow::into_owned)
+        .ok_or_else(|| error(format!("bytes invalid in code page {}", encoding.name())))
+}
+
 impl AltiumProject {
     /// Create a new blank project with Altium Designer 26 defaults.
     ///
@@ -140,15 +160,47 @@ impl AltiumProject {
             .unwrap_or("unnamed")
             .to_string();
 
-        let content = std::fs::read_to_string(path)
+        let bytes = std::fs::read(path)
             .map_err(crate::AltiumFormatError::Io)
             .with_context(|| format!("reading project file '{}'", path.display()))?;
+        let content = std::str::from_utf8(&bytes).map_err(|e| {
+            crate::AltiumFormatError::InvalidParamValue {
+                key: "project encoding".to_owned(),
+                detail: format!(
+                    "'{}' is not UTF-8 ({e}); a project saved in a legacy code page \
+                     (e.g. GBK) must be opened with AltiumProject::open_with_code_page",
+                    path.display()
+                ),
+            }
+        })?;
+        let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
 
-        let content = content.strip_prefix('\u{FEFF}').unwrap_or(&content);
+        Self::parse(name, content)
+            .with_context(|| format!("parsing project file '{}'", path.display()))
+    }
 
-        // Need to own the stripped content before returning from this function.
-        let content = content.to_owned();
-
+    /// Open a project file saved in a legacy code page instead of UTF-8.
+    ///
+    /// `code_page` is a WHATWG encoding label (`"gbk"`, `"gb18030"`,
+    /// `"shift_jis"`, `"windows-1252"`, …). A PrjPcb file does not record its
+    /// code page (non-UTF-8 projects are in the Windows ANSI code page of the
+    /// machine that saved them), so the caller has to know it; nothing is
+    /// guessed. Decoding is strict: a byte sequence invalid in that code page is
+    /// an error, never a replacement character. A file with a UTF-8 BOM is
+    /// UTF-8 and must be opened with [`AltiumProject::open`]. Saving writes
+    /// UTF-8 with a BOM.
+    pub fn open_with_code_page(path: impl AsRef<Path>, code_page: &str) -> crate::Result<Self> {
+        let path = path.as_ref();
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unnamed")
+            .to_string();
+        let bytes = std::fs::read(path)
+            .map_err(crate::AltiumFormatError::Io)
+            .with_context(|| format!("reading project file '{}'", path.display()))?;
+        let content = decode_code_page(&bytes, code_page)
+            .with_context(|| format!("decoding project file '{}'", path.display()))?;
         Self::parse(name, &content)
             .with_context(|| format!("parsing project file '{}'", path.display()))
     }
@@ -501,6 +553,47 @@ impl AltiumProject {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_code_page_projects_decode_strictly() {
+        let text = "[Design]\r\nVersion=1.0\r\n[Document1]\r\nDocumentPath=电源.SchDoc\r\n";
+        let (gbk, _, unmappable) = encoding_rs::GBK.encode(text);
+        assert!(!unmappable);
+        assert_eq!(super::decode_code_page(&gbk, "gbk").unwrap(), text);
+        assert!(std::str::from_utf8(&gbk).is_err());
+        // A lone lead byte is invalid GBK: an error, not U+FFFD.
+        assert!(super::decode_code_page(&[b'A', 0x81], "gbk").is_err());
+        assert!(super::decode_code_page(b"x", "no-such-code-page").is_err());
+        assert!(super::decode_code_page(b"\xEF\xBB\xBFx", "gbk").is_err());
+    }
+
+    #[test]
+    fn gbk_project_opens_with_its_code_page() {
+        let text = format!(
+            "{}\r\n[Document1]\r\nDocumentPath=电源.SchDoc\r\n",
+            super::BLANK_AD26_INI.trim_end()
+        );
+        let (gbk, _, unmappable) = encoding_rs::GBK.encode(&text);
+        assert!(!unmappable);
+        let file = tempfile::Builder::new()
+            .suffix(".PrjPcb")
+            .tempfile()
+            .unwrap();
+        std::fs::write(file.path(), &gbk).unwrap();
+        let err = super::AltiumProject::open(file.path())
+            .err()
+            .expect("GBK bytes are not UTF-8");
+        assert!(err.to_string().contains("open_with_code_page"), "{err}");
+        let project = super::AltiumProject::open_with_code_page(file.path(), "gbk").unwrap();
+        assert!(
+            project
+                .documents
+                .iter()
+                .any(|d| d.values().any(|v| v == "电源.SchDoc")),
+            "{:?}",
+            project.documents
+        );
+    }
+
     use super::*;
 
     #[test]

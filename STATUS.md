@@ -606,6 +606,10 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
 ### PrjPcb
 INI-style format with indexed sections. Complete roundtrip. Read-only high-level API (internal write exists but not surfaced).
 
+A non-UTF-8 project (e.g. GBK) opens with `AltiumProject::open_with_code_page(path, label)` (R11):
+strict decoding in the caller-named code page, since the file does not record one; `open` now
+reports this instead of a bare I/O error.
+
 ### IntLib
 Read-only. Decompresses embedded SchLib/PcbLib from CFB. Dump produces separate `.schlib-spec` and `.pcblib-spec` files.
 
