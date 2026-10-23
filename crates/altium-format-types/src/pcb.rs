@@ -1489,6 +1489,46 @@ impl TryFrom<u8> for RegionKind {
     }
 }
 
+/// The object kind a plane-connect or polygon-connect rule setting applies to:
+/// the key prefix of a per-object setting (`PAD.`, `VIA.` in PlaneConnect;
+/// `THPAD.`, `SMDPAD.`, `VIA.` in PolygonConnect; AD 26 reads them in
+/// `TPowerPlaneConnectStyleRule` / `TPolygonConnectStyleRule`, altium-re
+/// Ppcb1-rules rule-params.tsv).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConnectStyleTarget {
+    /// `PAD.` (PlaneConnect: every pad).
+    Pad,
+    /// `THPAD.` (PolygonConnect: through-hole pads).
+    ThroughHolePad,
+    /// `SMDPAD.` (PolygonConnect: SMD pads).
+    SmdPad,
+    /// `VIA.`.
+    Via,
+}
+
+impl ConnectStyleTarget {
+    /// The stored key prefix, without the dot.
+    pub fn key_prefix(self) -> &'static str {
+        match self {
+            Self::Pad => "PAD",
+            Self::ThroughHolePad => "THPAD",
+            Self::SmdPad => "SMDPAD",
+            Self::Via => "VIA",
+        }
+    }
+
+    /// The target of a stored key prefix (without the dot).
+    pub fn from_key_prefix(prefix: &str) -> Option<Self> {
+        match prefix {
+            "PAD" => Some(Self::Pad),
+            "THPAD" => Some(Self::ThroughHolePad),
+            "SMDPAD" => Some(Self::SmdPad),
+            "VIA" => Some(Self::Via),
+            _ => None,
+        }
+    }
+}
+
 /// Plane connection style (0-2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]

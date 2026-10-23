@@ -6,15 +6,19 @@
 
 use altium_format_derive::{FromParams, ToParams};
 use altium_format_types::{
-    BgaFanoutDirection, BgaFanoutViaMode, ComponentOrientationFlags, CornerStyle, FanoutDirection,
-    FanoutStyle, LengthenerStyle, NetScope, NetTopology, PlaneConnectionStyle, PolygonReliefAngle,
-    RouteVia, RuleKind, RuleLayerKind,
+    BgaFanoutDirection, BgaFanoutViaMode, ComponentOrientationFlags, ConnectStyleTarget,
+    CornerStyle, FanoutDirection, FanoutStyle, LengthenerStyle, NetScope, NetTopology,
+    PlaneConnectionStyle, PolygonReliefAngle, RouteVia, RuleKind, RuleLayerKind,
 };
 
+use crate::api::pcb_common::PcbContour;
+use crate::api::pcbdoc_read::remove_param_contour;
+use crate::api::pcbdoc_write::{format_altium_angle, insert_param_contour};
 use crate::param_collection::ParameterCollection;
-use crate::param_value::{ClearanceMatrix, MilCoord, ToParamValue};
+use crate::param_value::{ClearanceMatrix, MilCoord, SignalValue, ToParamValue};
 use crate::pcbdoc::records::ParamSectionKind;
-use crate::{AltiumFormatError, Result};
+use crate::{AltiumFormatError, Result, ResultExt};
+use altium_format_types::Coord;
 
 // ── Rule types ──────────────────────────────────────────────────────────────
 
@@ -102,15 +106,15 @@ pub(crate) enum PcbRuleKindData {
     PermittedLayers(PermittedLayersRuleData),
     NetsToIgnore(EmptyRuleData),
     SignalStimulus(SignalStimulusRuleData),
-    OvershootFallingEdge(OvershootUndershootRuleData),
-    OvershootRisingEdge(OvershootUndershootRuleData),
-    UndershootFallingEdge(OvershootUndershootRuleData),
-    UndershootRisingEdge(OvershootUndershootRuleData),
+    OvershootFallingEdge(SignalMaximumRuleData),
+    OvershootRisingEdge(SignalMaximumRuleData),
+    UndershootFallingEdge(SignalMaximumRuleData),
+    UndershootRisingEdge(SignalMaximumRuleData),
     MaxMinImpedance(MaxMinImpedanceRuleData),
-    SignalTopValue(SignalValueRuleData),
-    SignalBaseValue(SignalValueRuleData),
-    FlightTimeRisingEdge(FlightTimeRuleData),
-    FlightTimeFallingEdge(FlightTimeRuleData),
+    SignalTopValue(SignalMinimumRuleData),
+    SignalBaseValue(SignalMaximumRuleData),
+    FlightTimeRisingEdge(SignalMaximumRuleData),
+    FlightTimeFallingEdge(SignalMaximumRuleData),
     LayerStack(EmptyRuleData),
     MaxSlopeRisingEdge(SlopeRuleData),
     MaxSlopeFallingEdge(SlopeRuleData),
@@ -164,79 +168,90 @@ impl EmptyRuleData {
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct BrokenNetsRuleData {
-    #[param(key = "CHECKBADCONNECTIONS", default = false)]
-    pub check_bad_connections: bool,
+    #[param(key = "CHECKBADCONNECTIONS", optional)]
+    pub check_bad_connections: Option<bool>,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct SmdEntryRuleData {
-    #[param(key = "SIDE", default = false)]
+    #[param(key = "SIDE")]
     pub side: bool,
-    #[param(key = "CORNER", default = false)]
+    #[param(key = "CORNER")]
     pub corner: bool,
-    #[param(key = "ANYANGLE", default = false)]
+    #[param(key = "ANYANGLE")]
     pub any_angle: bool,
+    /// `IgnoreFirstCorner` (AD 26 `TSMDPADEntryConstraint`; not in the corpus).
+    #[param(key = "IGNOREFIRSTCORNER", optional)]
+    pub ignore_first_corner: Option<bool>,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct UnpouredPolygonRuleData {
-    #[param(key = "ALLOWUNPOURED", default = false)]
-    pub allow_unpoured: bool,
+    #[param(key = "ALLOWUNPOURED", optional)]
+    pub allow_unpoured: Option<bool>,
+    /// `AllowShelved` (AD 26 `TModifiedPolygonRule`; not in the corpus).
+    #[param(key = "ALLOWSHELVED", optional)]
+    pub allow_shelved: Option<bool>,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct SmdToPlaneRuleData {
-    #[param(key = "DISTANCE", default = MilCoord::default())]
-    pub distance: MilCoord,
+    /// `Distance`: AD 26 reads it as an integer (helper 0x120bf30), so the value
+    /// is in internal units (1/10000 mil), not a mil string.
+    #[param(key = "DISTANCE")]
+    pub distance: Coord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct SmdNeckDownRuleData {
-    #[param(key = "PERCENT", default = 0f64)]
+    #[param(key = "PERCENT")]
     pub percent: f64,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct ReturnPathRuleData {
-    #[param(key = "IMPEDANCEPROFILEID", default = String::new())]
+    #[param(key = "IMPEDANCEPROFILEID")]
     pub impedance_profile_id: String,
-    #[param(key = "_GAPLIMIT", default = MilCoord::default())]
+    #[param(key = "_GAPLIMIT")]
     pub gap_limit: MilCoord,
-    #[param(key = "_USEANTIPADS", default = false)]
+    #[param(key = "_USEANTIPADS")]
     pub use_antipads: bool,
+    /// `MaxStitchViaDistance` (AD 26 `TReturnPathRule`; not in the corpus).
+    #[param(key = "MAXSTITCHVIADISTANCE", optional)]
+    pub max_stitch_via_distance: Option<MilCoord>,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct ClearanceRuleData {
-    #[param(key = "GAP", default = MilCoord::default())]
+    #[param(key = "GAP")]
     pub gap: MilCoord,
-    #[param(key = "GENERICCLEARANCE", default = MilCoord::default())]
+    #[param(key = "GENERICCLEARANCE")]
     pub generic_clearance: MilCoord,
-    #[param(key = "IGNOREPADTOPADCLEARANCEINFOOTPRINT", default = false)]
-    pub ignore_pad_to_pad: bool,
-    #[param(key = "OBJECTCLEARANCES", default = ClearanceMatrix::default())]
+    #[param(key = "IGNOREPADTOPADCLEARANCEINFOOTPRINT", optional)]
+    pub ignore_pad_to_pad: Option<bool>,
+    #[param(key = "OBJECTCLEARANCES")]
     pub object_clearances: ClearanceMatrix,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct ParallelSegmentRuleData {
-    #[param(key = "GAP", default = MilCoord::default())]
+    #[param(key = "GAP")]
     pub gap: MilCoord,
-    #[param(key = "LIMIT", default = MilCoord::default())]
+    #[param(key = "LIMIT")]
     pub limit: MilCoord,
-    #[param(key = "PARALLELLENGTH", default = MilCoord::default())]
-    pub parallel_length: MilCoord,
-    #[param(key = "CHECKPARALLEL", default = true)]
-    pub check_parallel: bool,
-    #[param(key = "CHECKADJACENTLAYERS", default = false)]
-    pub check_adjacent_layers: bool,
+    #[param(key = "PARALLELLENGTH", optional)]
+    pub parallel_length: Option<MilCoord>,
+    #[param(key = "CHECKPARALLEL", optional)]
+    pub check_parallel: Option<bool>,
+    #[param(key = "CHECKADJACENTLAYERS", optional)]
+    pub check_adjacent_layers: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -258,7 +273,7 @@ pub(crate) struct WidthRuleData {
     pub min_limit: MilCoord,
     pub max_limit: MilCoord,
     pub preferred_width: MilCoord,
-    pub check_connected_copper: bool,
+    pub check_connected_copper: Option<bool>,
     pub per_layer: Vec<WidthLayerOverride>,
     pub impedance_driven: Option<bool>,
     pub min_imp: Option<f64>,
@@ -293,8 +308,8 @@ impl WidthRuleData {
             }
         }
 
-        let check_connected_copper: bool =
-            params.remove_with_default("CHECKCONNECTEDCOPPER", false)?;
+        let check_connected_copper: Option<bool> =
+            params.remove_optional("CHECKCONNECTEDCOPPER")?;
 
         // Impedance fields.
         let impedance_driven: Option<bool> = params.remove_optional("IMPEDANCEDRIVEN")?;
@@ -373,10 +388,9 @@ impl WidthRuleData {
             }
         }
 
-        params.insert(
-            "CHECKCONNECTEDCOPPER",
-            self.check_connected_copper.to_param_value(),
-        );
+        if let Some(v) = self.check_connected_copper {
+            params.insert("CHECKCONNECTEDCOPPER", v.to_param_value());
+        }
 
         if let Some(v) = self.impedance_driven {
             params.insert("IMPEDANCEDRIVEN", v.to_param_value());
@@ -431,69 +445,67 @@ impl WidthRuleData {
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct LengthRuleData {
-    #[param(key = "MINLIMIT", default = MilCoord::default())]
+    #[param(key = "MINLIMIT")]
     pub min_limit: MilCoord,
-    #[param(key = "MAXLIMIT", default = MilCoord::default())]
+    #[param(key = "MAXLIMIT")]
     pub max_limit: MilCoord,
-    #[param(key = "USEDELAYUNITS", default = false)]
-    pub use_delay_units: bool,
-    #[param(key = "MINDELAY", default = 0f64)]
-    pub min_delay: f64,
-    #[param(key = "MAXDELAY", default = 0f64)]
-    pub max_delay: f64,
+    #[param(key = "USEDELAYUNITS", optional)]
+    pub use_delay_units: Option<bool>,
+    #[param(key = "MINDELAY", optional)]
+    pub min_delay: Option<f64>,
+    #[param(key = "MAXDELAY", optional)]
+    pub max_delay: Option<f64>,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct MatchedLengthsRuleData {
-    #[param(key = "TOLERANCE", default = MilCoord::default())]
+    #[param(key = "TOLERANCE")]
     pub tolerance: MilCoord,
-    #[param(key = "CHECKNETSINDIFFPAIR", default = false)]
+    #[param(key = "CHECKNETSINDIFFPAIR")]
     pub check_nets_in_diff_pair: bool,
-    #[param(key = "CHECKDIFFPAIRVSDIFFPAIR", default = false)]
+    #[param(key = "CHECKDIFFPAIRVSDIFFPAIR")]
     pub check_diff_pair_vs_diff_pair: bool,
-    #[param(key = "CHECKXSIGNALS", default = false)]
+    #[param(key = "CHECKXSIGNALS")]
     pub check_x_signals: bool,
-    #[param(key = "CHECKOTHERS", default = false)]
+    #[param(key = "CHECKOTHERS")]
     pub check_others: bool,
-    #[param(key = "USEDELAYUNITS", default = false)]
-    pub use_delay_units: bool,
-    #[param(key = "DELAYTOLERANCE", default = 0f64)]
-    pub delay_tolerance: f64,
-    #[param(key = "TARGETSOURCENAME", default = String::new())]
-    pub target_source_name: String,
-    #[param(key = "PHASEMATCHING", default = false)]
-    pub phase_matching: bool,
-    #[param(key = "PHASETOLERANCE", default = MilCoord::default())]
-    pub phase_tolerance: MilCoord,
-    #[param(key = "PHASEDELAYTOLERANCE", default = 0f64)]
-    pub phase_delay_tolerance: f64,
-    #[param(key = "PHASEDISTANCE", default = MilCoord::default())]
-    pub phase_distance: MilCoord,
+    #[param(key = "USEDELAYUNITS", optional)]
+    pub use_delay_units: Option<bool>,
+    #[param(key = "DELAYTOLERANCE", optional)]
+    pub delay_tolerance: Option<f64>,
+    #[param(key = "TARGETSOURCENAME", optional)]
+    pub target_source_name: Option<String>,
+    #[param(key = "PHASEMATCHING", optional)]
+    pub phase_matching: Option<bool>,
+    #[param(key = "PHASETOLERANCE", optional)]
+    pub phase_tolerance: Option<MilCoord>,
+    #[param(key = "PHASEDELAYTOLERANCE", optional)]
+    pub phase_delay_tolerance: Option<f64>,
+    #[param(key = "PHASEDISTANCE", optional)]
+    pub phase_distance: Option<MilCoord>,
     /// Serpentine amplitude. From `IPCB_MatchedNetLengthsConstraint.GetState_Amplitude`.
-    #[param(key = "AMPLITUDE", default = MilCoord::default())]
-    pub amplitude: MilCoord,
+    #[param(key = "AMPLITUDE", optional)]
+    pub amplitude: Option<MilCoord>,
     /// Serpentine gap. From `IPCB_MatchedNetLengthsConstraint.GetState_Gap`.
-    #[param(key = "GAP", default = MilCoord::default())]
-    pub gap: MilCoord,
+    #[param(key = "GAP", optional)]
+    pub gap: Option<MilCoord>,
     /// Serpentine style. From `IPCB_MatchedNetLengthsConstraint.GetState_Style`.
     /// String values from `xPCBTypes.Consts.cLengthenerStyleStrings`.
-    #[param(key = "STYLE", default = LengthenerStyle::default())]
-    pub style: LengthenerStyle,
+    #[param(key = "STYLE", optional)]
+    pub style: Option<LengthenerStyle>,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct DaisyChainStubLengthRuleData {
-    #[param(key = "MAXLIMIT", default = MilCoord::default())]
-    pub max_limit: MilCoord,
-    #[param(key = "LIMIT", default = MilCoord::default())]
+    #[param(key = "LIMIT")]
     pub limit: MilCoord,
 }
 
 #[derive(Debug)]
 pub(crate) struct PlaneConnectTypeOverride {
-    pub prefix: String,
+    pub prefix: ConnectStyleTarget,
     pub connect_style: PlaneConnectionStyle,
     pub relief_expansion: MilCoord,
     pub relief_entries: i32,
@@ -524,7 +536,8 @@ impl PowerPlaneConnectStyleRuleData {
 
         // Per-type overrides: PAD.* and VIA.*
         let mut type_overrides = Vec::new();
-        for prefix in &["PAD", "VIA"] {
+        for target in [ConnectStyleTarget::Pad, ConnectStyleTarget::Via] {
+            let prefix = target.key_prefix();
             let cs_key = format!("{prefix}.PLANECONNECTSTYLE");
             if let Some(cs) = params.remove_optional::<PlaneConnectionStyle>(&cs_key)? {
                 let exp_key = format!("{prefix}.RELIEFEXPANSION");
@@ -532,13 +545,12 @@ impl PowerPlaneConnectStyleRuleData {
                 let cw_key = format!("{prefix}.RELIEFCONDUCTORWIDTH");
                 let ag_key = format!("{prefix}.RELIEFAIRGAP");
                 type_overrides.push(PlaneConnectTypeOverride {
-                    prefix: prefix.to_string(),
+                    prefix: target,
                     connect_style: cs,
-                    relief_expansion: params.remove_with_default(&exp_key, MilCoord::default())?,
-                    relief_entries: params.remove_with_default(&ent_key, 4)?,
-                    relief_conductor_width: params
-                        .remove_with_default(&cw_key, MilCoord::default())?,
-                    relief_air_gap: params.remove_with_default(&ag_key, MilCoord::default())?,
+                    relief_expansion: params.remove_required(&exp_key)?,
+                    relief_entries: params.remove_required(&ent_key)?,
+                    relief_conductor_width: params.remove_required(&cw_key)?,
+                    relief_air_gap: params.remove_required(&ag_key)?,
                 });
             }
         }
@@ -571,23 +583,23 @@ impl PowerPlaneConnectStyleRuleData {
         }
         for ov in &self.type_overrides {
             params.insert(
-                &format!("{}.PLANECONNECTSTYLE", ov.prefix),
+                &format!("{}.PLANECONNECTSTYLE", ov.prefix.key_prefix()),
                 ov.connect_style.to_param_value(),
             );
             params.insert(
-                &format!("{}.RELIEFEXPANSION", ov.prefix),
+                &format!("{}.RELIEFEXPANSION", ov.prefix.key_prefix()),
                 ov.relief_expansion.to_param_value(),
             );
             params.insert(
-                &format!("{}.RELIEFENTRIES", ov.prefix),
+                &format!("{}.RELIEFENTRIES", ov.prefix.key_prefix()),
                 ov.relief_entries.to_param_value(),
             );
             params.insert(
-                &format!("{}.RELIEFCONDUCTORWIDTH", ov.prefix),
+                &format!("{}.RELIEFCONDUCTORWIDTH", ov.prefix.key_prefix()),
                 ov.relief_conductor_width.to_param_value(),
             );
             params.insert(
-                &format!("{}.RELIEFAIRGAP", ov.prefix),
+                &format!("{}.RELIEFAIRGAP", ov.prefix.key_prefix()),
                 ov.relief_air_gap.to_param_value(),
             );
         }
@@ -604,7 +616,7 @@ pub(crate) struct RoutingTopologyRuleData {
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct RoutingPriorityRuleData {
-    #[param(key = "ROUTINGPRIORITY", default = 0i32)]
+    #[param(key = "ROUTINGPRIORITY")]
     pub routing_priority: i32,
 }
 
@@ -649,9 +661,9 @@ fn routing_layer_prefixes() -> Vec<String> {
 pub(crate) struct RoutingCornerStyleRuleData {
     #[param(key = "CORNERSTYLE")]
     pub corner_style: CornerStyle,
-    #[param(key = "MINSETBACK", default = MilCoord::default())]
+    #[param(key = "MINSETBACK")]
     pub min_setback: MilCoord,
-    #[param(key = "MAXSETBACK", default = MilCoord::default())]
+    #[param(key = "MAXSETBACK")]
     pub max_setback: MilCoord,
 }
 
@@ -670,7 +682,7 @@ pub(crate) struct RoutingViaStyleRuleData {
     pub max_width: MilCoord,
     pub preferred_width: MilCoord,
     pub via_style: RouteVia,
-    pub use_via_templates: bool,
+    pub use_via_templates: Option<bool>,
     pub via_templates: Vec<ViaTemplate>,
 }
 
@@ -683,7 +695,7 @@ impl RoutingViaStyleRuleData {
         let max_width: MilCoord = params.remove_required("MAXWIDTH")?;
         let preferred_width: MilCoord = params.remove_required("WIDTH")?;
         let via_style: RouteVia = params.remove_required("VIASTYLE")?;
-        let use_via_templates: bool = params.remove_with_default("USEVIATEMPLATES", false)?;
+        let use_via_templates: Option<bool> = params.remove_optional("USEVIATEMPLATES")?;
 
         // Consume indexed VIATEMPLATEGUID#N / VIATEMPLATENAME#N pairs (1-based).
         let mut via_templates = Vec::new();
@@ -693,7 +705,7 @@ impl RoutingViaStyleRuleData {
             let guid: Option<String> = params.remove_optional(&guid_key)?;
             let Some(guid) = guid else { break };
             let name_key = format!("VIATEMPLATENAME#{n}");
-            let name: String = params.remove_with_default(&name_key, String::new())?;
+            let name: String = params.remove_required(&name_key)?;
             via_templates.push(ViaTemplate { guid, name });
             n += 1;
         }
@@ -719,7 +731,9 @@ impl RoutingViaStyleRuleData {
         params.insert("MAXWIDTH", self.max_width.to_param_value());
         params.insert("WIDTH", self.preferred_width.to_param_value());
         params.insert("VIASTYLE", self.via_style.to_param_value());
-        params.insert("USEVIATEMPLATES", self.use_via_templates.to_param_value());
+        if let Some(v) = self.use_via_templates {
+            params.insert("USEVIATEMPLATES", v.to_param_value());
+        }
         for (n, t) in self.via_templates.iter().enumerate() {
             let n1 = n + 1;
             params.insert(&format!("VIATEMPLATEGUID#{n1}"), t.guid.to_param_value());
@@ -731,61 +745,70 @@ impl RoutingViaStyleRuleData {
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct PowerPlaneClearanceRuleData {
-    #[param(key = "CLEARANCE", default = MilCoord::default())]
+    #[param(key = "CLEARANCE")]
     pub clearance: MilCoord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct SolderMaskExpansionRuleData {
-    #[param(key = "EXPANSION", default = MilCoord::default())]
+    #[param(key = "EXPANSION")]
     pub expansion: MilCoord,
-    #[param(key = "ISTENTINGTOP", default = false)]
-    pub is_tenting_top: bool,
-    #[param(key = "ISTENTINGBOTTOM", default = false)]
-    pub is_tenting_bottom: bool,
-    #[param(key = "SOLDERMASKFROMHOLE", default = false)]
-    pub soldermask_from_hole: bool,
+    #[param(key = "ISTENTINGTOP", optional)]
+    pub is_tenting_top: Option<bool>,
+    #[param(key = "ISTENTINGBOTTOM", optional)]
+    pub is_tenting_bottom: Option<bool>,
+    #[param(key = "SOLDERMASKFROMHOLE", optional)]
+    pub soldermask_from_hole: Option<bool>,
+    /// `UseSeparateExpansions` (AD 26 `TSolderMaskExpansionRule`; not in the corpus).
+    #[param(key = "USESEPARATEEXPANSIONS", optional)]
+    pub use_separate_expansions: Option<bool>,
+    /// `ExpansionBottom` (AD 26 `TSolderMaskExpansionRule`; not in the corpus).
+    #[param(key = "EXPANSIONBOTTOM", optional)]
+    pub expansion_bottom: Option<MilCoord>,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct PasteMaskExpansionRuleData {
-    #[param(key = "EXPANSION", default = MilCoord::default())]
+    #[param(key = "EXPANSION")]
     pub expansion: MilCoord,
-    #[param(key = "PERCENT", default = 0f64)]
-    pub percent: f64,
-    #[param(key = "THPADUSETOPPASTE", default = false)]
-    pub thpad_use_top_paste: bool,
-    #[param(key = "THPADUSEBOTTOMPASTE", default = false)]
-    pub thpad_use_bottom_paste: bool,
+    #[param(key = "PERCENT", optional)]
+    pub percent: Option<f64>,
+    #[param(key = "THPADUSETOPPASTE", optional)]
+    pub thpad_use_top_paste: Option<bool>,
+    #[param(key = "THPADUSEBOTTOMPASTE", optional)]
+    pub thpad_use_bottom_paste: Option<bool>,
+    /// `UsePaste` (AD 26 `TPasteMaskExpansionRule` parent; not in the corpus).
+    #[param(key = "USEPASTE", optional)]
+    pub use_paste: Option<bool>,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct ShortCircuitRuleData {
-    #[param(key = "ALLOWED", default = false)]
+    #[param(key = "ALLOWED")]
     pub allowed: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct ViasUnderSmdRuleData {
-    #[param(key = "ALLOWED", default = true)]
+    #[param(key = "ALLOWED")]
     pub allowed: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct MaximumViaCountRuleData {
-    #[param(key = "MAXVIACOUNT", default = 10u32)]
+    #[param(key = "MAXVIACOUNT")]
     pub max_via_count: u32,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct MinimumAnnularRingRuleData {
-    #[param(key = "MINIMUMRING", default = MilCoord::default())]
+    #[param(key = "MINIMUMRING")]
     pub min_limit: MilCoord,
 }
 
@@ -812,15 +835,15 @@ pub(crate) struct PolygonConnectStyleRuleData {
 
 #[derive(Debug)]
 pub(crate) struct PadTypePolygonConnect {
-    pub prefix: String,
+    pub prefix: ConnectStyleTarget,
     pub connect_style: PlaneConnectionStyle,
     pub relief_conductor_width: MilCoord,
     pub relief_entries: i32,
     pub polygon_relief_angle: PolygonReliefAngle,
     pub air_gap_width: MilCoord,
-    pub conductor_by_pad_edge: bool,
-    pub enable_min_distance: bool,
-    pub min_distance: MilCoord,
+    pub conductor_by_pad_edge: Option<bool>,
+    pub enable_min_distance: Option<bool>,
+    pub min_distance: Option<MilCoord>,
 }
 
 impl PolygonConnectStyleRuleData {
@@ -839,7 +862,12 @@ impl PolygonConnectStyleRuleData {
 
         // Try per-pad-type prefixed fields (THPAD., SMDPAD., VIA.).
         let mut pad_type_overrides = Vec::new();
-        for prefix in &["THPAD", "SMDPAD", "VIA"] {
+        for target in [
+            ConnectStyleTarget::ThroughHolePad,
+            ConnectStyleTarget::SmdPad,
+            ConnectStyleTarget::Via,
+        ] {
+            let prefix = target.key_prefix();
             let key = format!("{prefix}.CONNECTSTYLE");
             if let Some(cs) = params.remove_optional::<PlaneConnectionStyle>(&key)? {
                 let rw_key = format!("{prefix}.RELIEFCONDUCTORWIDTH");
@@ -850,20 +878,15 @@ impl PolygonConnectStyleRuleData {
                 let em_key = format!("{prefix}.ENABLEMINDISTANCE");
                 let md_key = format!("{prefix}.MINDISTANCE");
                 pad_type_overrides.push(PadTypePolygonConnect {
-                    prefix: prefix.to_string(),
+                    prefix: target,
                     connect_style: cs,
-                    relief_conductor_width: params
-                        .remove_with_default(&rw_key, MilCoord::default())?,
-                    relief_entries: params.remove_with_default(&re_key, 4)?,
-                    polygon_relief_angle: params
-                        .remove_with_default(&ra_key, PolygonReliefAngle::Angle90)?,
-                    air_gap_width: params.remove_with_default(&ag_key, MilCoord::default())?,
-                    conductor_by_pad_edge: params.remove_with_default(&cb_key, false)?,
-                    enable_min_distance: params.remove_with_default(&em_key, false)?,
-                    min_distance: params.remove_with_default(
-                        &md_key,
-                        MilCoord(altium_format_types::Coord::from_mils_f64(10.0)),
-                    )?,
+                    relief_conductor_width: params.remove_required(&rw_key)?,
+                    relief_entries: params.remove_required(&re_key)?,
+                    polygon_relief_angle: params.remove_required(&ra_key)?,
+                    air_gap_width: params.remove_required(&ag_key)?,
+                    conductor_by_pad_edge: params.remove_optional(&cb_key)?,
+                    enable_min_distance: params.remove_optional(&em_key)?,
+                    min_distance: params.remove_optional(&md_key)?,
                 });
             }
         }
@@ -908,37 +931,43 @@ impl PolygonConnectStyleRuleData {
         }
         for ov in &self.pad_type_overrides {
             params.insert(
-                &format!("{}.CONNECTSTYLE", ov.prefix),
+                &format!("{}.CONNECTSTYLE", ov.prefix.key_prefix()),
                 ov.connect_style.to_param_value(),
             );
             params.insert(
-                &format!("{}.RELIEFCONDUCTORWIDTH", ov.prefix),
+                &format!("{}.RELIEFCONDUCTORWIDTH", ov.prefix.key_prefix()),
                 ov.relief_conductor_width.to_param_value(),
             );
             params.insert(
-                &format!("{}.RELIEFENTRIES", ov.prefix),
+                &format!("{}.RELIEFENTRIES", ov.prefix.key_prefix()),
                 ov.relief_entries.to_param_value(),
             );
             params.insert(
-                &format!("{}.POLYGONRELIEFANGLE", ov.prefix),
+                &format!("{}.POLYGONRELIEFANGLE", ov.prefix.key_prefix()),
                 ov.polygon_relief_angle.to_param_value(),
             );
             params.insert(
-                &format!("{}.AIRGAPWIDTH", ov.prefix),
+                &format!("{}.AIRGAPWIDTH", ov.prefix.key_prefix()),
                 ov.air_gap_width.to_param_value(),
             );
-            params.insert(
-                &format!("{}.CONDUCTORBYPADEDGE", ov.prefix),
-                ov.conductor_by_pad_edge.to_param_value(),
-            );
-            params.insert(
-                &format!("{}.ENABLEMINDISTANCE", ov.prefix),
-                ov.enable_min_distance.to_param_value(),
-            );
-            params.insert(
-                &format!("{}.MINDISTANCE", ov.prefix),
-                ov.min_distance.to_param_value(),
-            );
+            if let Some(v) = ov.conductor_by_pad_edge {
+                params.insert(
+                    &format!("{}.CONDUCTORBYPADEDGE", ov.prefix.key_prefix()),
+                    v.to_param_value(),
+                );
+            }
+            if let Some(v) = ov.enable_min_distance {
+                params.insert(
+                    &format!("{}.ENABLEMINDISTANCE", ov.prefix.key_prefix()),
+                    v.to_param_value(),
+                );
+            }
+            if let Some(v) = &ov.min_distance {
+                params.insert(
+                    &format!("{}.MINDISTANCE", ov.prefix.key_prefix()),
+                    v.to_param_value(),
+                );
+            }
         }
     }
 }
@@ -951,8 +980,8 @@ pub(crate) struct AcuteAngleRuleData {
 
 impl AcuteAngleRuleData {
     fn from_params(params: &mut ParameterCollection) -> Result<Self> {
-        let minimum: f64 = params.remove_with_default("MINIMUM", 0f64)?;
-        let check_tracks_only: bool = params.remove_with_default("CHECKTRACKSONLY", false)?;
+        let minimum: f64 = params.remove_required("MINIMUM")?;
+        let check_tracks_only: bool = params.remove_required("CHECKTRACKSONLY")?;
         Ok(Self {
             minimum,
             check_tracks_only,
@@ -960,117 +989,78 @@ impl AcuteAngleRuleData {
     }
 
     pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
-        params.insert("MINIMUM", self.minimum.to_param_value());
+        params.insert("MINIMUM", format_altium_angle(self.minimum));
         params.insert("CHECKTRACKSONLY", self.check_tracks_only.to_param_value());
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct ConfinementVertex {
-    pub kind: u32,
-    pub vx: MilCoord,
-    pub vy: MilCoord,
-    pub cx: MilCoord,
-    pub cy: MilCoord,
-    pub sa: String,
-    pub ea: String,
-    pub r: MilCoord,
-}
-
+/// Room definition (`RULEKIND=RoomDefinition`). AD 26 reads `ConfinementStyle`,
+/// `FormatCopy` and `LockComponents` in `TConfinementConstraint` slot 85
+/// (altium-re Ppcb1-rules rule-params.tsv, import fn 0x4c50430). The room
+/// shape is stored as an indexed contour (`KINDn/VXn/VYn/CXn/CYn/SAn/EAn/Rn`,
+/// Altium's `TPolySegment` parameter layout, shared with Polygons6 and Board6),
+/// read and written by the same functions as those records.
 #[derive(Debug)]
 pub(crate) struct ConfinementConstraintRuleData {
     pub confinement_style: altium_format_types::ConfinementStyle,
     pub lock_components: bool,
     pub format_copy: bool,
-    pub vertices: Vec<ConfinementVertex>,
+    pub outline: PcbContour,
 }
 
 impl ConfinementConstraintRuleData {
     fn from_params(params: &mut ParameterCollection) -> Result<Self> {
-        let confinement_style: altium_format_types::ConfinementStyle = params.remove_with_default(
-            "CONFINEMENTSTYLE",
-            altium_format_types::ConfinementStyle::ConfineIn,
-        )?;
-        let lock_components: bool = params.remove_with_default("LOCKCOMPONENTS", false)?;
-        let format_copy: bool = params.remove_with_default("FORMATCOPY", false)?;
-
-        let mut vertices = Vec::new();
-        let mut n = 0usize;
-        loop {
-            let kind_key = format!("KIND{n}");
-            let kind: Option<u32> = params.remove_optional(&kind_key)?;
-            let Some(kind) = kind else { break };
-
-            let vx: MilCoord =
-                params.remove_with_default(&format!("VX{n}"), MilCoord::default())?;
-            let vy: MilCoord =
-                params.remove_with_default(&format!("VY{n}"), MilCoord::default())?;
-            let cx: MilCoord =
-                params.remove_with_default(&format!("CX{n}"), MilCoord::default())?;
-            let cy: MilCoord =
-                params.remove_with_default(&format!("CY{n}"), MilCoord::default())?;
-            let sa: String = params.remove_with_default(&format!("SA{n}"), String::new())?;
-            let ea: String = params.remove_with_default(&format!("EA{n}"), String::new())?;
-            let r: MilCoord = params.remove_with_default(&format!("R{n}"), MilCoord::default())?;
-
-            vertices.push(ConfinementVertex {
-                kind,
-                vx,
-                vy,
-                cx,
-                cy,
-                sa,
-                ea,
-                r,
+        let confinement_style: altium_format_types::ConfinementStyle =
+            params.remove_required("CONFINEMENTSTYLE")?;
+        let lock_components: bool = params.remove_required("LOCKCOMPONENTS")?;
+        let format_copy: bool = params.remove_required("FORMATCOPY")?;
+        let outline = remove_param_contour(params).context("room outline")?;
+        if outline.segments.is_empty() {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "KIND0".to_owned(),
+                detail: "room definition without outline vertices".to_owned(),
             });
-            n += 1;
         }
-
         Ok(Self {
             confinement_style,
             lock_components,
             format_copy,
-            vertices,
+            outline,
         })
     }
 
     pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
+        insert_param_contour(params, &self.outline);
         params.insert("CONFINEMENTSTYLE", self.confinement_style.to_param_value());
-        params.insert("LOCKCOMPONENTS", self.lock_components.to_param_value());
         params.insert("FORMATCOPY", self.format_copy.to_param_value());
-        for (n, v) in self.vertices.iter().enumerate() {
-            params.insert(&format!("KIND{n}"), v.kind.to_param_value());
-            params.insert(&format!("VX{n}"), v.vx.to_param_value());
-            params.insert(&format!("VY{n}"), v.vy.to_param_value());
-            params.insert(&format!("CX{n}"), v.cx.to_param_value());
-            params.insert(&format!("CY{n}"), v.cy.to_param_value());
-            params.insert(&format!("SA{n}"), v.sa.to_param_value());
-            params.insert(&format!("EA{n}"), v.ea.to_param_value());
-            params.insert(&format!("R{n}"), v.r.to_param_value());
-        }
+        params.insert("LOCKCOMPONENTS", self.lock_components.to_param_value());
     }
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct SmdToCornerRuleData {
-    #[param(key = "DISTANCE", default = MilCoord::default())]
-    pub distance: MilCoord,
+    /// `Distance`: an integer in internal units, as for SMDToPlane.
+    #[param(key = "DISTANCE")]
+    pub distance: Coord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct ComponentClearanceRuleData {
-    #[param(key = "GAP", default = MilCoord::default())]
+    #[param(key = "GAP")]
     pub gap: MilCoord,
-    #[param(key = "COLLISIONCHECKMODE", default = altium_format_types::ComponentCollisionCheckMode::ComponentBodyCheck)]
+    #[param(key = "COLLISIONCHECKMODE")]
     pub collision_check_mode: altium_format_types::ComponentCollisionCheckMode,
-    #[param(key = "VERTICALGAP", default = MilCoord::default())]
+    #[param(key = "VERTICALGAP")]
     pub vertical_gap: MilCoord,
-    #[param(key = "SHOWDISTANCES", default = false)]
+    #[param(key = "SHOWDISTANCES")]
     pub show_distances: bool,
-    #[param(key = "DONOTCHECKWITHOUT3DBODY", default = false)]
-    pub do_not_check_without_3d_body: bool,
+    #[param(key = "DONOTCHECKWITHOUT3DBODY", optional)]
+    pub do_not_check_without_3d_body: Option<bool>,
+    /// `CheckComponentBoundary` (AD 26 `TComponentClearanceConstraint`; not in the corpus).
+    #[param(key = "CHECKCOMPONENTBOUNDARY", optional)]
+    pub check_component_boundary: Option<bool>,
 }
 
 /// Component orientation rule: bitmask of allowed placement rotations.
@@ -1079,7 +1069,7 @@ pub(crate) struct ComponentClearanceRuleData {
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct ComponentRotationsRuleData {
-    #[param(key = "AllowedRotations", default = ComponentOrientationFlags(0))]
+    #[param(key = "AllowedRotations")]
     pub allowed_rotations: ComponentOrientationFlags,
 }
 
@@ -1088,153 +1078,169 @@ pub(crate) struct ComponentRotationsRuleData {
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct PermittedLayersRuleData {
-    #[param(key = "TopLayerPermitted", default = true)]
+    #[param(key = "TopLayerPermitted")]
     pub top_layer_permitted: bool,
-    #[param(key = "BottomLayerPermitted", default = true)]
+    #[param(key = "BottomLayerPermitted")]
     pub bottom_layer_permitted: bool,
 }
 
+/// Signal stimulus (`SignalStimulus`). Keys from AD 26 `TSignalStimulus`
+/// (rule-params.tsv ord 28): `Kind`, `Level` (int), `StartTime`, `StopTime`,
+/// `PeriodTime` (strings holding floats). Not in the corpus.
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct SignalStimulusRuleData {
-    #[param(key = "STIMULUSTYPE", default = 0u32)]
-    pub stimulus_type: u32,
-    #[param(key = "SIGNALLEVEL", default = 0u32)]
-    pub signal_level: u32,
+    #[param(key = "KIND")]
+    pub kind: i32,
+    #[param(key = "LEVEL")]
+    pub level: i32,
+    #[param(key = "STARTTIME")]
+    pub start_time: SignalValue,
+    #[param(key = "STOPTIME")]
+    pub stop_time: SignalValue,
+    #[param(key = "PERIODTIME")]
+    pub period_time: SignalValue,
 }
 
+/// One `Maximum` value: AD 26 `TMaxOvershootFall`/`Rise`, `TMaxUndershootFall`/`Rise`,
+/// `TRuleMaxSignalBaseValue`, `TRuleFlightTime_*` (rule-params.tsv).
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
-pub(crate) struct OvershootUndershootRuleData {
-    #[param(key = "MAXOVERSHOOT", default = 0f64)]
-    pub max_overshoot: f64,
-    #[param(key = "MAXUNDERSHOOT", default = 0f64)]
-    pub max_undershoot: f64,
-    #[param(key = "MAXIMUM", default = 0f64)]
-    pub maximum: f64,
+pub(crate) struct SignalMaximumRuleData {
+    #[param(key = "MAXIMUM")]
+    pub maximum: SignalValue,
 }
 
+/// `Minimum`: AD 26 `TRuleMinSignalTopValue`.
+#[derive(FromParams, ToParams, Debug)]
+#[param(tier2)]
+pub(crate) struct SignalMinimumRuleData {
+    #[param(key = "MINIMUM")]
+    pub minimum: SignalValue,
+}
+
+/// `Minimum` and `Maximum`: AD 26 `TRuleMaxMinImpedance`.
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct MaxMinImpedanceRuleData {
-    #[param(key = "MINIMUM", default = 0f64)]
-    pub min_impedance: f64,
-    #[param(key = "MAXIMUM", default = 0f64)]
-    pub max_impedance: f64,
+    #[param(key = "MINIMUM")]
+    pub minimum: SignalValue,
+    #[param(key = "MAXIMUM")]
+    pub maximum: SignalValue,
 }
 
-#[derive(FromParams, ToParams, Debug)]
-#[param(tier2)]
-pub(crate) struct SignalValueRuleData {
-    #[param(key = "MINVALUE", default = 0f64)]
-    pub min_value: f64,
-    #[param(key = "MAXVALUE", default = 0f64)]
-    pub max_value: f64,
-}
-
-#[derive(FromParams, ToParams, Debug)]
-#[param(tier2)]
-pub(crate) struct FlightTimeRuleData {
-    #[param(key = "MINVALUE", default = 0f64)]
-    pub min_value: f64,
-    #[param(key = "MAXVALUE", default = 0f64)]
-    pub max_value: f64,
-}
-
+/// `MaxSlope`: AD 26 `TRuleMaxSlopeRisingEdge`/`FallingEdge`.
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct SlopeRuleData {
-    #[param(key = "MAXSLOPE", default = 0f64)]
-    pub max_slope: f64,
+    #[param(key = "MAXSLOPE")]
+    pub max_slope: SignalValue,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct MaxMinHoleSizeRuleData {
-    #[param(key = "ABSOLUTEVALUES", default = true)]
+    #[param(key = "ABSOLUTEVALUES")]
     pub absolute_values: bool,
-    #[param(key = "MINLIMIT", default = MilCoord::default())]
+    #[param(key = "MINLIMIT")]
     pub min_limit: MilCoord,
-    #[param(key = "MAXLIMIT", default = MilCoord::default())]
+    #[param(key = "MAXLIMIT")]
     pub max_limit: MilCoord,
-    #[param(key = "MINPERCENT", default = 0f64)]
+    #[param(key = "MINPERCENT")]
     pub min_percent: f64,
-    #[param(key = "MAXPERCENT", default = 0f64)]
+    #[param(key = "MAXPERCENT")]
     pub max_percent: f64,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct TestpointStyleRuleData {
-    #[param(key = "SIDE", default = 0u32)]
-    pub side: u32,
-    #[param(key = "TESTPOINTUNDERCOMPONENT", default = true)]
+    #[param(key = "SIDE", optional)]
+    pub side: Option<u32>,
+    #[param(key = "TESTPOINTUNDERCOMPONENT")]
     pub testpoint_under_component: bool,
-    #[param(key = "MINSIZE", default = MilCoord::default())]
+    #[param(key = "MINSIZE")]
     pub min_size: MilCoord,
-    #[param(key = "MAXSIZE", default = MilCoord::default())]
+    #[param(key = "MAXSIZE")]
     pub max_size: MilCoord,
-    #[param(key = "PREFEREDSIZE", default = MilCoord::default())]
+    #[param(key = "PREFEREDSIZE")]
     pub preferred_size: MilCoord,
-    #[param(key = "MINHOLESIZE", default = MilCoord::default())]
+    #[param(key = "MINHOLESIZE")]
     pub min_hole_size: MilCoord,
-    #[param(key = "MAXHOLESIZE", default = MilCoord::default())]
+    #[param(key = "MAXHOLESIZE")]
     pub max_hole_size: MilCoord,
-    #[param(key = "PREFEREDHOLESIZE", default = MilCoord::default())]
+    #[param(key = "PREFEREDHOLESIZE")]
     pub preferred_hole_size: MilCoord,
-    #[param(key = "TESTPOINTGRID", default = MilCoord::default())]
+    #[param(key = "TESTPOINTGRID")]
     pub testpoint_grid: MilCoord,
-    #[param(key = "USEGRID", default = true)]
+    #[param(key = "USEGRID")]
     pub use_grid: bool,
-    #[param(key = "GRIDTOLERANCE", default = MilCoord::default())]
+    #[param(key = "GRIDTOLERANCE")]
     pub grid_tolerance: MilCoord,
-    #[param(key = "ALLOWSIDETOP", default = true)]
+    #[param(key = "ALLOWSIDETOP")]
     pub allow_side_top: bool,
-    #[param(key = "ALLOWSIDEBOTTOM", default = true)]
+    #[param(key = "ALLOWSIDEBOTTOM")]
     pub allow_side_bottom: bool,
-    #[param(key = "MINSPACING", default = MilCoord::default())]
-    pub min_spacing: MilCoord,
+    #[param(key = "MINSPACING", optional)]
+    pub min_spacing: Option<MilCoord>,
+    /// AD 26 `TTestPointStyleRule`/`TAssyTestPointStyleRule` keys absent from the corpus.
+    #[param(key = "GRIDORIGINX", optional)]
+    pub grid_origin_x: Option<MilCoord>,
+    #[param(key = "GRIDORIGINY", optional)]
+    pub grid_origin_y: Option<MilCoord>,
+    #[param(key = "COMPBODYCLEARANCE", optional)]
+    pub comp_body_clearance: Option<MilCoord>,
+    /// Fabrication test points only in AD 26.
+    #[param(key = "BOARDEDGECLEARANCE", optional)]
+    pub board_edge_clearance: Option<MilCoord>,
+    #[param(key = "PADHOLECENTERCLEARANCE", optional)]
+    pub pad_hole_center_clearance: Option<MilCoord>,
+    #[param(key = "VIAHOLECENTERCLEARANCE", optional)]
+    pub via_hole_center_clearance: Option<MilCoord>,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct TestpointUsageRuleData {
-    #[param(key = "VALID", default = 0u32)]
-    pub valid: u32,
-    #[param(key = "ALLOWMULTIPLE", default = false)]
-    pub allow_multiple: bool,
+    #[param(key = "VALID", optional)]
+    pub valid: Option<u32>,
+    #[param(key = "ALLOWMULTIPLE", optional)]
+    pub allow_multiple: Option<bool>,
+    /// `ValidRequireAtLeafs` (AD 26 `TTestPointUsage`/`TAssyTestPointUsage`; not in the corpus).
+    #[param(key = "VALIDREQUIREATLEAFS", optional)]
+    pub valid_require_at_leafs: Option<bool>,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct LayerPairRuleData {
-    #[param(key = "ENFORCE", default = true)]
+    #[param(key = "ENFORCE")]
     pub enforce: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct FanoutControlRuleData {
-    #[param(key = "BGADIR", default = BgaFanoutDirection::Out)]
+    #[param(key = "BGADIR")]
     pub bga_dir: BgaFanoutDirection,
-    #[param(key = "BGAVIAMODE", default = BgaFanoutViaMode::Centered)]
+    #[param(key = "BGAVIAMODE")]
     pub bga_via_mode: BgaFanoutViaMode,
-    #[param(key = "FANOUTSTYLE", default = FanoutStyle::Auto)]
+    #[param(key = "FANOUTSTYLE")]
     pub fanout_style: FanoutStyle,
-    #[param(key = "FANOUTDIRECTION", default = FanoutDirection::Alternating)]
+    #[param(key = "FANOUTDIRECTION")]
     pub fanout_direction: FanoutDirection,
-    #[param(key = "VIAGRID", default = MilCoord::default())]
+    #[param(key = "VIAGRID")]
     pub via_grid: MilCoord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct MaxMinHeightRuleData {
-    #[param(key = "MINHEIGHT", default = MilCoord::default())]
+    #[param(key = "MINHEIGHT")]
     pub min_height: MilCoord,
-    #[param(key = "MAXHEIGHT", default = MilCoord::default())]
+    #[param(key = "MAXHEIGHT")]
     pub max_height: MilCoord,
-    #[param(key = "PREFHEIGHT", default = MilCoord::default())]
+    #[param(key = "PREFHEIGHT")]
     pub pref_height: MilCoord,
 }
 
@@ -1302,10 +1308,8 @@ impl DiffPairsRoutingRuleData {
     fn from_params(params: &mut ParameterCollection) -> Result<Self> {
         let min_limit: MilCoord = params.remove_required("MINLIMIT")?;
         let max_limit: MilCoord = params.remove_required("MAXLIMIT")?;
-        let most_freq_gap: MilCoord =
-            params.remove_with_default("MOSTFREQGAP", MilCoord::default())?;
-        let max_uncoupled_length: MilCoord =
-            params.remove_with_default("MAXUNCOUPLEDLENGTH", MilCoord::default())?;
+        let most_freq_gap: MilCoord = params.remove_required("MOSTFREQGAP")?;
+        let max_uncoupled_length: MilCoord = params.remove_required("MAXUNCOUPLEDLENGTH")?;
 
         let mut per_layer = Vec::new();
         let layer_prefixes = signal_layer_prefixes();
@@ -1527,6 +1531,25 @@ impl DiffPairsRoutingRuleData {
     }
 }
 
+/// The V6 signal layer of a per-layer rule key prefix (`TOPLAYER`,
+/// `MIDLAYER1`..`MIDLAYER30`, `BOTTOMLAYER`).
+pub(crate) fn signal_prefix_layer(prefix: &str) -> Result<altium_format_types::V6Layer> {
+    let index = signal_layer_prefixes()
+        .iter()
+        .position(|p| p == prefix)
+        .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+            key: prefix.to_owned(),
+            detail: "not a signal layer key prefix".to_owned(),
+        })?;
+    // TOPLAYER is V6 layer 1, MIDLAYERn is n + 1, BOTTOMLAYER is 32.
+    altium_format_types::V6Layer::try_from((index + 1) as u8).map_err(|e| {
+        AltiumFormatError::InvalidParamValue {
+            key: prefix.to_owned(),
+            detail: e.to_string(),
+        }
+    })
+}
+
 fn signal_layer_prefixes() -> Vec<String> {
     let mut prefixes = vec!["TOPLAYER".to_string()];
     for i in 1..=30 {
@@ -1539,39 +1562,39 @@ fn signal_layer_prefixes() -> Vec<String> {
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct HoleToHoleClearanceRuleData {
-    #[param(key = "GAP", default = MilCoord::default())]
+    #[param(key = "GAP")]
     pub gap: MilCoord,
-    #[param(key = "ALLOWSTACKEDMICROVIAS", default = false)]
+    #[param(key = "ALLOWSTACKEDMICROVIAS")]
     pub allow_stacked_microvias: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct MinimumSolderMaskSliverRuleData {
-    #[param(key = "MINSOLDERMASKWIDTH", default = MilCoord::default())]
+    #[param(key = "MINSOLDERMASKWIDTH")]
     pub min_solder_mask_width: MilCoord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct SilkToSolderMaskClearanceRuleData {
-    #[param(key = "MINSILKSCREENTOMASKGAP", default = MilCoord::default())]
+    #[param(key = "MINSILKSCREENTOMASKGAP")]
     pub min_silkscreen_to_mask_gap: MilCoord,
-    #[param(key = "CLEARANCETOEXPOSEDCOPPER", default = false)]
+    #[param(key = "CLEARANCETOEXPOSEDCOPPER")]
     pub clearance_to_exposed_copper: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct SilkToSilkClearanceRuleData {
-    #[param(key = "SILKTOSILKCLEARANCE", default = MilCoord::default())]
+    #[param(key = "SILKTOSILKCLEARANCE")]
     pub silk_to_silk_clearance: MilCoord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct NetAntennaeRuleData {
-    #[param(key = "NETANTENNAETOLERANCE", default = MilCoord::default())]
+    #[param(key = "NETANTENNAETOLERANCE")]
     pub net_antennae_tolerance: MilCoord,
 }
 
@@ -1579,109 +1602,109 @@ pub(crate) struct NetAntennaeRuleData {
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct BoardOutlineClearanceRuleData {
-    #[param(key = "GAP", default = MilCoord::default())]
+    #[param(key = "GAP")]
     pub gap: MilCoord,
-    #[param(key = "GENERICCLEARANCE", default = MilCoord::default())]
+    #[param(key = "GENERICCLEARANCE")]
     pub generic_clearance: MilCoord,
-    #[param(key = "IGNOREPADTOPADCLEARANCEINFOOTPRINT", default = false)]
+    #[param(key = "IGNOREPADTOPADCLEARANCEINFOOTPRINT")]
     pub ignore_pad_to_pad: bool,
-    #[param(key = "OBJECTCLEARANCES", default = ClearanceMatrix::default())]
+    #[param(key = "OBJECTCLEARANCES")]
     pub object_clearances: ClearanceMatrix,
 }
 
+/// Back drilling. AD 26 `TBackDrillingRule` (rule-params.tsv ord 64) reads
+/// `MaxStubLength`, `UseTopBackdrill`, `UseBottomBackdrill`, `HoleOverSize`,
+/// `HoleTolPlus`, `HoleTolMinus`. Not in the corpus; each key is required.
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct BackDrillingRuleData {
-    #[param(key = "BACKDRILLINGDEPTH", default = MilCoord::default())]
-    pub backdrill_depth: MilCoord,
+    #[param(key = "MAXSTUBLENGTH")]
+    pub max_stub_length: MilCoord,
+    #[param(key = "USETOPBACKDRILL")]
+    pub use_top_backdrill: bool,
+    #[param(key = "USEBOTTOMBACKDRILL")]
+    pub use_bottom_backdrill: bool,
+    #[param(key = "HOLEOVERSIZE")]
+    pub hole_over_size: MilCoord,
+    #[param(key = "HOLETOLPLUS")]
+    pub hole_tol_plus: MilCoord,
+    #[param(key = "HOLETOLMINUS")]
+    pub hole_tol_minus: MilCoord,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
+/// Creepage. AD 26 `TCreepageRule` reads `CheckDistance`, `IgnoreInternalLayers`
+/// and `ApplyToPolygonPour` (rule-params.tsv); the corpus rule stores the first
+/// and last. No gap key is stored.
 pub(crate) struct CreepageRuleData {
-    #[param(key = "GAP", default = MilCoord::default())]
-    pub gap: MilCoord,
-    #[param(key = "CHECKDISTANCE", default = MilCoord::default())]
+    #[param(key = "CHECKDISTANCE")]
     pub check_distance: MilCoord,
-    #[param(key = "APPLYTOPOLYGONPOUR", default = false)]
+    #[param(key = "APPLYTOPOLYGONPOUR")]
     pub apply_to_polygon_pour: bool,
-    #[param(key = "VOLTAGE", default = MilCoord::default())]
-    pub voltage: MilCoord,
+    /// `IgnoreInternalLayers` (AD 26 `TCreepageRule`; not in the corpus).
+    #[param(key = "IGNOREINTERNALLAYERS", optional)]
+    pub ignore_internal_layers: Option<bool>,
 }
 
-/// Per-layer maximum routed length for a neck-down segment.
-/// A value of `None` means no limit is set for that layer.
-/// From `IPCB_RoutingNeckDownRule.GetState_MaxLength()` (`IPCB_LayerToCoord`).
+/// Routing neck-down. AD 26 `TRoutingNeckDownRule` (rule-params.tsv ord 67,
+/// import 0x4ca5df0) reads a single string key, `LayerMaxLength`, whose encoding
+/// is not known (no corpus record, no decoded reader). Such a rule is refused
+/// rather than carried as an undecoded string.
 #[derive(Debug)]
-pub(crate) struct NeckDownLayerMaxLength {
-    pub prefix: String,
-    pub max_length: Option<MilCoord>,
-}
-
-#[derive(Debug)]
-pub(crate) struct RoutingNeckDownRuleData {
-    pub neck_down_percentage: f64,
-    /// Per-layer maximum routing length constraints.
-    /// Serialized as `{PREFIX}_MAXLENGTH` for each signal layer that has a value.
-    pub per_layer_max_length: Vec<NeckDownLayerMaxLength>,
-}
+pub(crate) enum RoutingNeckDownRuleData {}
 
 impl RoutingNeckDownRuleData {
-    fn from_params(params: &mut ParameterCollection) -> Result<Self> {
-        let neck_down_percentage: f64 = params.remove_with_default("NECKDOWNPERCENTAGE", 0f64)?;
-
-        let mut per_layer_max_length = Vec::new();
-        for prefix in &signal_layer_prefixes() {
-            let key = format!("{prefix}_MAXLENGTH");
-            let max_length: Option<MilCoord> = params.remove_optional(&key)?;
-            if max_length.is_some() {
-                per_layer_max_length.push(NeckDownLayerMaxLength {
-                    prefix: prefix.to_string(),
-                    max_length,
-                });
-            }
-        }
-
-        Ok(Self {
-            neck_down_percentage,
-            per_layer_max_length,
+    fn from_params(_params: &mut ParameterCollection) -> Result<Self> {
+        Err(AltiumFormatError::InvalidParamValue {
+            key: "LAYERMAXLENGTH".to_owned(),
+            detail: "RoutingNeckDown rules are not supported: the encoding of AD 26's \
+                     LayerMaxLength string is unknown"
+                .to_owned(),
         })
     }
 
-    pub(crate) fn to_params(&self, params: &mut ParameterCollection) {
-        params.insert(
-            "NECKDOWNPERCENTAGE",
-            self.neck_down_percentage.to_param_value(),
-        );
-        for entry in &self.per_layer_max_length {
-            if let Some(v) = &entry.max_length {
-                params.insert(&format!("{}_MAXLENGTH", entry.prefix), v.to_param_value());
-            }
-        }
+    pub(crate) fn to_params(&self, _params: &mut ParameterCollection) {
+        match *self {}
     }
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
+/// Wire bonding. AD 26 `TWirebondRule` (rule-params.tsv ord 68). Not in the
+/// corpus; each key is required.
 pub(crate) struct WireBondingRuleData {
-    #[param(key = "MINLIMIT", default = MilCoord::default())]
-    pub min_limit: MilCoord,
-    #[param(key = "MAXLIMIT", default = MilCoord::default())]
-    pub max_limit: MilCoord,
+    #[param(key = "WIRETOWIREGAP")]
+    pub wire_to_wire_gap: MilCoord,
+    #[param(key = "MINWIRELENGTH")]
+    pub min_wire_length: MilCoord,
+    #[param(key = "MAXWIRELENGTH")]
+    pub max_wire_length: MilCoord,
+    #[param(key = "BONDFINGERSPACE")]
+    pub bond_finger_space: MilCoord,
+    #[param(key = "BONDFINGERMARGIN")]
+    pub bond_finger_margin: MilCoord,
+    #[param(key = "ANGLE")]
+    pub angle: f64,
+    #[param(key = "BONDFINGERTOWIREALIGNMENT")]
+    pub bond_finger_to_wire_alignment: bool,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct SupplyNetsRuleData {
-    #[param(key = "VOLTAGE", default = 0f64)]
-    pub voltage: f64,
+    /// `Voltage`: AD 26 `TRuleSupplyNets` reads a string (corpus `" 0.000"`, `" 5.000"`).
+    #[param(key = "VOLTAGE")]
+    pub voltage: SignalValue,
 }
 
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
+/// Z-axis clearance. AD 26 `TZAxisClearanceRule` reads `ZAxisClearance`
+/// (rule-params.tsv ord 69). Not in the corpus.
 pub(crate) struct ZAxisClearanceRuleData {
-    #[param(key = "GAP", default = MilCoord::default())]
-    pub gap: MilCoord,
+    #[param(key = "ZAXISCLEARANCE")]
+    pub z_axis_clearance: MilCoord,
 }
 
 // ── Rule parsing dispatch ───────────────────────────────────────────────────
@@ -1771,31 +1794,31 @@ pub(crate) fn parse_rule(prefix: u16, params: &mut ParameterCollection) -> Resul
             PcbRuleKindData::SignalStimulus(SignalStimulusRuleData::from_params(params)?)
         }
         RuleKind::OvershootFallingEdge => {
-            PcbRuleKindData::OvershootFallingEdge(OvershootUndershootRuleData::from_params(params)?)
+            PcbRuleKindData::OvershootFallingEdge(SignalMaximumRuleData::from_params(params)?)
         }
         RuleKind::OvershootRisingEdge => {
-            PcbRuleKindData::OvershootRisingEdge(OvershootUndershootRuleData::from_params(params)?)
+            PcbRuleKindData::OvershootRisingEdge(SignalMaximumRuleData::from_params(params)?)
         }
-        RuleKind::UndershootFallingEdge => PcbRuleKindData::UndershootFallingEdge(
-            OvershootUndershootRuleData::from_params(params)?,
-        ),
+        RuleKind::UndershootFallingEdge => {
+            PcbRuleKindData::UndershootFallingEdge(SignalMaximumRuleData::from_params(params)?)
+        }
         RuleKind::UndershootRisingEdge => {
-            PcbRuleKindData::UndershootRisingEdge(OvershootUndershootRuleData::from_params(params)?)
+            PcbRuleKindData::UndershootRisingEdge(SignalMaximumRuleData::from_params(params)?)
         }
         RuleKind::MaxMinImpedance => {
             PcbRuleKindData::MaxMinImpedance(MaxMinImpedanceRuleData::from_params(params)?)
         }
         RuleKind::SignalTopValue => {
-            PcbRuleKindData::SignalTopValue(SignalValueRuleData::from_params(params)?)
+            PcbRuleKindData::SignalTopValue(SignalMinimumRuleData::from_params(params)?)
         }
         RuleKind::SignalBaseValue => {
-            PcbRuleKindData::SignalBaseValue(SignalValueRuleData::from_params(params)?)
+            PcbRuleKindData::SignalBaseValue(SignalMaximumRuleData::from_params(params)?)
         }
         RuleKind::FlightTimeRisingEdge => {
-            PcbRuleKindData::FlightTimeRisingEdge(FlightTimeRuleData::from_params(params)?)
+            PcbRuleKindData::FlightTimeRisingEdge(SignalMaximumRuleData::from_params(params)?)
         }
         RuleKind::FlightTimeFallingEdge => {
-            PcbRuleKindData::FlightTimeFallingEdge(FlightTimeRuleData::from_params(params)?)
+            PcbRuleKindData::FlightTimeFallingEdge(SignalMaximumRuleData::from_params(params)?)
         }
         RuleKind::LayerStack => PcbRuleKindData::LayerStack(EmptyRuleData::from_params(params)?),
         RuleKind::MaxSlopeRisingEdge => {
@@ -2774,6 +2797,149 @@ mod tests {
         ParameterCollection::from_str(s).unwrap()
     }
 
+    const RULE_BASE: &str = "|SELECTION=FALSE|LAYER=TOP|LOCKED=FALSE|POLYGONOUTLINE=FALSE\
+        |USERROUTED=TRUE|KEEPOUT=FALSE|UNIONINDEX=0|NETSCOPE=AnyNet|LAYERKIND=SameLayer\
+        |NAME=R|COMMENT=|UNIQUEID=ABCDEFGH|DEFINEDBYLOGICALDOCUMENT=FALSE\
+        |SCOPE1EXPRESSION=All|SCOPE2EXPRESSION=All|ENABLED=TRUE|PRIORITY=1";
+
+    fn rule_of(kind_and_keys: &str) -> Result<PcbRule> {
+        let mut params = params_from_str(&format!("{RULE_BASE}|RULEKIND={kind_and_keys}"));
+        parse_rule(0, &mut params)
+    }
+
+    fn vertex(i: usize, kind: u8, x: &str, y: &str, arc: &str) -> String {
+        format!(
+            "|KIND{i}={kind}|VX{i}={x}|VY{i}={y}|{}",
+            arc.replace('#', &i.to_string())
+        )
+    }
+
+    const LINE_ARC: &str = "CX#=0mil|CY#=0mil|SA#= 0.00000000000000E+0000\
+        |EA#= 0.00000000000000E+0000|R#=0mil";
+
+    #[test]
+    fn room_definition_outline_and_flags() {
+        let mut keys = String::from("RoomDefinition");
+        for (i, (x, y)) in [
+            ("0mil", "0mil"),
+            ("100mil", "0mil"),
+            ("100mil", "50.5mil"),
+            ("0mil", "0mil"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            keys += &vertex(i, 0, x, y, LINE_ARC);
+        }
+        keys += &vertex(
+            4,
+            1,
+            "10mil",
+            "0mil",
+            "CX#=0mil|CY#=0mil|SA#= 0.00000000000000E+0000|EA#= 9.00000000000000E+0001|R#=10mil",
+        );
+        keys += "|CONFINEMENTSTYLE=ConfineOut|FORMATCOPY=TRUE|LOCKCOMPONENTS=TRUE";
+        let rule = rule_of(&keys).unwrap();
+        let PcbRuleKindData::ConfinementConstraint(d) = &rule.kind_data else {
+            panic!("{:?}", rule.kind_data)
+        };
+        assert!(d.lock_components && d.format_copy);
+        assert_eq!(
+            d.confinement_style,
+            altium_format_types::ConfinementStyle::ConfineOut
+        );
+        assert_eq!(d.outline.segments.len(), 5);
+        match &d.outline.segments[4] {
+            crate::api::pcb_common::ContourSegment::Arc {
+                end_angle, radius, ..
+            } => {
+                assert_eq!(*end_angle, 90.0);
+                assert_eq!(*radius, Coord::from_mils_f64(10.0));
+            }
+            other => panic!("{other:?}"),
+        }
+        // Round trip.
+        let rec = serialize_rule(&rule).unwrap();
+        let mut params = rec.params.clone();
+        let again = parse_rule(0, &mut params).unwrap();
+        assert_eq!(
+            format!("{:?}", rule.kind_data),
+            format!("{:?}", again.kind_data)
+        );
+    }
+
+    #[test]
+    fn room_definition_rejects_partial_vertex_and_missing_keys() {
+        let partial = format!(
+            "RoomDefinition|KIND0=0|VX0=0mil|VY0=0mil\
+             |CONFINEMENTSTYLE=ConfineIn|FORMATCOPY=TRUE|LOCKCOMPONENTS=FALSE"
+        );
+        assert!(rule_of(&partial).is_err());
+        let no_lock = format!(
+            "RoomDefinition{}|CONFINEMENTSTYLE=ConfineIn|FORMATCOPY=TRUE",
+            vertex(0, 0, "0mil", "0mil", LINE_ARC)
+        );
+        assert!(rule_of(&no_lock).is_err());
+        let no_vertices =
+            "RoomDefinition|CONFINEMENTSTYLE=ConfineIn|FORMATCOPY=TRUE|LOCKCOMPONENTS=FALSE";
+        assert!(rule_of(no_vertices).is_err());
+    }
+
+    #[test]
+    fn smd_distance_is_internal_units() {
+        let rule = rule_of("SMDToCorner|DISTANCE=40157").unwrap();
+        let PcbRuleKindData::SmdToCorner(d) = &rule.kind_data else {
+            panic!()
+        };
+        assert_eq!(d.distance, Coord::from_internal(40157));
+        assert!(rule_of("SMDToPlane|DISTANCE=10mil").is_err());
+    }
+
+    #[test]
+    fn back_drilling_reads_ad26_keys() {
+        let rule = rule_of(
+            "BackDrilling|MAXSTUBLENGTH=10mil|USETOPBACKDRILL=TRUE|USEBOTTOMBACKDRILL=FALSE\
+             |HOLEOVERSIZE=8mil|HOLETOLPLUS=1mil|HOLETOLMINUS=1mil",
+        )
+        .unwrap();
+        let PcbRuleKindData::BackDrilling(d) = &rule.kind_data else {
+            panic!()
+        };
+        assert_eq!(d.max_stub_length, MilCoord(Coord::from_mils_f64(10.0)));
+        assert!(d.use_top_backdrill && !d.use_bottom_backdrill);
+        assert!(rule_of("BackDrilling|BACKDRILLINGDEPTH=10mil").is_err());
+    }
+
+    #[test]
+    fn routing_neck_down_is_refused() {
+        let err = rule_of("RoutingNeckDown|LAYERMAXLENGTH=x").unwrap_err();
+        assert!(format!("{err}").contains("LAYERMAXLENGTH"), "{err}");
+    }
+
+    #[test]
+    fn signal_integrity_values() {
+        let rule = rule_of("MaxMinImpedance|MINIMUM= 49.00|MAXIMUM= 51.00").unwrap();
+        let PcbRuleKindData::MaxMinImpedance(d) = &rule.kind_data else {
+            panic!()
+        };
+        assert_eq!((d.minimum.0, d.maximum.0), (49.0, 51.0));
+        assert!(rule_of("OvershootFalling|MAXIMUM=-1.000").is_ok());
+        assert!(rule_of("OvershootFalling|MAXOVERSHOOT=1").is_err());
+    }
+
+    #[test]
+    fn plane_connect_per_object_settings_are_required_in_full() {
+        let full = "PlaneConnect|PAD.PLANECONNECTSTYLE=Relief|PAD.RELIEFEXPANSION=20mil\
+                    |PAD.RELIEFENTRIES=4|PAD.RELIEFCONDUCTORWIDTH=10mil|PAD.RELIEFAIRGAP=10mil";
+        let rule = rule_of(full).unwrap();
+        let PcbRuleKindData::PowerPlaneConnectStyle(d) = &rule.kind_data else {
+            panic!()
+        };
+        assert!(d.connect_style.is_none());
+        assert_eq!(d.type_overrides[0].prefix, ConnectStyleTarget::Pad);
+        assert!(rule_of("PlaneConnect|PAD.PLANECONNECTSTYLE=Relief").is_err());
+    }
+
     // ── MilCoord roundtrip ──────────────────────────────────────────────────
 
     #[test]
@@ -2850,7 +3016,7 @@ mod tests {
                   |COMMENT=|UNIQUEID=QZHEQKDM|DEFINEDBYLOGICALDOCUMENT=FALSE\
                   |SCOPE1EXPRESSION=All|SCOPE2EXPRESSION=All\
                   |ENABLED=TRUE|PRIORITY=1\
-                  |GAP=10mil";
+                  |GAP=10mil|GENERICCLEARANCE=10mil|OBJECTCLEARANCES=";
         let mut params = params_from_str(s);
         let rule = parse_rule(0, &mut params).unwrap();
         assert_eq!(rule.base.rule_kind, RuleKind::Clearance);
@@ -3234,7 +3400,8 @@ mod tests {
                       |LAYERKIND=SameLayer|NAME=Clearance1\
                       |COMMENT=|UNIQUEID=QZHEQKDM|DEFINEDBYLOGICALDOCUMENT=FALSE\
                       |SCOPE1EXPRESSION=All|SCOPE2EXPRESSION=All\
-                      |ENABLED=TRUE|PRIORITY=1|GAP=10mil";
+                      |ENABLED=TRUE|PRIORITY=1|GAP=10mil\
+                      |GENERICCLEARANCE=10mil|OBJECTCLEARANCES=";
         let mut params1 = params_from_str(input);
         let rule1 = parse_rule(0, &mut params1).unwrap();
 

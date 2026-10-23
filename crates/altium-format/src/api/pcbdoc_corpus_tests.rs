@@ -1448,3 +1448,167 @@ fn corpus_r14_text_style() {
     eprintln!("{texts} texts, {hidden} hidden, {truetype} TrueType, {inverted} inverted");
     assert!(edit_checked && hidden > 0);
 }
+
+/// R22: every rule kind in the corpus has a typed `RuleParams` variant; room
+/// definitions expose their outline, layer and lock flags; the per-object
+/// plane/polygon connect settings and the newly exposed keys read as stored;
+/// and rules read the same after a save and reopen.
+#[test]
+fn corpus_r22_rules() {
+    use std::collections::BTreeMap;
+    let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+    // (rooms, enabled, vertices, arc edges, locked, bottom layer)
+    let mut rooms = (0, 0, 0, 0, 0, 0);
+    let mut plane_per_object = 0;
+    let mut polygon_per_object = 0;
+    let mut stacked_microvias = 0;
+    let mut exposed_copper = 0;
+    let mut without_3d_body = 0;
+    let mut via_grids = 0;
+    for (name, doc) in corpus_docs() {
+        if BOARDS_FAILING_AT_BASE.contains(&name.as_str()) {
+            continue;
+        }
+        let board = doc.board().unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        for rule in &board.rules {
+            let variant = format!("{:?}", rule.params);
+            let variant = variant
+                .split(|c: char| !c.is_alphanumeric())
+                .next()
+                .unwrap()
+                .to_owned();
+            *kinds.entry(variant).or_default() += 1;
+            match &rule.params {
+                RuleParams::Other { kind } => panic!("{name}: rule kind {kind:?} untyped"),
+                RuleParams::ConfinementConstraint {
+                    lock_components,
+                    format_copy,
+                    layer,
+                    outline,
+                    ..
+                } => {
+                    rooms.0 += 1;
+                    rooms.1 += usize::from(rule.enabled);
+                    rooms.2 += outline.segments.len();
+                    rooms.3 += outline
+                        .segments
+                        .iter()
+                        .filter(|s| matches!(s, ContourSegment::Arc { .. }))
+                        .count();
+                    rooms.4 += usize::from(*lock_components);
+                    rooms.5 += usize::from(layer.legacy_v6() == Some(V6Layer::BottomLayer));
+                    assert!(*format_copy, "{name}: {}", rule.name);
+                    let pts = outline.to_points();
+                    assert!(pts.len() >= 4, "{name}: {}", rule.name);
+                    assert_eq!(pts.first(), pts.last(), "{name}: {} not closed", rule.name);
+                }
+                RuleParams::PowerPlaneConnectStyle {
+                    connect_style,
+                    per_object,
+                    ..
+                } => {
+                    plane_per_object += usize::from(!per_object.is_empty());
+                    assert_eq!(connect_style.is_none(), !per_object.is_empty(), "{name}");
+                }
+                RuleParams::PolygonConnectStyle {
+                    connect_style,
+                    per_object,
+                    ..
+                } => {
+                    polygon_per_object += usize::from(!per_object.is_empty());
+                    assert_eq!(connect_style.is_none(), !per_object.is_empty(), "{name}");
+                }
+                RuleParams::HoleToHoleClearance {
+                    allow_stacked_microvias,
+                    ..
+                } => stacked_microvias += usize::from(*allow_stacked_microvias),
+                RuleParams::SilkToSolderMaskClearance {
+                    clearance_to_exposed_copper,
+                    ..
+                } => exposed_copper += usize::from(*clearance_to_exposed_copper),
+                RuleParams::ComponentClearance {
+                    do_not_check_without_3d_body,
+                    ..
+                } => without_3d_body += usize::from(*do_not_check_without_3d_body == Some(true)),
+                RuleParams::FanoutControl { via_grid, .. } => {
+                    via_grids += usize::from(*via_grid == Coord::from_mils_f64(1.0))
+                }
+                _ => {}
+            }
+        }
+        // Rules are written from the typed model on save: every record must
+        // serialize, re-parse and convert to the same public rule.
+        for (i, rule) in doc.rules.iter().enumerate() {
+            let rec = crate::pcbdoc::drc::serialize_rule(rule).unwrap();
+            let mut params = rec.params.clone();
+            let again = crate::pcbdoc::drc::parse_rule(rec.prefix, &mut params)
+                .unwrap_or_else(|e| panic!("{name}: rule #{i} re-parse: {e:#}"));
+            assert_eq!(
+                format!("{:?}", rule_params_from_internal(rule).unwrap()),
+                format!("{:?}", rule_params_from_internal(&again).unwrap()),
+                "{name}: rule #{i} changed by write/read"
+            );
+        }
+    }
+    let expected: BTreeMap<String, usize> = [
+        ("AcuteAngle", 10),
+        ("AssemblyTestpointStyle", 79),
+        ("AssemblyTestpointUsage", 80),
+        ("BoardOutlineClearance", 46),
+        ("BrokenNets", 79),
+        ("Clearance", 145),
+        ("ComponentClearance", 88),
+        ("ConfinementConstraint", 94),
+        ("CreepageDistance", 1),
+        ("DiffPairsRouting", 99),
+        ("FabricationTestpointStyle", 79),
+        ("FabricationTestpointUsage", 79),
+        ("FanoutControl", 396),
+        ("HoleToHoleClearance", 79),
+        ("LayerPair", 79),
+        ("Length", 2),
+        ("MatchedLengths", 78),
+        ("MaxMinHeight", 80),
+        ("MaxMinHoleSize", 80),
+        ("MinimumAnnularRing", 40),
+        ("MinimumSolderMaskSliver", 79),
+        ("NetAntennae", 79),
+        ("PasteMaskExpansion", 79),
+        ("PolygonConnectStyle", 127),
+        ("PowerPlaneClearance", 86),
+        ("PowerPlaneConnectStyle", 96),
+        ("ReturnPath", 2),
+        ("RoutingCornerStyle", 79),
+        ("RoutingLayers", 81),
+        ("RoutingPriority", 79),
+        ("RoutingTopology", 94),
+        ("RoutingViaStyle", 85),
+        ("ShortCircuit", 80),
+        ("SignalMaximum", 2),
+        ("SilkToBoardRegionClearance", 79),
+        ("SilkToSilkClearance", 79),
+        ("SilkToSolderMaskClearance", 79),
+        ("SmdEntry", 2),
+        ("SmdNeckDown", 1),
+        ("SmdToCorner", 2),
+        ("SmdToPlane", 1),
+        ("SolderMaskExpansion", 91),
+        ("SupplyNets", 39),
+        ("UnconnectedPin", 4),
+        ("UnpouredPolygon", 79),
+        ("ViasUnderSmd", 4),
+        ("Width", 116),
+    ]
+    .into_iter()
+    .map(|(k, n)| (k.to_owned(), n))
+    .collect();
+    assert_eq!(kinds, expected);
+    // 94 rooms (59 enabled), 823 vertices, all line edges, none locked.
+    assert_eq!(rooms, (94, 59, 823, 0, 0, 0));
+    assert_eq!((plane_per_object, polygon_per_object), (17, 37));
+    assert_eq!(
+        (stacked_microvias, exposed_copper, without_3d_body),
+        (56, 79, 4)
+    );
+    assert_eq!(via_grids, 396);
+}

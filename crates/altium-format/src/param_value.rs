@@ -480,6 +480,41 @@ impl ToParamValue for MilCoord {
     }
 }
 
+// ── SignalValue ─────────────────────────────────────────────────────────────
+// A float stored as text by the signal-integrity rule kinds and SupplyNets
+// (AD 26 reads these keys as strings, rule-params.tsv). The corpus stores a sign
+// slot (space or '-') and four significant digits: " 51.00", "-1.000",
+// " 0.000", " 12.00", " 1.500". Parsing is strict (trimmed, finite f64).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(crate) struct SignalValue(pub f64);
+
+impl FromParamValue for SignalValue {
+    fn from_param_value(key: &str, value: &str) -> Result<Self> {
+        let v = f64::from_param_value(key, value)?;
+        if !v.is_finite() {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("non-finite value '{value}'"),
+            });
+        }
+        Ok(SignalValue(v))
+    }
+}
+
+impl ToParamValue for SignalValue {
+    fn to_param_value(&self) -> String {
+        let a = self.0.abs();
+        let int_digits = if a < 1.0 {
+            1
+        } else {
+            a.log10().floor() as i32 + 1
+        };
+        let decimals = (4 - int_digits).max(0) as usize;
+        let sign = if self.0 < 0.0 { '-' } else { ' ' };
+        format!("{sign}{a:.decimals$}")
+    }
+}
+
 // ── ExactMilCoord ───────────────────────────────────────────────────────────
 // A length stored as "<decimal>mil" (e.g. "1901.8898mil", "-3mil", "0mil") in
 // Polygons6 and Board6 vertex records. One internal unit is 1/10,000 mil, so a
@@ -820,6 +855,16 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn signal_value_round_trips_corpus_forms() {
+        for raw in [" 51.00", "-1.000", " 0.000", " 12.00", " 1.500", " 4.000"] {
+            let v = SignalValue::from_param_value("MAXIMUM", raw).unwrap();
+            assert_eq!(v.to_param_value(), raw, "value {raw:?}");
+        }
+        assert!(SignalValue::from_param_value("MAXIMUM", "abc").is_err());
+        assert!(SignalValue::from_param_value("MAXIMUM", "inf").is_err());
+    }
 
     #[test]
     fn exact_mil_coord_parses_corpus_forms_exactly() {

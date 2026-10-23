@@ -12,7 +12,7 @@ use altium_format_types::pcb::constants::BOARD_REGION_OBJECT_KIND;
 use altium_format_types::pcb::constants::{POLYGON_INDEX_PLANE_SPLIT_LINE, PRIMITIVE_INDEX_NONE};
 use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, PolyHatchStyle,
-    PolySegmentKind, PolygonType, RegionKind, RuleKind, V6Layer, V7Layer,
+    PolySegmentKind, PolygonType, RegionKind, V6Layer, V7Layer,
 };
 use altium_format_types::pcb::{ObjectClearanceId, TextAutoposition, ViolationKind};
 use altium_format_types::{ComponentKind, DielectricType, LayerStackStyle, PcbObjectId};
@@ -26,7 +26,10 @@ use crate::api::pcbdoc_types::*;
 use crate::board_config::PcbBoardConfig;
 use crate::param_collection::ParameterCollection;
 use crate::param_value::{ExactMilCoord, MilCoord};
-use crate::pcbdoc::drc::{PcbRuleKindData, PcbViolation};
+use crate::pcbdoc::drc::{
+    PcbRule, PcbRuleKindData, PcbViolation, TestpointStyleRuleData, TestpointUsageRuleData,
+    signal_prefix_layer,
+};
 use crate::pcbdoc::primitives::PcbPrimitive;
 use crate::pcbdoc::records::{ParamSectionKind, PrefixedParamSectionKind, PrimitiveSectionKind};
 use crate::pcbdoc::{
@@ -183,7 +186,7 @@ pub(crate) fn board_from_internal(doc: &PcbDoc) -> Result<PcbDocBoard> {
     let differential_pairs = convert_differential_pairs(doc)?;
     let dimensions = convert_dimensions(doc)?;
     let models = convert_models(doc);
-    let rules = convert_rules(doc);
+    let rules = convert_rules(doc).context("Rules6")?;
     let violations = convert_violations(doc).context("stored violations")?;
     let waived_violations = convert_waived_violations(doc)?;
     let settings = convert_board_settings(doc)?;
@@ -1139,7 +1142,7 @@ fn convert_models(doc: &PcbDoc) -> Vec<Model3D> {
     models
 }
 
-fn convert_rules(doc: &PcbDoc) -> Vec<DesignRule> {
+fn convert_rules(doc: &PcbDoc) -> Result<Vec<DesignRule>> {
     doc.rules
         .iter()
         .enumerate()
@@ -1149,7 +1152,7 @@ fn convert_rules(doc: &PcbDoc) -> Vec<DesignRule> {
             } else {
                 rule.base.name.clone()
             };
-            DesignRule {
+            Ok(DesignRule {
                 id,
                 name: rule.base.name.clone(),
                 kind: rule.base.rule_kind,
@@ -1160,10 +1163,15 @@ fn convert_rules(doc: &PcbDoc) -> Vec<DesignRule> {
                 net_scope: rule.base.net_scope,
                 layer_scope: rule.base.layer_kind,
                 comment: rule.base.comment.clone(),
-                params: rule_params_from_internal(&rule.kind_data, rule.base.rule_kind),
-            }
+                params: rule_params_from_internal(rule).with_context(|| {
+                    format!(
+                        "rule #{idx} '{}' ({:?})",
+                        rule.base.name, rule.base.rule_kind
+                    )
+                })?,
+            })
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()
 }
 
 fn object_clearances(matrix: &crate::param_value::ClearanceMatrix) -> Vec<ObjectClearance> {
@@ -1173,8 +1181,78 @@ fn object_clearances(matrix: &crate::param_value::ClearanceMatrix) -> Vec<Object
         .collect()
 }
 
-fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -> RuleParams {
-    match kind_data {
+fn layer_width_limits(
+    prefix: &str,
+    min: Option<MilCoord>,
+    max: Option<MilCoord>,
+    preferred: Option<MilCoord>,
+) -> Result<LayerWidthLimits> {
+    Ok(LayerWidthLimits {
+        layer: signal_prefix_layer(prefix)?,
+        min: min.map(|v| v.0),
+        max: max.map(|v| v.0),
+        preferred: preferred.map(|v| v.0),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn diff_pair_layer_limits(
+    prefix: &str,
+    min_width: Option<MilCoord>,
+    max_width: Option<MilCoord>,
+    preferred_width: Option<MilCoord>,
+    min_gap: Option<MilCoord>,
+    max_gap: Option<MilCoord>,
+    preferred_gap: Option<MilCoord>,
+) -> Result<DiffPairLayerLimits> {
+    Ok(DiffPairLayerLimits {
+        layer: signal_prefix_layer(prefix)?,
+        min_width: min_width.map(|v| v.0),
+        max_width: max_width.map(|v| v.0),
+        preferred_width: preferred_width.map(|v| v.0),
+        min_gap: min_gap.map(|v| v.0),
+        max_gap: max_gap.map(|v| v.0),
+        preferred_gap: preferred_gap.map(|v| v.0),
+    })
+}
+
+fn testpoint_style(d: &TestpointStyleRuleData) -> TestpointStyle {
+    TestpointStyle {
+        side: d.side,
+        testpoint_under_component: d.testpoint_under_component,
+        min_size: d.min_size.0,
+        max_size: d.max_size.0,
+        preferred_size: d.preferred_size.0,
+        min_hole_size: d.min_hole_size.0,
+        max_hole_size: d.max_hole_size.0,
+        preferred_hole_size: d.preferred_hole_size.0,
+        testpoint_grid: d.testpoint_grid.0,
+        use_grid: d.use_grid,
+        grid_tolerance: d.grid_tolerance.0,
+        allow_side_top: d.allow_side_top,
+        allow_side_bottom: d.allow_side_bottom,
+        min_spacing: d.min_spacing.map(|v| v.0),
+        grid_origin_x: d.grid_origin_x.map(|v| v.0),
+        grid_origin_y: d.grid_origin_y.map(|v| v.0),
+        comp_body_clearance: d.comp_body_clearance.map(|v| v.0),
+        board_edge_clearance: d.board_edge_clearance.map(|v| v.0),
+        pad_hole_center_clearance: d.pad_hole_center_clearance.map(|v| v.0),
+        via_hole_center_clearance: d.via_hole_center_clearance.map(|v| v.0),
+    }
+}
+
+fn testpoint_usage(d: &TestpointUsageRuleData) -> TestpointUsage {
+    TestpointUsage {
+        valid: d.valid,
+        allow_multiple: d.allow_multiple,
+        valid_require_at_leafs: d.valid_require_at_leafs,
+    }
+}
+
+fn rule_params_from_internal(rule: &PcbRule) -> Result<RuleParams> {
+    let mil = |v: &MilCoord| v.0;
+    let opt = |v: &Option<MilCoord>| v.map(|m| m.0);
+    Ok(match &rule.kind_data {
         PcbRuleKindData::Clearance(d) => RuleParams::Clearance {
             gap: d.gap.0,
             ignore_pad_to_pad: d.ignore_pad_to_pad,
@@ -1185,22 +1263,70 @@ fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -
             min: d.min_limit.0,
             max: d.max_limit.0,
             preferred: d.preferred_width.0,
+            check_connected_copper: d.check_connected_copper,
+            per_layer: d
+                .per_layer
+                .iter()
+                .map(|o| layer_width_limits(&o.prefix, o.min_width, o.max_width, o.pref_width))
+                .collect::<Result<_>>()?,
+            impedance: RuleImpedance {
+                impedance_driven: d.impedance_driven,
+                min: d.min_imp,
+                max: d.max_imp,
+                favored: d.fav_imp,
+                profile_driven: d.impedance_profile_driven,
+                profile_id: d.impedance_profile_id.clone(),
+                profile_value: d.impedance_profile_value,
+            },
+            substacks: d
+                .substack_overrides
+                .iter()
+                .map(|ss| {
+                    Ok(WidthSubstack {
+                        id: ss.substack_id.clone(),
+                        layers: ss
+                            .layer_overrides
+                            .iter()
+                            .map(|(p, a, b, c)| layer_width_limits(p, *a, *b, *c))
+                            .collect::<Result<_>>()?,
+                    })
+                })
+                .collect::<Result<_>>()?,
         },
         PcbRuleKindData::Length(d) => RuleParams::Length {
             min: d.min_limit.0,
             max: d.max_limit.0,
+            use_delay_units: d.use_delay_units,
+            min_delay: d.min_delay,
+            max_delay: d.max_delay,
         },
         PcbRuleKindData::MatchedLengths(d) => RuleParams::MatchedLengths {
             tolerance: d.tolerance.0,
+            check_nets_in_diff_pair: d.check_nets_in_diff_pair,
+            check_diff_pair_vs_diff_pair: d.check_diff_pair_vs_diff_pair,
+            check_x_signals: d.check_x_signals,
+            check_others: d.check_others,
+            use_delay_units: d.use_delay_units,
+            delay_tolerance: d.delay_tolerance,
+            target_source_name: d.target_source_name.clone(),
+            phase_matching: d.phase_matching,
+            phase_tolerance: opt(&d.phase_tolerance),
+            phase_delay_tolerance: d.phase_delay_tolerance,
+            phase_distance: opt(&d.phase_distance),
+            amplitude: opt(&d.amplitude),
+            serpentine_gap: opt(&d.gap),
+            style: d.style,
         },
         PcbRuleKindData::ParallelSegment(d) => RuleParams::ParallelSegment {
             gap: d.gap.0,
             limit: d.limit.0,
-            parallel_length: d.parallel_length.0,
+            parallel_length: opt(&d.parallel_length),
+            check_parallel: d.check_parallel,
+            check_adjacent_layers: d.check_adjacent_layers,
         },
-        PcbRuleKindData::DaisyChainStubLength(d) => RuleParams::DaisyChainStubLength {
-            max_limit: d.max_limit.0,
-        },
+        PcbRuleKindData::DaisyChainStubLength(d) => {
+            RuleParams::DaisyChainStubLength { limit: d.limit.0 }
+        }
         PcbRuleKindData::ShortCircuit(d) => RuleParams::ShortCircuit { allowed: d.allowed },
         PcbRuleKindData::BrokenNets(d) => RuleParams::BrokenNets {
             check_bad_connections: d.check_bad_connections,
@@ -1212,7 +1338,10 @@ fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -
         PcbRuleKindData::MinimumAnnularRing(d) => {
             RuleParams::MinimumAnnularRing { min: d.min_limit.0 }
         }
-        PcbRuleKindData::HoleToHoleClearance(d) => RuleParams::HoleToHoleClearance { gap: d.gap.0 },
+        PcbRuleKindData::HoleToHoleClearance(d) => RuleParams::HoleToHoleClearance {
+            gap: d.gap.0,
+            allow_stacked_microvias: d.allow_stacked_microvias,
+        },
         PcbRuleKindData::BoardOutlineClearance(d) => RuleParams::BoardOutlineClearance {
             gap: d.gap.0,
             ignore_pad_to_pad: d.ignore_pad_to_pad,
@@ -1222,31 +1351,71 @@ fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -
         PcbRuleKindData::MaxMinHoleSize(d) => RuleParams::MaxMinHoleSize {
             min: d.min_limit.0,
             max: d.max_limit.0,
+            absolute_values: d.absolute_values,
+            min_percent: d.min_percent,
+            max_percent: d.max_percent,
         },
         PcbRuleKindData::SolderMaskExpansion(d) => RuleParams::SolderMaskExpansion {
             expansion: d.expansion.0,
             is_tenting_top: d.is_tenting_top,
             is_tenting_bottom: d.is_tenting_bottom,
+            from_hole_edge: d.soldermask_from_hole,
+            use_separate_expansions: d.use_separate_expansions,
+            expansion_bottom: opt(&d.expansion_bottom),
         },
         PcbRuleKindData::PasteMaskExpansion(d) => RuleParams::PasteMaskExpansion {
             expansion: d.expansion.0,
             percent: d.percent,
+            th_pad_use_top_paste: d.thpad_use_top_paste,
+            th_pad_use_bottom_paste: d.thpad_use_bottom_paste,
+            use_paste: d.use_paste,
         },
         PcbRuleKindData::PowerPlaneClearance(d) => RuleParams::PowerPlaneClearance {
             clearance: d.clearance.0,
         },
         PcbRuleKindData::PowerPlaneConnectStyle(d) => RuleParams::PowerPlaneConnectStyle {
-            connect_style: d.connect_style.unwrap_or_default(),
-            relief_conductor_width: d.relief_conductor_width.map(|m| m.0).unwrap_or(Coord::ZERO),
-            relief_entries: d.relief_entries.unwrap_or(4),
-            relief_air_gap: d.relief_air_gap.map(|m| m.0).unwrap_or(Coord::ZERO),
+            connect_style: d.connect_style,
+            relief_expansion: opt(&d.relief_expansion),
+            relief_conductor_width: opt(&d.relief_conductor_width),
+            relief_entries: d.relief_entries,
+            relief_air_gap: opt(&d.relief_air_gap),
+            per_object: d
+                .type_overrides
+                .iter()
+                .map(|o| PlaneConnectOverride {
+                    object: o.prefix,
+                    connect_style: o.connect_style,
+                    relief_expansion: mil(&o.relief_expansion),
+                    relief_entries: o.relief_entries,
+                    relief_conductor_width: mil(&o.relief_conductor_width),
+                    relief_air_gap: mil(&o.relief_air_gap),
+                })
+                .collect(),
         },
         PcbRuleKindData::PolygonConnectStyle(d) => RuleParams::PolygonConnectStyle {
-            connect_style: d.connect_style.unwrap_or_default(),
-            relief_conductor_width: d.relief_conductor_width.map(|m| m.0).unwrap_or(Coord::ZERO),
-            relief_entries: d.relief_entries.unwrap_or(4),
-            relief_angle: d.polygon_relief_angle.unwrap_or_default(),
-            air_gap_width: d.air_gap_width.map(|m| m.0).unwrap_or(Coord::ZERO),
+            connect_style: d.connect_style,
+            relief_conductor_width: opt(&d.relief_conductor_width),
+            relief_entries: d.relief_entries,
+            relief_angle: d.polygon_relief_angle,
+            air_gap_width: opt(&d.air_gap_width),
+            conductor_by_pad_edge: d.conductor_by_pad_edge,
+            enable_min_distance: d.enable_min_distance,
+            min_distance: opt(&d.min_distance),
+            per_object: d
+                .pad_type_overrides
+                .iter()
+                .map(|o| PolygonConnectOverride {
+                    object: o.prefix,
+                    connect_style: o.connect_style,
+                    relief_conductor_width: mil(&o.relief_conductor_width),
+                    relief_entries: o.relief_entries,
+                    relief_angle: o.polygon_relief_angle,
+                    air_gap_width: mil(&o.air_gap_width),
+                    conductor_by_pad_edge: o.conductor_by_pad_edge,
+                    enable_min_distance: o.enable_min_distance,
+                    min_distance: opt(&o.min_distance),
+                })
+                .collect(),
         },
         PcbRuleKindData::RoutingTopology(d) => RuleParams::RoutingTopology {
             topology: d.topology,
@@ -1270,26 +1439,85 @@ fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -
             max_width: d.max_width.0,
             preferred_width: d.preferred_width.0,
             via_style: d.via_style,
+            use_via_templates: d.use_via_templates,
+            via_templates: d
+                .via_templates
+                .iter()
+                .map(|t| ViaTemplateRef {
+                    guid: t.guid.clone(),
+                    name: t.name.clone(),
+                })
+                .collect(),
         },
         PcbRuleKindData::ComponentClearance(d) => RuleParams::ComponentClearance {
             gap: d.gap.0,
             collision_check_mode: d.collision_check_mode,
             vertical_gap: d.vertical_gap.0,
+            show_distances: d.show_distances,
+            do_not_check_without_3d_body: d.do_not_check_without_3d_body,
+            check_component_boundary: d.check_component_boundary,
         },
         PcbRuleKindData::ConfinementConstraint(d) => RuleParams::ConfinementConstraint {
             confinement_style: d.confinement_style,
+            lock_components: d.lock_components,
+            format_copy: d.format_copy,
+            layer: layer_from_param_value("LAYER", &rule.base.layer)?,
+            outline: d.outline.clone(),
         },
         PcbRuleKindData::DifferentialPairsRouting(d) => RuleParams::DiffPairsRouting {
             min_gap: d.min_limit.0,
             max_gap: d.max_limit.0,
             preferred_gap: d.most_freq_gap.0,
             max_uncoupled_length: d.max_uncoupled_length.0,
+            most_frequent_width: opt(&d.most_freq_width),
+            filter_layer_stack_id: d.filter_layer_stack_id.clone(),
+            per_layer: d
+                .per_layer
+                .iter()
+                .map(|o| {
+                    diff_pair_layer_limits(
+                        &o.prefix,
+                        o.min_width,
+                        o.max_width,
+                        o.pref_width,
+                        o.min_gap,
+                        o.max_gap,
+                        o.pref_gap,
+                    )
+                })
+                .collect::<Result<_>>()?,
+            impedance: RuleImpedance {
+                impedance_driven: d.impedance_driven,
+                min: d.min_imp,
+                max: d.max_imp,
+                favored: d.fav_imp,
+                profile_driven: d.impedance_profile_driven,
+                profile_id: d.impedance_profile_id.clone(),
+                profile_value: d.impedance_profile_value,
+            },
+            substacks: d
+                .substack_overrides
+                .iter()
+                .map(|ss| {
+                    Ok(DiffPairSubstack {
+                        id: ss.substack_id.clone(),
+                        layers: ss
+                            .layer_overrides
+                            .iter()
+                            .map(|(p, a, b, c, e, f, g)| {
+                                diff_pair_layer_limits(p, *a, *b, *c, *e, *f, *g)
+                            })
+                            .collect::<Result<_>>()?,
+                    })
+                })
+                .collect::<Result<_>>()?,
         },
         PcbRuleKindData::FanoutControl(d) => RuleParams::FanoutControl {
             bga_dir: d.bga_dir,
             bga_via_mode: d.bga_via_mode,
             fanout_style: d.fanout_style,
             fanout_direction: d.fanout_direction,
+            via_grid: d.via_grid.0,
         },
         PcbRuleKindData::MaxMinHeight(d) => RuleParams::MaxMinHeight {
             min_height: d.min_height.0,
@@ -1301,6 +1529,7 @@ fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -
         },
         PcbRuleKindData::SilkToSolderMaskClearance(d) => RuleParams::SilkToSolderMaskClearance {
             gap: d.min_silkscreen_to_mask_gap.0,
+            clearance_to_exposed_copper: d.clearance_to_exposed_copper,
         },
         PcbRuleKindData::SilkToSilkClearance(d) => RuleParams::SilkToSilkClearance {
             gap: d.silk_to_silk_clearance.0,
@@ -1309,29 +1538,117 @@ fn rule_params_from_internal(kind_data: &PcbRuleKindData, rule_kind: RuleKind) -
             tolerance: d.net_antennae_tolerance.0,
         },
         PcbRuleKindData::SmdToCorner(d) => RuleParams::SmdToCorner {
-            distance: d.distance.0,
+            distance: d.distance,
         },
         PcbRuleKindData::SmdToPlane(d) => RuleParams::SmdToPlane {
-            distance: d.distance.0,
+            distance: d.distance,
         },
         PcbRuleKindData::SmdNeckDown(d) => RuleParams::SmdNeckDown { percent: d.percent },
         PcbRuleKindData::SmdEntry(d) => RuleParams::SmdEntry {
             side: d.side,
             corner: d.corner,
             any_angle: d.any_angle,
+            ignore_first_corner: d.ignore_first_corner,
         },
         PcbRuleKindData::UnpouredPolygon(d) => RuleParams::UnpouredPolygon {
             allow_unpoured: d.allow_unpoured,
+            allow_shelved: d.allow_shelved,
         },
         PcbRuleKindData::BackDrilling(d) => RuleParams::BackDrilling {
-            depth: d.backdrill_depth.0,
+            max_stub_length: d.max_stub_length.0,
+            use_top_backdrill: d.use_top_backdrill,
+            use_bottom_backdrill: d.use_bottom_backdrill,
+            hole_over_size: d.hole_over_size.0,
+            hole_tol_plus: d.hole_tol_plus.0,
+            hole_tol_minus: d.hole_tol_minus.0,
         },
-        PcbRuleKindData::Creepage(d) => RuleParams::CreepageDistance { gap: d.gap.0 },
-        PcbRuleKindData::AcuteAngle(d) => RuleParams::AcuteAngle { minimum: d.minimum },
+        PcbRuleKindData::Creepage(d) => RuleParams::CreepageDistance {
+            check_distance: d.check_distance.0,
+            apply_to_polygon_pour: d.apply_to_polygon_pour,
+            ignore_internal_layers: d.ignore_internal_layers,
+        },
+        PcbRuleKindData::AcuteAngle(d) => RuleParams::AcuteAngle {
+            minimum: d.minimum,
+            check_tracks_only: d.check_tracks_only,
+        },
         PcbRuleKindData::LayerPair(d) => RuleParams::LayerPair { enforce: d.enforce },
-        // All other variants fall through to Other
-        _ => RuleParams::Other { kind: rule_kind },
-    }
+        PcbRuleKindData::ComponentRotations(d) => RuleParams::ComponentRotations {
+            allowed_rotations: d.allowed_rotations,
+        },
+        PcbRuleKindData::PermittedLayers(d) => RuleParams::PermittedLayers {
+            top_layer_permitted: d.top_layer_permitted,
+            bottom_layer_permitted: d.bottom_layer_permitted,
+        },
+        PcbRuleKindData::FabricationTestpointStyle(d) => {
+            RuleParams::FabricationTestpointStyle(testpoint_style(d))
+        }
+        PcbRuleKindData::AssyTestPointStyle(d) => {
+            RuleParams::AssemblyTestpointStyle(testpoint_style(d))
+        }
+        PcbRuleKindData::FabricationTestpointUsage(d) => {
+            RuleParams::FabricationTestpointUsage(testpoint_usage(d))
+        }
+        PcbRuleKindData::AssyTestPointUsage(d) => {
+            RuleParams::AssemblyTestpointUsage(testpoint_usage(d))
+        }
+        PcbRuleKindData::SignalStimulus(d) => RuleParams::SignalStimulus {
+            kind: d.kind,
+            level: d.level,
+            start_time: d.start_time.0,
+            stop_time: d.stop_time.0,
+            period_time: d.period_time.0,
+        },
+        PcbRuleKindData::OvershootFallingEdge(d)
+        | PcbRuleKindData::OvershootRisingEdge(d)
+        | PcbRuleKindData::UndershootFallingEdge(d)
+        | PcbRuleKindData::UndershootRisingEdge(d)
+        | PcbRuleKindData::SignalBaseValue(d)
+        | PcbRuleKindData::FlightTimeRisingEdge(d)
+        | PcbRuleKindData::FlightTimeFallingEdge(d) => RuleParams::SignalMaximum {
+            maximum: d.maximum.0,
+        },
+        PcbRuleKindData::SignalTopValue(d) => RuleParams::SignalMinimum {
+            minimum: d.minimum.0,
+        },
+        PcbRuleKindData::MaxMinImpedance(d) => RuleParams::MaxMinImpedance {
+            minimum: d.minimum.0,
+            maximum: d.maximum.0,
+        },
+        PcbRuleKindData::MaxSlopeRisingEdge(d) | PcbRuleKindData::MaxSlopeFallingEdge(d) => {
+            RuleParams::MaxSlope {
+                max_slope: d.max_slope.0,
+            }
+        }
+        PcbRuleKindData::SupplyNets(d) => RuleParams::SupplyNets {
+            voltage: d.voltage.0,
+        },
+        PcbRuleKindData::ReturnPath(d) => RuleParams::ReturnPath {
+            impedance_profile_id: d.impedance_profile_id.clone(),
+            gap_limit: d.gap_limit.0,
+            use_antipads: d.use_antipads,
+            max_stitch_via_distance: opt(&d.max_stitch_via_distance),
+        },
+        PcbRuleKindData::RoutingNeckDown(d) => match *d {},
+        PcbRuleKindData::WireBonding(d) => RuleParams::WireBonding {
+            wire_to_wire_gap: d.wire_to_wire_gap.0,
+            min_wire_length: d.min_wire_length.0,
+            max_wire_length: d.max_wire_length.0,
+            bond_finger_space: d.bond_finger_space.0,
+            bond_finger_margin: d.bond_finger_margin.0,
+            angle: d.angle,
+            bond_finger_to_wire_alignment: d.bond_finger_to_wire_alignment,
+        },
+        PcbRuleKindData::ZAxisClearance(d) => RuleParams::ZAxisClearance {
+            clearance: d.z_axis_clearance.0,
+        },
+        PcbRuleKindData::SilkToBoardRegionClearance(_) => RuleParams::SilkToBoardRegionClearance,
+        PcbRuleKindData::NetsToIgnore(_) => RuleParams::NetsToIgnore,
+        PcbRuleKindData::UnconnectedPin(_) => RuleParams::UnconnectedPin,
+        PcbRuleKindData::LayerStack(_) => RuleParams::LayerStack,
+        PcbRuleKindData::None(_) => RuleParams::Other {
+            kind: rule.base.rule_kind,
+        },
+    })
 }
 
 pub(crate) fn convert_board_settings(doc: &PcbDoc) -> Result<BoardSettings> {

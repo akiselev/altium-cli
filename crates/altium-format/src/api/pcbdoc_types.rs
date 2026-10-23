@@ -13,8 +13,9 @@ use altium_format_types::color::Color;
 use altium_format_types::common::Unit;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    BgaFanoutDirection, BgaFanoutViaMode, ComponentCollisionCheckMode, CornerStyle,
-    FanoutDirection, FanoutStyle, NetTopology, PolygonReliefAngle, RouteVia,
+    BgaFanoutDirection, BgaFanoutViaMode, ComponentCollisionCheckMode, ComponentOrientationFlags,
+    ConnectStyleTarget, CornerStyle, FanoutDirection, FanoutStyle, LengthenerStyle, NetTopology,
+    PolygonReliefAngle, RouteVia, V6Layer,
 };
 use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, MaskExpansionMode, ObjectClearanceId, PadShape,
@@ -381,15 +382,146 @@ pub struct DesignRule {
     pub params: RuleParams,
 }
 
+/// Per-layer limits of a Width rule (`<LAYER>_MINWIDTH`, `_MAXWIDTH`,
+/// `_PREFWIDTH`); a key the rule does not store is `None`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayerWidthLimits {
+    /// The signal layer of the key prefix (`TOPLAYER`, `MIDLAYERn`, `BOTTOMLAYER`).
+    pub layer: V6Layer,
+    pub min: Option<Coord>,
+    pub max: Option<Coord>,
+    pub preferred: Option<Coord>,
+}
+
+/// Width limits for one layer substack (`SUBSTACKn` = id, then
+/// `<LAYER>_<ID>_MINWIDTH`, …).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WidthSubstack {
+    /// Substack GUID as stored (`{…}`).
+    pub id: String,
+    pub layers: Vec<LayerWidthLimits>,
+}
+
+/// Per-layer limits of a DiffPairsRouting rule (`<LAYER>_MINWIDTH`, …,
+/// `<LAYER>_MINGAP`, …); a key the rule does not store is `None`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiffPairLayerLimits {
+    pub layer: V6Layer,
+    pub min_width: Option<Coord>,
+    pub max_width: Option<Coord>,
+    pub preferred_width: Option<Coord>,
+    pub min_gap: Option<Coord>,
+    pub max_gap: Option<Coord>,
+    pub preferred_gap: Option<Coord>,
+}
+
+/// DiffPairsRouting limits for one layer substack.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiffPairSubstack {
+    pub id: String,
+    pub layers: Vec<DiffPairLayerLimits>,
+}
+
+/// Impedance settings shared by Width and DiffPairsRouting (each `None` when absent).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RuleImpedance {
+    /// `IMPEDANCEDRIVEN`.
+    pub impedance_driven: Option<bool>,
+    /// `MINIMP`, `MAXIMP`, `FAVIMP` (ohms).
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub favored: Option<f64>,
+    /// `IMPEDANCEPROFILEDRIVEN`, `IMPEDANCEPROFILEID`, `IMPEDANCEPROFILEVALUE`.
+    pub profile_driven: Option<bool>,
+    pub profile_id: Option<String>,
+    pub profile_value: Option<f64>,
+}
+
+/// A plane-connect setting for one object kind (`PAD.*`, `VIA.*`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaneConnectOverride {
+    pub object: ConnectStyleTarget,
+    pub connect_style: PlaneConnectionStyle,
+    pub relief_expansion: Coord,
+    pub relief_entries: i32,
+    pub relief_conductor_width: Coord,
+    pub relief_air_gap: Coord,
+}
+
+/// A polygon-connect setting for one object kind (`THPAD.*`, `SMDPAD.*`, `VIA.*`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolygonConnectOverride {
+    pub object: ConnectStyleTarget,
+    pub connect_style: PlaneConnectionStyle,
+    pub relief_conductor_width: Coord,
+    pub relief_entries: i32,
+    pub relief_angle: PolygonReliefAngle,
+    pub air_gap_width: Coord,
+    /// Absent from every corpus override.
+    pub conductor_by_pad_edge: Option<bool>,
+    pub enable_min_distance: Option<bool>,
+    pub min_distance: Option<Coord>,
+}
+
+/// A routing-via template (`VIATEMPLATEGUID#n`, `VIATEMPLATENAME#n`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViaTemplateRef {
+    pub guid: String,
+    pub name: String,
+}
+
+/// Test point style (FabricationTestpoint and AssemblyTestpoint rules).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestpointStyle {
+    /// `SIDE` as stored (fabrication rules only, corpus value 3). Its encoding is
+    /// not decoded, so it is kept as the stored integer.
+    pub side: Option<u32>,
+    pub testpoint_under_component: bool,
+    pub min_size: Coord,
+    pub max_size: Coord,
+    pub preferred_size: Coord,
+    pub min_hole_size: Coord,
+    pub max_hole_size: Coord,
+    pub preferred_hole_size: Coord,
+    pub testpoint_grid: Coord,
+    pub use_grid: bool,
+    pub grid_tolerance: Coord,
+    pub allow_side_top: bool,
+    pub allow_side_bottom: bool,
+    /// `MINSPACING` (1 corpus rule).
+    pub min_spacing: Option<Coord>,
+    /// AD 26 keys absent from the corpus; `None` when not stored.
+    pub grid_origin_x: Option<Coord>,
+    pub grid_origin_y: Option<Coord>,
+    pub comp_body_clearance: Option<Coord>,
+    pub board_edge_clearance: Option<Coord>,
+    pub pad_hole_center_clearance: Option<Coord>,
+    pub via_hole_center_clearance: Option<Coord>,
+}
+
+/// Test point usage (FabricationTestPointUsage and AssemblyTestPointUsage).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestpointUsage {
+    /// `VALID` as stored (corpus 0 and 2); its encoding is not decoded.
+    pub valid: Option<u32>,
+    /// `ALLOWMULTIPLE`; both keys are absent from 93 of 95 assembly rules.
+    pub allow_multiple: Option<bool>,
+    /// `VALIDREQUIREATLEAFS`.
+    pub valid_require_at_leafs: Option<bool>,
+}
+
 /// Typed rule parameters extracted from the internal `PcbRuleKindData`.
 ///
-/// Common rules (clearance, width, mask expansion, etc.) have fully typed
-/// variants. Less common rules use `Other { kind }`.
+/// Every rule kind the reader accepts has a typed variant. Keys follow AD 26's
+/// rule readers (altium-re `port/Ppcb1-rules/rule-params.tsv`) and the corpus.
+/// `Other` remains only for `RuleKind::None`.
 #[derive(Debug, Clone)]
 pub enum RuleParams {
     Clearance {
         gap: Coord,
-        ignore_pad_to_pad: bool,
+        /// `IGNOREPADTOPADCLEARANCEINFOOTPRINT`; absent on 6 of 195 corpus
+        /// rules (AD 26's default for an absent key is unread, Ppcb1-rules B-DRC-2).
+        ignore_pad_to_pad: Option<bool>,
         /// `GENERICCLEARANCE`.
         generic_clearance: Coord,
         /// `OBJECTCLEARANCES`: per object-kind pair clearances, pairs in
@@ -402,27 +534,59 @@ pub enum RuleParams {
         min: Coord,
         max: Coord,
         preferred: Coord,
+        /// `CHECKCONNECTEDCOPPER` (2 of 218 corpus rules store it).
+        check_connected_copper: Option<bool>,
+        /// Per-layer limits, in layer order.
+        per_layer: Vec<LayerWidthLimits>,
+        impedance: RuleImpedance,
+        substacks: Vec<WidthSubstack>,
     },
     Length {
         min: Coord,
         max: Coord,
+        /// `USEDELAYUNITS`, `MINDELAY`, `MAXDELAY` (1 of 3 corpus rules).
+        use_delay_units: Option<bool>,
+        min_delay: Option<f64>,
+        max_delay: Option<f64>,
     },
     MatchedLengths {
         tolerance: Coord,
+        check_nets_in_diff_pair: bool,
+        check_diff_pair_vs_diff_pair: bool,
+        check_x_signals: bool,
+        check_others: bool,
+        /// The remaining keys are absent from some or all corpus rules.
+        use_delay_units: Option<bool>,
+        delay_tolerance: Option<f64>,
+        target_source_name: Option<String>,
+        phase_matching: Option<bool>,
+        phase_tolerance: Option<Coord>,
+        phase_delay_tolerance: Option<f64>,
+        phase_distance: Option<Coord>,
+        /// Serpentine `AMPLITUDE`, `GAP` and `STYLE`.
+        amplitude: Option<Coord>,
+        serpentine_gap: Option<Coord>,
+        style: Option<LengthenerStyle>,
     },
     ParallelSegment {
         gap: Coord,
         limit: Coord,
-        parallel_length: Coord,
+        /// `PARALLELLENGTH`, `CHECKPARALLEL`, `CHECKADJACENTLAYERS`: not read
+        /// by AD 26 and absent from the corpus rule.
+        parallel_length: Option<Coord>,
+        check_parallel: Option<bool>,
+        check_adjacent_layers: Option<bool>,
     },
+    /// StubLength: `LIMIT`, the key AD 26 reads and the corpus stores.
     DaisyChainStubLength {
-        max_limit: Coord,
+        limit: Coord,
     },
     ShortCircuit {
         allowed: bool,
     },
     BrokenNets {
-        check_bad_connections: bool,
+        /// 9 of 94 corpus rules store it.
+        check_bad_connections: Option<bool>,
     },
     ViasUnderSmd {
         allowed: bool,
@@ -435,6 +599,8 @@ pub enum RuleParams {
     },
     HoleToHoleClearance {
         gap: Coord,
+        /// `ALLOWSTACKEDMICROVIAS`.
+        allow_stacked_microvias: bool,
     },
     BoardOutlineClearance {
         gap: Coord,
@@ -449,31 +615,58 @@ pub enum RuleParams {
     MaxMinHoleSize {
         min: Coord,
         max: Coord,
+        absolute_values: bool,
+        min_percent: f64,
+        max_percent: f64,
     },
     SolderMaskExpansion {
         expansion: Coord,
-        is_tenting_top: bool,
-        is_tenting_bottom: bool,
+        /// `ISTENTINGTOP` (77 of 112 corpus rules), `ISTENTINGBOTTOM` (none).
+        is_tenting_top: Option<bool>,
+        is_tenting_bottom: Option<bool>,
+        /// `SOLDERMASKFROMHOLE` (4 corpus rules).
+        from_hole_edge: Option<bool>,
+        /// `USESEPARATEEXPANSIONS`, `EXPANSIONBOTTOM`.
+        use_separate_expansions: Option<bool>,
+        expansion_bottom: Option<Coord>,
     },
     PasteMaskExpansion {
         expansion: Coord,
-        percent: f64,
+        /// `PERCENT` (3 of 94 corpus rules), `THPADUSETOPPASTE`,
+        /// `THPADUSEBOTTOMPASTE` (1 each).
+        percent: Option<f64>,
+        th_pad_use_top_paste: Option<bool>,
+        th_pad_use_bottom_paste: Option<bool>,
+        /// `USEPASTE`.
+        use_paste: Option<bool>,
     },
     PowerPlaneClearance {
         clearance: Coord,
     },
+    /// Plane connect. The rule stores either the top-level keys or one setting
+    /// per object kind (`PAD.*`, `VIA.*`; 19 corpus rules); the top-level
+    /// fields are `None` when absent.
     PowerPlaneConnectStyle {
-        connect_style: PlaneConnectionStyle,
-        relief_conductor_width: Coord,
-        relief_entries: i32,
-        relief_air_gap: Coord,
+        connect_style: Option<PlaneConnectionStyle>,
+        /// `RELIEFEXPANSION`.
+        relief_expansion: Option<Coord>,
+        relief_conductor_width: Option<Coord>,
+        relief_entries: Option<i32>,
+        relief_air_gap: Option<Coord>,
+        per_object: Vec<PlaneConnectOverride>,
     },
+    /// Polygon connect: top-level keys or one setting per object kind
+    /// (`THPAD.*`, `SMDPAD.*`, `VIA.*`; 47 corpus rules).
     PolygonConnectStyle {
-        connect_style: PlaneConnectionStyle,
-        relief_conductor_width: Coord,
-        relief_entries: i32,
-        relief_angle: PolygonReliefAngle,
-        air_gap_width: Coord,
+        connect_style: Option<PlaneConnectionStyle>,
+        relief_conductor_width: Option<Coord>,
+        relief_entries: Option<i32>,
+        relief_angle: Option<PolygonReliefAngle>,
+        air_gap_width: Option<Coord>,
+        conductor_by_pad_edge: Option<bool>,
+        enable_min_distance: Option<bool>,
+        min_distance: Option<Coord>,
+        per_object: Vec<PolygonConnectOverride>,
     },
     RoutingTopology {
         topology: NetTopology,
@@ -498,26 +691,56 @@ pub enum RuleParams {
         max_width: Coord,
         preferred_width: Coord,
         via_style: RouteVia,
+        /// `USEVIATEMPLATES` (7 of 101 corpus rules).
+        use_via_templates: Option<bool>,
+        via_templates: Vec<ViaTemplateRef>,
     },
     ComponentClearance {
         gap: Coord,
         collision_check_mode: ComponentCollisionCheckMode,
         vertical_gap: Coord,
+        /// `SHOWDISTANCES`.
+        show_distances: bool,
+        /// `DONOTCHECKWITHOUT3DBODY` (4 of 106 corpus rules).
+        do_not_check_without_3d_body: Option<bool>,
+        /// `CHECKCOMPONENTBOUNDARY`.
+        check_component_boundary: Option<bool>,
     },
+    /// Room definition (`RoomDefinition`).
     ConfinementConstraint {
         confinement_style: ConfinementStyle,
+        /// `LOCKCOMPONENTS`.
+        lock_components: bool,
+        /// `FORMATCOPY`.
+        format_copy: bool,
+        /// The room's layer (the rule record's `LAYER`; corpus TOP or BOTTOM).
+        layer: LayerRef,
+        /// The room shape (`KINDn/VXn/VYn/CXn/CYn/SAn/EAn/Rn`): exact
+        /// coordinates; arc angles in degrees, as in the Board6 outline. The
+        /// first vertex is repeated as the last one, as stored.
+        outline: PcbContour,
     },
     DiffPairsRouting {
         min_gap: Coord,
         max_gap: Coord,
         preferred_gap: Coord,
         max_uncoupled_length: Coord,
+        /// `MOSTFREQWIDTH`: the preferred width shown for all layers.
+        most_frequent_width: Option<Coord>,
+        /// `FILTERLAYERSTACKID`.
+        filter_layer_stack_id: Option<String>,
+        /// Per-layer widths and gaps, in layer order.
+        per_layer: Vec<DiffPairLayerLimits>,
+        impedance: RuleImpedance,
+        substacks: Vec<DiffPairSubstack>,
     },
     FanoutControl {
         bga_dir: BgaFanoutDirection,
         bga_via_mode: BgaFanoutViaMode,
         fanout_style: FanoutStyle,
         fanout_direction: FanoutDirection,
+        /// `VIAGRID`.
+        via_grid: Coord,
     },
     MaxMinHeight {
         min_height: Coord,
@@ -529,6 +752,8 @@ pub enum RuleParams {
     },
     SilkToSolderMaskClearance {
         gap: Coord,
+        /// `CLEARANCETOEXPOSEDCOPPER`.
+        clearance_to_exposed_copper: bool,
     },
     SilkToSilkClearance {
         gap: Coord,
@@ -536,6 +761,7 @@ pub enum RuleParams {
     NetAntennae {
         tolerance: Coord,
     },
+    /// `DISTANCE` is an integer in internal units (AD 26 reads it as int).
     SmdToCorner {
         distance: Coord,
     },
@@ -549,23 +775,108 @@ pub enum RuleParams {
         side: bool,
         corner: bool,
         any_angle: bool,
+        /// `IGNOREFIRSTCORNER`.
+        ignore_first_corner: Option<bool>,
     },
     UnpouredPolygon {
-        allow_unpoured: bool,
+        /// 1 of 94 corpus rules stores it.
+        allow_unpoured: Option<bool>,
+        /// `ALLOWSHELVED`.
+        allow_shelved: Option<bool>,
     },
+    /// Back drilling, AD 26 keys (`MAXSTUBLENGTH`, `USETOPBACKDRILL`, …).
     BackDrilling {
-        depth: Coord,
+        max_stub_length: Coord,
+        use_top_backdrill: bool,
+        use_bottom_backdrill: bool,
+        hole_over_size: Coord,
+        hole_tol_plus: Coord,
+        hole_tol_minus: Coord,
     },
     CreepageDistance {
-        gap: Coord,
+        /// `CHECKDISTANCE`.
+        check_distance: Coord,
+        /// `APPLYTOPOLYGONPOUR`.
+        apply_to_polygon_pour: bool,
+        /// `IGNOREINTERNALLAYERS`.
+        ignore_internal_layers: Option<bool>,
     },
     AcuteAngle {
         minimum: f64,
+        /// `CHECKTRACKSONLY`.
+        check_tracks_only: bool,
     },
     LayerPair {
         enforce: bool,
     },
-    /// Fallback for rule kinds not yet given a typed variant.
+    /// ComponentOrientations: `ALLOWEDROTATIONS` bitmask.
+    ComponentRotations {
+        allowed_rotations: ComponentOrientationFlags,
+    },
+    PermittedLayers {
+        top_layer_permitted: bool,
+        bottom_layer_permitted: bool,
+    },
+    FabricationTestpointStyle(TestpointStyle),
+    FabricationTestpointUsage(TestpointUsage),
+    AssemblyTestpointStyle(TestpointStyle),
+    AssemblyTestpointUsage(TestpointUsage),
+    /// Signal stimulus: `KIND`, `LEVEL` as stored; times in seconds as stored.
+    SignalStimulus {
+        kind: i32,
+        level: i32,
+        start_time: f64,
+        stop_time: f64,
+        period_time: f64,
+    },
+    /// The signal-integrity limits that store one `MAXIMUM` value:
+    /// OvershootFalling/Rising, UndershootFalling/Rising, SignalBaseValue,
+    /// FlightTimeRising/Falling (the rule's `kind` tells which).
+    SignalMaximum {
+        maximum: f64,
+    },
+    /// SignalTopValue: `MINIMUM`.
+    SignalMinimum {
+        minimum: f64,
+    },
+    /// MaxMinImpedance: `MINIMUM`, `MAXIMUM` (ohms).
+    MaxMinImpedance {
+        minimum: f64,
+        maximum: f64,
+    },
+    /// SlopeRising / SlopeFalling: `MAXSLOPE`.
+    MaxSlope {
+        max_slope: f64,
+    },
+    /// SupplyNets: `VOLTAGE`.
+    SupplyNets {
+        voltage: f64,
+    },
+    ReturnPath {
+        impedance_profile_id: String,
+        /// `_GAPLIMIT`, `_USEANTIPADS`, `MAXSTITCHVIADISTANCE`.
+        gap_limit: Coord,
+        use_antipads: bool,
+        max_stitch_via_distance: Option<Coord>,
+    },
+    WireBonding {
+        wire_to_wire_gap: Coord,
+        min_wire_length: Coord,
+        max_wire_length: Coord,
+        bond_finger_space: Coord,
+        bond_finger_margin: Coord,
+        angle: f64,
+        bond_finger_to_wire_alignment: bool,
+    },
+    ZAxisClearance {
+        clearance: Coord,
+    },
+    /// Kinds with no parameters of their own.
+    SilkToBoardRegionClearance,
+    NetsToIgnore,
+    UnconnectedPin,
+    LayerStack,
+    /// `RuleKind::None` only.
     Other {
         kind: RuleKind,
     },

@@ -46,6 +46,7 @@ pub use pcb::{
     ComponentOrientationFlags,
     ComponentPlacementType,
     ConfinementStyle,
+    ConnectStyleTarget,
     CornerStyle,
     DaisyChainStyle,
     DielectricType,

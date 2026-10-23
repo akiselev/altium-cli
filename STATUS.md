@@ -657,6 +657,23 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   format. An unknown DISPLAYUNIT is now an error (was Imperial).
 - Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
   boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
+- Rule parameters (R22, batch 5): every rule kind has a typed `RuleParams` variant (`Other`
+  only for `RuleKind::None`). Rooms (`ConfinementConstraint`) carry `outline: PcbContour`
+  (exact coordinates, angles in degrees as in Board6), `layer`, `lock_components`, `format_copy`;
+  94 rooms on readable corpus boards, 823 vertices, no arcs. Newly exposed: DiffPairsRouting and
+  Width per-layer/substack limits and impedance, FanoutControl `via_grid`, PlaneConnect
+  `relief_expansion` and the per-object (`PAD.`/`VIA.`) settings, PolygonConnect per-object
+  (`THPAD.`/`SMDPAD.`/`VIA.`), HoleToHole `allow_stacked_microvias`, SilkToSolderMask
+  `clearance_to_exposed_copper`, ComponentClearance `do_not_check_without_3d_body` /
+  `show_distances`, MatchedLengths phase/delay keys, test-point style/usage, ComponentRotations,
+  PermittedLayers, the signal-integrity kinds, ReturnPath, WireBonding, ZAxisClearance and
+  BackDrilling (AD 26 keys). Keys follow AD 26's readers (altium-re Ppcb1-rules
+  rule-params.tsv): a key every corpus record of its kind stores is required; a key some records
+  omit is `Option` (AD 26's default for an absent key is unread, B-DRC-1); keys neither AD 26 nor
+  the corpus has (BACKDRILLINGDEPTH, StubLength MAXLIMIT, Creepage GAP/VOLTAGE, the old SI keys)
+  are no longer accepted. SMDToCorner/SMDToPlane `DISTANCE` is an integer in internal units (was
+  read as mils). RoutingNeckDown is refused (AD 26 stores one `LayerMaxLength` string of unknown
+  encoding; none in the corpus). AcuteAngle MINIMUM is written in Altium's float form.
 
 ### PrjPcb
 INI-style format with indexed sections. Complete roundtrip. Read-only high-level API (internal write exists but not surfaced).

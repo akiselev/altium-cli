@@ -734,20 +734,21 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
             min,
             max,
             preferred,
+            ..
         } => {
             props.push(format!("min: {min}, max: {max}, preferred: {preferred}"));
         }
-        RuleParams::Length { min, max } => {
+        RuleParams::Length { min, max, .. } => {
             props.push(format!("min: {min}, max: {max}"));
         }
-        RuleParams::MatchedLengths { tolerance } => {
+        RuleParams::MatchedLengths { tolerance, .. } => {
             props.push(format!("tolerance: {tolerance}"));
         }
         RuleParams::ParallelSegment { gap, limit, .. } => {
             props.push(format!("gap: {gap}, limit: {limit}"));
         }
-        RuleParams::DaisyChainStubLength { max_limit } => {
-            props.push(format!("max_limit: {max_limit}"));
+        RuleParams::DaisyChainStubLength { limit } => {
+            props.push(format!("limit: {limit}"));
         }
         RuleParams::ShortCircuit { allowed } => {
             props.push(format!("allowed: {allowed}"));
@@ -755,7 +756,9 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
         RuleParams::BrokenNets {
             check_bad_connections,
         } => {
-            props.push(format!("check_bad_connections: {check_bad_connections}"));
+            if let Some(v) = check_bad_connections {
+                props.push(format!("check_bad_connections: {v}"));
+            }
         }
         RuleParams::ViasUnderSmd { allowed } => {
             props.push(format!("allowed: {allowed}"));
@@ -766,30 +769,36 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
         RuleParams::MinimumAnnularRing { min } => {
             props.push(format!("min: {min}"));
         }
-        RuleParams::HoleToHoleClearance { gap } => {
+        RuleParams::HoleToHoleClearance { gap, .. } => {
             props.push(format!("gap: {gap}"));
         }
         RuleParams::BoardOutlineClearance { gap, .. } => {
             props.push(format!("gap: {gap}"));
         }
-        RuleParams::MaxMinHoleSize { min, max } => {
+        RuleParams::MaxMinHoleSize { min, max, .. } => {
             props.push(format!("min: {min}, max: {max}"));
         }
         RuleParams::SolderMaskExpansion {
             expansion,
             is_tenting_top,
             is_tenting_bottom,
+            ..
         } => {
             props.push(format!("expansion: {expansion}"));
-            if *is_tenting_top {
+            if *is_tenting_top == Some(true) {
                 props.push("tenting_top: true".into());
             }
-            if *is_tenting_bottom {
+            if *is_tenting_bottom == Some(true) {
                 props.push("tenting_bottom: true".into());
             }
         }
-        RuleParams::PasteMaskExpansion { expansion, percent } => {
-            props.push(format!("expansion: {expansion}, percent: {percent:.1}"));
+        RuleParams::PasteMaskExpansion {
+            expansion, percent, ..
+        } => {
+            props.push(format!("expansion: {expansion}"));
+            if let Some(percent) = percent {
+                props.push(format!("percent: {percent:.1}"));
+            }
         }
         RuleParams::PowerPlaneClearance { clearance } => {
             props.push(format!("clearance: {clearance}"));
@@ -799,14 +808,23 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
             relief_conductor_width,
             relief_entries,
             relief_air_gap,
+            ..
         } => {
-            props.push(format!(
-                "connect_style: \"{}\", relief_width: {}, relief_entries: {}, relief_air_gap: {}",
-                plane_connection_to_spec_string(*connect_style),
-                relief_conductor_width,
-                relief_entries,
-                relief_air_gap
-            ));
+            if let Some(style) = connect_style {
+                props.push(format!(
+                    "connect_style: \"{}\"",
+                    plane_connection_to_spec_string(*style)
+                ));
+            }
+            if let Some(v) = relief_conductor_width {
+                props.push(format!("relief_width: {v}"));
+            }
+            if let Some(v) = relief_entries {
+                props.push(format!("relief_entries: {v}"));
+            }
+            if let Some(v) = relief_air_gap {
+                props.push(format!("relief_air_gap: {v}"));
+            }
         }
         RuleParams::PolygonConnectStyle {
             connect_style,
@@ -815,13 +833,21 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
             air_gap_width,
             ..
         } => {
-            props.push(format!(
-                "connect_style: \"{}\", relief_width: {}, relief_entries: {}, air_gap: {}",
-                plane_connection_to_spec_string(*connect_style),
-                relief_conductor_width,
-                relief_entries,
-                air_gap_width
-            ));
+            if let Some(style) = connect_style {
+                props.push(format!(
+                    "connect_style: \"{}\"",
+                    plane_connection_to_spec_string(*style)
+                ));
+            }
+            if let Some(v) = relief_conductor_width {
+                props.push(format!("relief_width: {v}"));
+            }
+            if let Some(v) = relief_entries {
+                props.push(format!("relief_entries: {v}"));
+            }
+            if let Some(v) = air_gap_width {
+                props.push(format!("air_gap: {v}"));
+            }
         }
         RuleParams::RoutingTopology { topology } => {
             props.push(format!("topology: \"{topology:?}\""));
@@ -853,6 +879,7 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
             max_gap,
             preferred_gap,
             max_uncoupled_length,
+            ..
         } => {
             props.push(format!(
                 "min_gap: {min_gap}, max_gap: {max_gap}, preferred_gap: {preferred_gap}, max_uncoupled: {max_uncoupled_length}"
@@ -870,7 +897,8 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
         RuleParams::MinimumSolderMaskSliver { min_width } => {
             props.push(format!("min_width: {min_width}"));
         }
-        RuleParams::SilkToSolderMaskClearance { gap } | RuleParams::SilkToSilkClearance { gap } => {
+        RuleParams::SilkToSolderMaskClearance { gap, .. }
+        | RuleParams::SilkToSilkClearance { gap } => {
             props.push(format!("gap: {gap}"));
         }
         RuleParams::NetAntennae { tolerance } => {
@@ -886,31 +914,34 @@ fn dump_rule_params(params: &RuleParams, props: &mut Vec<String>) {
             side,
             corner,
             any_angle,
+            ..
         } => {
             props.push(format!(
                 "side: {side}, corner: {corner}, any_angle: {any_angle}"
             ));
         }
-        RuleParams::UnpouredPolygon { allow_unpoured } => {
-            props.push(format!("allow_unpoured: {allow_unpoured}"));
+        RuleParams::UnpouredPolygon { allow_unpoured, .. } => {
+            if let Some(v) = allow_unpoured {
+                props.push(format!("allow_unpoured: {v}"));
+            }
         }
-        RuleParams::BackDrilling { depth } => {
-            props.push(format!("depth: {depth}"));
+        RuleParams::BackDrilling {
+            max_stub_length, ..
+        } => {
+            props.push(format!("max_stub_length: {max_stub_length}"));
         }
-        RuleParams::CreepageDistance { gap } => {
-            props.push(format!("gap: {gap}"));
+        RuleParams::CreepageDistance { check_distance, .. } => {
+            props.push(format!("check_distance: {check_distance}"));
         }
-        RuleParams::AcuteAngle { minimum } => {
+        RuleParams::AcuteAngle { minimum, .. } => {
             props.push(format!("minimum: {minimum:.1}"));
         }
         RuleParams::LayerPair { enforce } => {
             props.push(format!("enforce: {enforce}"));
         }
-        RuleParams::RoutingLayers { .. }
-        | RuleParams::ConfinementConstraint { .. }
-        | RuleParams::FanoutControl { .. }
-        | RuleParams::Other { .. } => {
-            // No additional params emitted for these
+        _ => {
+            // No additional params emitted for the other kinds (rooms, routing
+            // layers, fanout, test points, signal integrity, …).
         }
     }
 }

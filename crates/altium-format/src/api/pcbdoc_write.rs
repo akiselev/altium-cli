@@ -974,7 +974,7 @@ pub(crate) fn insert_param_contour(params: &mut ParameterCollection, contour: &P
 
 /// Altium's angle form in contour records: ` d.ddddddddddddddE+dddd`
 /// (leading space for non-negative values, 14 fractional digits, 4-digit exponent).
-fn format_altium_angle(value: f64) -> String {
+pub(crate) fn format_altium_angle(value: f64) -> String {
     let s = format!("{value:.14E}");
     let (mantissa, exp) = s.split_once('E').expect("{:E} output has an exponent");
     let exp: i32 = exp.parse().expect("{:E} exponent is an integer");
