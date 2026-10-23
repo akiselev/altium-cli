@@ -282,6 +282,8 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
         // Designators repeat (test-padshapes has ten R14); the unique id does not.
         "UNIQUEID",
     );
+    check_component_designators(board)?;
+    drop_absent_source_designators(doc, &board.components)?;
     replace_param_section(
         doc,
         ParamSectionKind::Polygons6,
@@ -435,6 +437,53 @@ fn build_net_records(nets: &[Net]) -> Vec<StandardParamRecord> {
 
 /// Build Components6 records. A component's `unique_id` must be 8 uppercase
 /// letters (or empty, to generate one) and may not repeat another component's.
+/// A component's `designator` must be what the reader would rebuild from the
+/// written record: its `source_designator`, or, without one, its designator
+/// text. Otherwise a renamed `designator` would be silently dropped.
+fn check_component_designators(board: &PcbDocBoard) -> Result<()> {
+    for (i, comp) in board.components.iter().enumerate() {
+        let stored = match &comp.source_designator {
+            Some(source) => Some(source.as_str()),
+            None => board
+                .texts
+                .iter()
+                .find(|t| t.is_designator && t.component_index == Some(i))
+                .map(|t| t.text.as_str()),
+        };
+        if stored != Some(comp.designator.as_str()) {
+            return Err(crate::AltiumFormatError::InvalidParamValue {
+                key: "SOURCEDESIGNATOR".to_owned(),
+                detail: format!(
+                    "component #{i}: designator {:?} would be stored as {stored:?}; set \
+                     source_designator (or the designator text) to the new designator",
+                    comp.designator
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The Components6 merge starts from the old record's keys; a component whose
+/// `source_designator` is `None` must not keep an old SOURCEDESIGNATOR.
+fn drop_absent_source_designators(doc: &mut PcbDoc, components: &[PcbDocComponent]) -> Result<()> {
+    for section in &mut doc.sections {
+        if let PcbDocSection::Parameter(param) = section {
+            if param.kind == ParamSectionKind::Components6 {
+                for (record, comp) in param.records.iter_mut().zip(components) {
+                    if comp.source_designator.is_none() {
+                        record
+                            .params
+                            .remove_optional::<String>("SOURCEDESIGNATOR")
+                            .context("Components6 SOURCEDESIGNATOR")?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn build_component_records(components: &[PcbDocComponent]) -> Result<Vec<StandardParamRecord>> {
     let mut seen: HashMap<&str, usize> = HashMap::with_capacity(components.len());
     for (i, comp) in components.iter().enumerate() {
@@ -1899,7 +1948,12 @@ fn build_primitive_parameters(components: &[PcbDocComponent]) -> Vec<PrimitivePa
         .filter(|c| !c.parameters.is_empty())
         .map(|comp| {
             let mut component_header = ParameterCollection::new();
-            component_header.insert("SOURCEDESIGNATOR", comp.designator.clone());
+            component_header.insert(
+                "SOURCEDESIGNATOR",
+                comp.source_designator
+                    .clone()
+                    .unwrap_or_else(|| comp.designator.clone()),
+            );
 
             let parameters: Vec<ParameterCollection> = comp
                 .parameters

@@ -784,6 +784,39 @@ fn corpus_r8_designators() {
             ids(&board),
             "{name}: designators changed on write"
         );
+        // A rename must reach the stored key: alone it is an error, with the
+        // source designator it reads back.
+        if let Some(i) = board
+            .components
+            .iter()
+            .position(|c| c.source_designator.is_some())
+        {
+            let mut renamed = board.clone();
+            renamed.components[i].designator = "RENAMED1".to_owned();
+            macro_rules! rename_owner {
+                ($($list:ident),*) => {$(
+                    for p in renamed.$list.iter_mut().filter(|p| p.component_index == Some(i)) {
+                        p.component = Some("RENAMED1".to_owned());
+                    }
+                )*};
+            }
+            rename_owner!(
+                tracks,
+                arcs,
+                vias,
+                pads,
+                fills,
+                texts,
+                regions,
+                component_bodies
+            );
+            assert!(doc.update_board(&renamed).is_err(), "{name}: silent rename");
+            renamed.components[i].source_designator = Some("RENAMED1".to_owned());
+            doc.update_board(&renamed)
+                .unwrap_or_else(|e| panic!("{name}: rename: {e}"));
+            let reread = doc.board().unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(reread.components[i].designator, "RENAMED1", "{name}");
+        }
         boards_round_tripped += 1;
     }
     eprintln!(
