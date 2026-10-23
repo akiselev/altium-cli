@@ -916,13 +916,13 @@ fn corpus_r16_violations() {
     let mut stats: BTreeMap<String, usize> = BTreeMap::new();
     let mut bump = |k: String| *stats.entry(k).or_default() += 1;
     let mut write_checked = false;
+    let mut saved = 0;
     for (name, mut doc) in corpus_docs() {
         if BOARDS_FAILING_AT_BASE.contains(&name.as_str()) {
             continue;
         }
         let board = doc.board().unwrap_or_else(|e| panic!("{name}: {e:#}"));
-        let write_now =
-            !write_checked && !board.violations.is_empty() && !board.waived_violations.is_empty();
+        let write_now = !board.violations.is_empty();
         let stored: usize = doc.violations.values().map(Vec::len).sum();
         assert_eq!(board.violations.len(), stored, "{name}");
         assert_eq!(
@@ -1017,8 +1017,7 @@ fn corpus_r16_violations() {
             }
         }
         if write_now {
-            write_checked = true;
-            r16_write_checks(&name, &mut doc, &board);
+            r16_write_checks(&name, &mut doc, &board, &mut write_checked, &mut saved);
         }
     }
     for (k, n) in &stats {
@@ -1031,38 +1030,81 @@ fn corpus_r16_violations() {
     assert_eq!(stats.get("Pad in_range=true"), Some(&1418), "{stats:?}");
     assert_eq!(stats.get("waived Pad"), Some(&745), "{stats:?}");
     assert!(write_checked);
+    assert!(saved > 0, "no cleared board saved and reopened");
 }
 
-/// `update_board` keeps unchanged stored violations, rejects edited ones
-/// (leaving the document as it was) and clears emptied lists.
-fn r16_write_checks(name: &str, doc: &mut PcbDoc, board: &PcbDocBoard) {
+/// `update_board` keeps unchanged stored violations, rejects edited ones and
+/// kept ones whose indexed lists changed length (leaving the document as it
+/// was), and clears emptied lists. The edit checks run once (on a board with
+/// waived violations too); every board is cleared, saved and reopened, and
+/// the reopen must succeed on some (it fails on boards that hit the known
+/// component body writer gaps: ShapeBasedComponentBodies6 framing, and
+/// ComponentBodies6 `%UTF8%MODEL.NAME`).
+fn r16_write_checks(
+    name: &str,
+    doc: &mut PcbDoc,
+    board: &PcbDocBoard,
+    edits_checked: &mut bool,
+    saved: &mut usize,
+) {
     doc.update_board(board)
         .unwrap_or_else(|e| panic!("{name}: update_board: {e:#}"));
     let again = doc.board().unwrap();
     assert_eq!(again.violations, board.violations, "{name}");
     assert_eq!(again.waived_violations, board.waived_violations, "{name}");
 
-    let mut edited = board.clone();
-    edited.violations[0].rule_index = 0;
-    edited.violations[0].description.push('x');
-    let err = doc.update_board(&edited).unwrap_err();
-    assert!(err.to_string().contains("read-only"), "{name}: {err}");
-    let mut edited = board.clone();
-    edited.waived_violations[0].comment.push('x');
-    assert!(doc.update_board(&edited).is_err(), "{name}");
-    assert_eq!(doc.board().unwrap().violations, board.violations, "{name}");
+    if !*edits_checked && !board.waived_violations.is_empty() {
+        *edits_checked = true;
+        let mut edited = board.clone();
+        edited.violations[0].description.push('x');
+        let err = doc.update_board(&edited).unwrap_err();
+        assert!(err.to_string().contains("read-only"), "{name}: {err}");
+        let mut edited = board.clone();
+        edited.waived_violations[0].comment.push('x');
+        assert!(doc.update_board(&edited).is_err(), "{name}");
+        let mut shrunk = board.clone();
+        let removed = board
+            .violations
+            .iter()
+            .flat_map(|v| &v.objects)
+            .find_map(|o| match o.kind {
+                PcbObjectId::Track => shrunk.tracks.pop().map(|_| ()),
+                PcbObjectId::Pad => shrunk.pads.pop().map(|_| ()),
+                PcbObjectId::Via => shrunk.vias.pop().map(|_| ()),
+                _ => None,
+            });
+        assert!(removed.is_some(), "{name}: no track, pad or via violation");
+        let err = doc.update_board(&shrunk).unwrap_err();
+        assert!(
+            err.to_string().contains("empty the violation"),
+            "{name}: {err}"
+        );
+        assert_eq!(doc.board().unwrap().violations, board.violations, "{name}");
+    }
 
     let mut cleared = board.clone();
     cleared.violations.clear();
     cleared.waived_violations.clear();
     doc.update_board(&cleared)
         .unwrap_or_else(|e| panic!("{name}: update_board (cleared): {e:#}"));
-    // Save → reopen is not checked here: on these boards the reopen fails in
-    // ShapeBasedComponentBodies6 (component body writer, a known open gap).
     let after = doc.board().unwrap();
     assert!(after.violations.is_empty(), "{name}");
     assert!(after.waived_violations.is_empty(), "{name}");
-    assert!(doc.violations.values().all(Vec::is_empty), "{name}");
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    doc.save(tmp.path())
+        .unwrap_or_else(|e| panic!("{name}: save: {e:#}"));
+    match PcbDoc::open(tmp.path()) {
+        Ok(reopened) => {
+            let reopened = reopened.board().unwrap_or_else(|e| panic!("{name}: {e:#}"));
+            assert!(reopened.violations.is_empty(), "{name}");
+            assert!(reopened.waived_violations.is_empty(), "{name}");
+            *saved += 1;
+        }
+        Err(e) => assert!(
+            format!("{e:?}").contains("ComponentBodies6"),
+            "{name}: reopen: {e:#}"
+        ),
+    }
 }
 
 /// R17: clearance rules carry their object matrix (counts from a Python scan

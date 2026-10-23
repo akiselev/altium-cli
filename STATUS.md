@@ -608,10 +608,10 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   layer (`UNKNOWN` → None; V6 form from the LAYER string), objects as (`PcbObjectId`, index into
   that kind's board list; `PolyRegion` → Region, `Poly` → Polygon, also Component, Net,
   DifferentialPair, ComponentBody, Board), marker points (with z for component clearance), circle
-  radius, hole-clearance flag and diff-pair areas. Unknown object kinds and out-of-range rule
-  indices are errors. Read-only: `update_board` keeps them when unchanged (indices must still be in
-  range; a kept violation is not re-pointed if objects were reordered), clears an emptied list,
-  and rejects edits.
+  radius, hole-clearance flag, PRIMID clearance kinds and diff-pair areas. Unknown object kinds
+  and out-of-range rule indices are errors. Read-only: `update_board` keeps them when unchanged
+  (and only while every list they index keeps its length; a reorder of equal length is not
+  detected), clears an emptied list (after all other writes), and rejects edits.
 - Clearance matrix (R17): `RuleParams::Clearance` carries `generic_clearance` and
   `object_clearances: Vec<ObjectClearance>` (OBJECTCLEARANCES, `ObjectClearanceId` pairs in stored
   order; 944 entries in 65 of 145 corpus clearance rules). A pair given twice is now an error (it

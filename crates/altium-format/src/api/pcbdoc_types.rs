@@ -833,11 +833,16 @@ pub struct BoardViolation {
     pub layer: Option<LayerRef>,
     /// The objects involved (`PRIM1ID`/`PRIM1INDEX`, `PRIM2ID`/`PRIM2INDEX`).
     pub objects: Vec<ViolationObject>,
-    /// `PRIMID1`/`PRIMID2` (board-outline clearance violations).
-    pub object_ids: Vec<String>,
-    /// Marker points: `LOCATION1`/`LOCATION2`, `LOCATION`, `FX1`/`FY1`…, or the
-    /// 3D points `P1`/`P2` of component clearance violations (with `z`).
-    pub locations: Vec<ViolationLocation>,
+    /// `PRIMID1`/`PRIMID2`: the clearance-matrix kinds of the two objects
+    /// (board-outline clearance violations).
+    pub clearance_object1: Option<ObjectClearanceId>,
+    pub clearance_object2: Option<ObjectClearanceId>,
+    /// First marker point: `LOCATION1`, `LOCATION` (net antennae), `FX1`/`FY1`
+    /// (disconnected subnets) or the 3D point `P1` of component clearance
+    /// violations (with `z`).
+    pub location1: Option<ViolationLocation>,
+    /// Second marker point: `LOCATION2`, `FX2`/`FY2` or `P2`.
+    pub location2: Option<ViolationLocation>,
     /// `CIRCLERADIUS` (net antennae violations).
     pub circle_radius: Option<Coord>,
     /// `ISHOLECLEARANCEVIOLATION` (clearance violations measured to a hole).
@@ -866,7 +871,8 @@ pub struct ViolationLocation {
 }
 
 /// A violating area on one layer: contours of vertices in internal units, as
-/// stored (floating point).
+/// stored. Floating point because the stored values are (526 of 17,290 corpus
+/// coordinates are fractional); rounding to `Coord` would change them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViolationArea {
     pub layer: Option<LayerRef>,

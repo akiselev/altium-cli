@@ -8,12 +8,12 @@
 use altium_format_types::color::Color;
 use altium_format_types::common::Unit;
 use altium_format_types::coord::{Coord, CoordPoint};
-use altium_format_types::pcb::ViolationKind;
 use altium_format_types::pcb::constants::{POLYGON_INDEX_PLANE_SPLIT_LINE, PRIMITIVE_INDEX_NONE};
 use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, PolyHatchStyle,
     PolySegmentKind, PolygonType, RegionKind, RuleKind, V6Layer, V7Layer,
 };
+use altium_format_types::pcb::{ObjectClearanceId, ViolationKind};
 use altium_format_types::{ComponentKind, DielectricType, LayerStackStyle, PcbObjectId};
 use std::collections::HashMap;
 
@@ -1956,15 +1956,18 @@ fn violation_object_kind(key: &str, value: &str) -> Result<PcbObjectId> {
         })
 }
 
+/// `kind_key` is the record's kind key (`PRIMnID` in violations, `PRIMnKIND`
+/// in waived violations).
 fn violation_object(
     n: u8,
+    kind_key: &str,
     kind: Option<&str>,
     index: Option<u32>,
 ) -> Result<Option<ViolationObject>> {
     match (kind, index) {
         (None, None) => Ok(None),
         (Some(kind), Some(index)) => Ok(Some(ViolationObject {
-            kind: violation_object_kind(&format!("PRIM{n}ID"), kind)?,
+            kind: violation_object_kind(&format!("PRIM{n}{kind_key}"), kind)?,
             index: index as usize,
         })),
         _ => Err(AltiumFormatError::InvalidParamValue {
@@ -1995,6 +1998,18 @@ fn violation_point(
             detail: "incomplete violation point".to_owned(),
         }),
     }
+}
+
+fn clearance_object(key: &str, raw: Option<&str>) -> Result<Option<ObjectClearanceId>> {
+    raw.map(|raw| {
+        ObjectClearanceId::from_clearance_string(raw).map_err(|_| {
+            AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("unknown clearance object kind {raw:?}"),
+            }
+        })
+    })
+    .transpose()
 }
 
 /// A violation record's layer; `UNKNOWN` is no layer.
@@ -2210,7 +2225,7 @@ fn convert_violation(v: &PcbViolation, rule_count: usize) -> Result<BoardViolati
     };
     let rule_index = checked_rule_index(base.rule_index, rule_count)?;
     let mut objects: Vec<ViolationObject> =
-        violation_object(1, Some(&base.prim1_id), Some(base.prim1_index))?
+        violation_object(1, "ID", Some(&base.prim1_id), Some(base.prim1_index))?
             .into_iter()
             .collect();
     let mut violation = BoardViolation {
@@ -2218,66 +2233,72 @@ fn convert_violation(v: &PcbViolation, rule_count: usize) -> Result<BoardViolati
         rule_index,
         layer: violation_layer("LAYER", &base.layer)?,
         objects: Vec::new(),
-        object_ids: Vec::new(),
-        locations: Vec::new(),
+        clearance_object1: None,
+        clearance_object2: None,
+        location1: None,
+        location2: None,
         circle_radius: None,
         hole_clearance: None,
         areas: Vec::new(),
         description: base.description.clone(),
         involved_primitive_count: base.involved_prim_count,
     };
-    let mut push = |p: Option<ViolationLocation>| violation.locations.extend(p);
     match data {
         ViolationData::TwoPoint(d) => {
-            objects.extend(violation_object(2, d.prim2_id.as_deref(), d.prim2_index)?);
-            push(violation_point(
-                "LOCATION1",
-                d.location1_x,
-                d.location1_y,
-                None,
+            objects.extend(violation_object(
+                2,
+                "ID",
+                d.prim2_id.as_deref(),
+                d.prim2_index,
             )?);
-            push(violation_point(
-                "LOCATION2",
-                d.location2_x,
-                d.location2_y,
-                None,
-            )?);
-            push(violation_point("P1", d.p1_x, d.p1_y, Some(d.p1_z))?);
-            push(violation_point("P2", d.p2_x, d.p2_y, Some(d.p2_z))?);
+            let l1 = violation_point("LOCATION1", d.location1_x, d.location1_y, None)?;
+            let l2 = violation_point("LOCATION2", d.location2_x, d.location2_y, None)?;
+            let p1 = violation_point("P1", d.p1_x, d.p1_y, Some(d.p1_z))?;
+            let p2 = violation_point("P2", d.p2_x, d.p2_y, Some(d.p2_z))?;
+            if (l1.is_some() || l2.is_some()) && (p1.is_some() || p2.is_some()) {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: "P1.X".to_owned(),
+                    detail: "violation has both LOCATIONn and Pn points".to_owned(),
+                });
+            }
+            violation.location1 = l1.or(p1);
+            violation.location2 = l2.or(p2);
             violation.hole_clearance = d.is_hole_clearance_violation;
         }
         ViolationData::BoardOutline(d) => {
-            objects.extend(violation_object(2, d.prim2_id.as_deref(), d.prim2_index)?);
-            push(violation_point(
-                "LOCATION1",
-                d.location1_x,
-                d.location1_y,
-                None,
+            objects.extend(violation_object(
+                2,
+                "ID",
+                d.prim2_id.as_deref(),
+                d.prim2_index,
             )?);
-            push(violation_point(
-                "LOCATION2",
-                d.location2_x,
-                d.location2_y,
-                None,
-            )?);
-            violation.object_ids = d.primid1.iter().chain(d.primid2.iter()).cloned().collect();
+            violation.location1 = violation_point("LOCATION1", d.location1_x, d.location1_y, None)?;
+            violation.location2 = violation_point("LOCATION2", d.location2_x, d.location2_y, None)?;
+            violation.clearance_object1 = clearance_object("PRIMID1", d.primid1.as_deref())?;
+            violation.clearance_object2 = clearance_object("PRIMID2", d.primid2.as_deref())?;
         }
         ViolationData::NetAntennae(d) => {
-            push(violation_point(
-                "LOCATION",
-                Some(d.location_x),
-                Some(d.location_y),
-                None,
-            )?);
+            violation.location1 =
+                violation_point("LOCATION", Some(d.location_x), Some(d.location_y), None)?;
             violation.circle_radius = Some(d.circle_radius.0);
         }
         ViolationData::DisconnectedSubnets(d) => {
-            objects.extend(violation_object(2, d.prim2_id.as_deref(), d.prim2_index)?);
-            push(violation_point("FX1", d.fx1, d.fy1, None)?);
-            push(violation_point("FX2", d.fx2, d.fy2, None)?);
+            objects.extend(violation_object(
+                2,
+                "ID",
+                d.prim2_id.as_deref(),
+                d.prim2_index,
+            )?);
+            violation.location1 = violation_point("FX1", d.fx1, d.fy1, None)?;
+            violation.location2 = violation_point("FX2", d.fx2, d.fy2, None)?;
         }
         ViolationData::MatchedNetLengths(d) => {
-            objects.extend(violation_object(2, d.prim2_id.as_deref(), d.prim2_index)?);
+            objects.extend(violation_object(
+                2,
+                "ID",
+                d.prim2_id.as_deref(),
+                d.prim2_index,
+            )?);
         }
         ViolationData::DiffPairs(d) => {
             for (n, layer) in d.layers.iter().enumerate() {
@@ -2314,10 +2335,16 @@ pub(crate) fn convert_waived_violations(doc: &PcbDoc) -> Result<Vec<WaivedBoardV
         .enumerate()
         .map(|(idx, w)| {
             (|| {
-                let objects = violation_object(1, Some(&w.prim1_kind), Some(w.prim1_index))?
-                    .into_iter()
-                    .chain(violation_object(2, w.prim2_kind.as_deref(), w.prim2_index)?)
-                    .collect();
+                let objects =
+                    violation_object(1, "KIND", Some(&w.prim1_kind), Some(w.prim1_index))?
+                        .into_iter()
+                        .chain(violation_object(
+                            2,
+                            "KIND",
+                            w.prim2_kind.as_deref(),
+                            w.prim2_index,
+                        )?)
+                        .collect();
                 Ok::<_, AltiumFormatError>(WaivedBoardViolation {
                     rule_index: checked_rule_index(w.rule_index, doc.rules.len())?,
                     objects,
@@ -2520,12 +2547,14 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(v.locations.len(), 2);
         assert_eq!(
-            v.locations[1].point,
-            CoordPoint::new(Coord::from_mils_f64(11300.0), Coord::from_mils_f64(9593.0))
+            v.location2.map(|l| l.point),
+            Some(CoordPoint::new(
+                Coord::from_mils_f64(11300.0),
+                Coord::from_mils_f64(9593.0)
+            ))
         );
-        assert_eq!(v.locations[0].z, None);
+        assert_eq!(v.location1.unwrap().z, None);
 
         let v = violation(
             ParamSectionKind::TComponentClearanceViolation,
@@ -2537,8 +2566,8 @@ mod tests {
         );
         let v = convert_violation(&v, 2).unwrap();
         assert_eq!(v.objects[1].kind, PcbObjectId::ComponentBody);
-        assert_eq!(v.locations.len(), 2);
-        assert_eq!(v.locations[0].z, Some(Coord::from_mils_f64(-0.5)));
+        assert_eq!(v.location1.unwrap().z, Some(Coord::from_mils_f64(-0.5)));
+        assert_eq!(v.location2.unwrap().z, Some(Coord::from_mils_f64(1.0)));
 
         let v = violation(
             ParamSectionKind::TNetAntennaeViolation,
@@ -2551,7 +2580,18 @@ mod tests {
         assert_eq!(v.kind, ViolationKind::NetAntennae);
         assert_eq!(v.layer, None);
         assert_eq!(v.circle_radius, Some(Coord::from_mils_f64(105.4252)));
-        assert_eq!(v.locations.len(), 1);
+        assert!(v.location1.is_some() && v.location2.is_none());
+
+        let v = violation(
+            ParamSectionKind::TBoardOutlineClearanceViolation,
+            &format!(
+                "{BASE}|LAYER=TOP|RULEINDEX=0|PRIM1ID=Track|PRIM1INDEX=2|PRIM2ID=Board\
+                 |PRIM2INDEX=0|PRIMID1=ClearanceObj_Track|PRIMID2=ClearanceObj_OutlineEdge|"
+            ),
+        );
+        let v = convert_violation(&v, 1).unwrap();
+        assert_eq!(v.clearance_object1, Some(ObjectClearanceId::Track));
+        assert_eq!(v.clearance_object2, Some(ObjectClearanceId::OutlineEdge));
     }
 
     #[test]
