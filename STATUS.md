@@ -541,8 +541,9 @@ Board API (`PcbDoc::board()`), branch `claude/ecad-b1-altium-r1-r7` (ecadabra re
 see `docs/handoff/ecad-r1-r7-cloud-report.md`): 79 of the 94 corpus CFB boards read (the other 15
 fail on Dimensions6 `TEXTX`, as at `18062d6`).
 - Polygons6 (R2): full typed record incl. arc-preserving `contour`; unknown keys, bad vertices,
-  unknown layers and out-of-range net indices are errors. Writer emits the stored form; a
-  write→read round trip is identical except `AREATHRESHOLD` beyond f64 precision.
+  unknown layers and out-of-range net indices are errors. Writer emits the stored form; all
+  1,618 corpus records read→write→read to the same typed polygon. Stored-form normalisations:
+  stale arc keys on line edges are written as zeros, `AREATHRESHOLD` digits beyond f64 are lost.
 
 ### PrjPcb
 INI-style format with indexed sections. Complete roundtrip. Read-only high-level API (internal write exists but not surfaced).

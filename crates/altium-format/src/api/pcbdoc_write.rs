@@ -341,7 +341,8 @@ fn generate_unique_id() -> String {
 /// fields are omitted.
 ///
 /// The outline comes from `contour`; a polygon built by hand with only
-/// `vertices` (empty `contour`) is written with line edges through them.
+/// `vertices` (empty `contour`) is written with line edges through them. With a
+/// non-empty `contour`, `vertices` must equal `contour.to_points()`.
 fn build_polygon_records(
     polygons: &[Polygon],
     ctx: &WriteContext,
@@ -398,6 +399,14 @@ fn build_polygon_record(poly: &Polygon, ctx: &WriteContext) -> Result<StandardPa
                 .collect(),
         }
     } else {
+        if poly.vertices != poly.contour.to_points() {
+            return Err(crate::AltiumFormatError::InvalidParamValue {
+                key: "VX0".to_owned(),
+                detail: "polygon `vertices` differ from `contour`; edit `contour` (the \
+                         written outline) or clear it to write `vertices` as line edges"
+                    .to_owned(),
+            });
+        }
         poly.contour.clone()
     };
     insert_param_contour(&mut params, &contour);
@@ -1638,6 +1647,24 @@ fn detect_section_kind(
     }
 }
 
+/// Test hook for the corpus round trip (test-fixtures): write one polygon against the given
+/// Nets6 names.
+#[cfg(all(test, feature = "test-fixtures"))]
+pub(crate) fn build_polygon_record_for_test(
+    poly: &Polygon,
+    net_names: &[&str],
+) -> Result<ParameterCollection> {
+    let ctx = WriteContext {
+        net_indices: net_names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| ((*n).to_owned(), i as u16))
+            .collect(),
+        component_indices: HashMap::new(),
+    };
+    build_polygon_record(poly, &ctx).map(|r| r.params)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1701,6 +1728,44 @@ mod tests {
             written.params.get("AREATHRESHOLD"),
             Some("250015000224.999969")
         );
+    }
+
+    #[test]
+    fn polygons6_writer_rejects_vertices_edited_apart_from_contour() {
+        let stored = ParameterCollection::from_str(RECORD).unwrap();
+        let mut poly = convert_polygon_for_test(&stored, &["GND", "P2V5"]).unwrap();
+        poly.vertices[0].x = Coord::from_internal(0);
+        let err = build_polygon_record(&poly, &write_ctx())
+            .err()
+            .expect("diverged vertices must fail");
+        assert!(err.to_string().contains("contour"), "{err}");
+
+        poly.contour.segments.clear();
+        let written = build_polygon_record(&poly, &write_ctx()).unwrap();
+        assert_eq!(written.params.get("VX0"), Some("0mil"));
+        assert_eq!(written.params.get("KIND1"), Some("0"));
+    }
+
+    /// Line edges with stale arc keys (as 128 corpus edges have) read as plain
+    /// lines and are written back with zero arc keys.
+    #[test]
+    fn polygons6_line_edge_stale_arc_keys_are_normalised() {
+        let stale = RECORD.replace(
+            "|KIND0=0|VX0=7250.904mil|VY0=6378.6mil|CX0=0mil|CY0=0mil\
+        |SA0= 0.00000000000000E+0000|EA0= 0.00000000000000E+0000|R0=0mil",
+            "|KIND0=0|VX0=7250.904mil|VY0=6378.6mil|CX0=100mil|CY0=200mil\
+        |SA0= 1.80000000000000E+0002|EA0= 2.70000000000000E+0002|R0=42.312mil",
+        );
+        assert_ne!(stale, RECORD);
+        let stored = ParameterCollection::from_str(&stale).unwrap();
+        let poly = convert_polygon_for_test(&stored, &["GND", "P2V5"]).unwrap();
+        assert!(matches!(
+            poly.contour.segments[0],
+            ContourSegment::Line { .. }
+        ));
+        let written = build_polygon_record(&poly, &write_ctx()).unwrap();
+        assert_eq!(written.params.get("R0"), Some("0mil"));
+        assert_eq!(written.params.get("SA0"), Some(" 0.00000000000000E+0000"));
     }
 
     #[test]

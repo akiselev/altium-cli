@@ -392,7 +392,7 @@ fn convert_polygon(
         Some(index) => ctx.net_param_index(index).context("NET")?,
         None => None,
     };
-    let layer = parse_layer_param(&mut params, V6Layer::TopLayer).context("LAYER")?;
+    let layer = layer_from_param_value("LAYER", &params.remove_required::<String>("LAYER")?)?;
     let connect_style = match params
         .remove_optional::<u8>("CONNECTSTYLE")
         .context("CONNECTSTYLE")?
@@ -472,7 +472,7 @@ fn convert_polygon(
         pour_over_style: params.remove_optional("POUROVERSTYLE")?,
         use_octagons: params.remove_optional("USEOCTAGONS")?,
         remove_islands_by_area: params.remove_optional("REMOVEISLANDSBYAREA")?,
-        area_threshold: params.remove_optional("AREATHRESHOLD")?,
+        area_threshold: remove_finite(&mut params, "AREATHRESHOLD")?,
         remove_necks: params.remove_optional("REMOVENECKS")?,
         neck_width_threshold,
         neck_width_from_rule: params.remove_optional("NECKWIDTHFROMRULE")?,
@@ -494,6 +494,17 @@ fn convert_polygon(
     };
     params.assert_exhausted()?;
     Ok(polygon)
+}
+
+/// Remove an optional floating-point value; NaN and infinities are errors.
+fn remove_finite(params: &mut ParameterCollection, key: &str) -> Result<Option<f64>> {
+    match params.remove_optional::<f64>(key)? {
+        Some(v) if !v.is_finite() => Err(AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("non-finite value {v}"),
+        }),
+        other => Ok(other),
+    }
 }
 
 /// `POLYGONTYPE` strings as stored in Polygons6.
@@ -519,8 +530,9 @@ pub(crate) fn polygon_type_to_param_value(value: PolygonType) -> Result<&'static
     }
 }
 
-/// `HATCHSTYLE` strings as stored in Polygons6. `Solid` and `90Degree` occur in
-/// the test corpus; the other four follow Altium's hatch-style names.
+/// `HATCHSTYLE` strings as stored in Polygons6. `Solid`, `90Degree` and `None`
+/// occur in the test corpus; `45Degree`, `Vertical` and `Horizontal` follow
+/// Altium's hatch-style names and are not confirmed against AD26 sources.
 fn parse_hatch_style(value: &str) -> Result<PolyHatchStyle> {
     match value {
         "Solid" => Ok(PolyHatchStyle::Solid),
@@ -569,7 +581,10 @@ fn is_contour_key(key: &str) -> bool {
 /// Vertex `n` must carry all eight keys; a partial vertex, a malformed value or a
 /// contour key left after the first absent index (a gap) is an error. Line
 /// edges carry the arc keys too (usually zero, sometimes stale values left from
-/// an edited arc); they are parsed and validated, and not part of a line edge.
+/// an edited arc: 128 such edges in the test corpus). Altium draws a `KIND=0`
+/// edge as a straight line whatever these keys hold, so they are parsed and
+/// validated but are not part of a line edge, and the writer stores zeros for
+/// them: a deliberate normalisation, not a field the model carries.
 pub(crate) fn remove_param_contour(params: &mut ParameterCollection) -> Result<PcbContour> {
     let mut segments = Vec::new();
     for i in 0usize.. {
@@ -1535,8 +1550,8 @@ fn parse_layer_param(params: &mut ParameterCollection, default: V6Layer) -> Resu
 
 /// Parse a layer as stored in parameter records: a numeric V6 layer ID, a
 /// canonical V6 name (`TopLayer`, `MULTILAYER`, `Mechanical3`, case-insensitive)
-/// or the short form used by Polygons6/Components6 (`TOP`, `BOTTOM`, `MID1`…`MID30`,
-/// `PLANE1`…`PLANE16`).
+/// or the short form used by Polygons6/Components6 (`TOP`, `BOTTOM`, `KEEPOUT`,
+/// `MID1`…`MID30`, `PLANE1`…`PLANE16`, no leading zeros or signs).
 pub(crate) fn layer_from_param_value(key: &str, raw: &str) -> Result<LayerRef> {
     let unknown = || AltiumFormatError::InvalidParamValue {
         key: key.to_owned(),
@@ -1552,7 +1567,11 @@ pub(crate) fn layer_from_param_value(key: &str, raw: &str) -> Result<LayerRef> {
     }
     let upper = raw.to_ascii_uppercase();
     let numbered = |prefix: &str, max: u8, first_v6: u8| -> Option<V6Layer> {
-        let n: u8 = upper.strip_prefix(prefix)?.parse().ok()?;
+        let digits = upper.strip_prefix(prefix)?;
+        if digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let n: u8 = digits.parse().ok()?;
         if (1..=max).contains(&n) {
             V6Layer::try_from(first_v6 + n - 1).ok()
         } else {
@@ -1562,6 +1581,7 @@ pub(crate) fn layer_from_param_value(key: &str, raw: &str) -> Result<LayerRef> {
     let v6 = match upper.as_str() {
         "TOP" => Some(V6Layer::TopLayer),
         "BOTTOM" => Some(V6Layer::BottomLayer),
+        "KEEPOUT" => Some(V6Layer::KeepOutLayer),
         _ => numbered("MID", 30, V6Layer::MidLayer1 as u8)
             .or_else(|| numbered("PLANE", 16, V6Layer::InternalPlane1 as u8)),
     };
@@ -1569,7 +1589,7 @@ pub(crate) fn layer_from_param_value(key: &str, raw: &str) -> Result<LayerRef> {
 }
 
 /// The parameter-record form of a layer, the inverse of [`layer_from_param_value`]:
-/// `TOP`, `BOTTOM`, `MIDn`, `PLANEn`, otherwise the upper-cased V6 name.
+/// `TOP`, `BOTTOM`, `KEEPOUT`, `MIDn`, `PLANEn`, otherwise the upper-cased V6 name.
 pub(crate) fn layer_to_param_value(key: &str, layer: &LayerRef) -> Result<String> {
     let v6 = layer
         .to_v6()
@@ -1581,6 +1601,7 @@ pub(crate) fn layer_to_param_value(key: &str, layer: &LayerRef) -> Result<String
     Ok(match v6 {
         V6Layer::TopLayer => "TOP".to_owned(),
         V6Layer::BottomLayer => "BOTTOM".to_owned(),
+        V6Layer::KeepOutLayer => "KEEPOUT".to_owned(),
         _ if (V6Layer::MidLayer1 as u8..=V6Layer::MidLayer30 as u8).contains(&id) => {
             format!("MID{}", id - V6Layer::MidLayer1 as u8 + 1)
         }
@@ -1741,6 +1762,19 @@ mod tests {
         assert!(convert_polygon(0, &params(&bad_hatch), &ctx()).is_err());
         let bad_type = POLYGON_RECORD.replace("POLYGONTYPE=Polygon", "POLYGONTYPE=Pour");
         assert!(convert_polygon(0, &params(&bad_type), &ctx()).is_err());
+
+        let no_layer = POLYGON_RECORD.replace("|LAYER=MID1|", "|");
+        let err = convert_polygon(0, &params(&no_layer), &ctx()).unwrap_err();
+        assert!(err.to_string().contains("LAYER"), "{err}");
+
+        for bad in ["NaN", "inf", "-inf"] {
+            let text = POLYGON_RECORD.replace(
+                "AREATHRESHOLD=250015000224.999968",
+                &format!("AREATHRESHOLD={bad}"),
+            );
+            let err = convert_polygon(0, &params(&text), &ctx()).unwrap_err();
+            assert!(err.to_string().contains("AREATHRESHOLD"), "{bad}: {err}");
+        }
     }
 
     const VERTEX0: &str = "|KIND0=0|VX0=1mil|VY0=2mil|CX0=0mil|CY0=0mil|SA0=0|EA0=0|R0=0mil";
@@ -1805,6 +1839,7 @@ mod tests {
             ("PLANE1", V6Layer::InternalPlane1),
             ("PLANE16", V6Layer::InternalPlane16),
             ("MULTILAYER", V6Layer::MultiLayer),
+            ("KEEPOUT", V6Layer::KeepOutLayer),
         ] {
             let layer = layer_from_param_value("LAYER", text).unwrap();
             assert_eq!(layer, LayerRef::from_v6(v6), "{text}");
@@ -1818,7 +1853,9 @@ mod tests {
             layer_from_param_value("LAYER", "2").unwrap(),
             LayerRef::from_v6(V6Layer::MidLayer1)
         );
-        for bad in ["MID0", "MID31", "PLANE17", "PLANE", "SIDE", "255", ""] {
+        for bad in [
+            "MID0", "MID31", "MID01", "MID+1", "PLANE17", "PLANE", "SIDE", "255", "",
+        ] {
             assert!(layer_from_param_value("LAYER", bad).is_err(), "{bad}");
         }
     }

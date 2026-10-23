@@ -72,7 +72,10 @@ fn corpus_board_reads() {
                     BOARDS_FAILING_AT_BASE.contains(&name.as_str()),
                     "{name} read at the base rev and now fails: {msg}"
                 );
-                assert!(msg.contains("Dimensions6"), "{name}: {msg}");
+                assert!(
+                    msg.contains("Dimensions6") && msg.contains("TEXTX"),
+                    "{name}: {msg}"
+                );
             }
         }
     }
@@ -81,7 +84,8 @@ fn corpus_board_reads() {
 }
 
 /// R2: every Polygons6 record of every corpus board parses with its full
-/// contour (counts from an independent olefile survey of the corpus).
+/// contour (counts from an independent olefile survey of the corpus), and
+/// writing it back and reading that gives the same typed polygon.
 #[test]
 fn corpus_r2_polygons() {
     let (mut polygons, mut split_planes, mut vertices, mut arcs) = (0, 0, 0, 0);
@@ -89,7 +93,20 @@ fn corpus_r2_polygons() {
         let ctx = build_context(&doc).unwrap();
         let parsed =
             convert_polygons(&doc, &ctx).unwrap_or_else(|e| panic!("{name}: Polygons6: {e}"));
+        let net_names: Vec<&str> = ctx.net_names.iter().map(String::as_str).collect();
         for p in &parsed {
+            let written = crate::api::pcbdoc_write::build_polygon_record_for_test(p, &net_names)
+                .unwrap_or_else(|e| panic!("{name}: writing {}: {e}", p.id));
+            let reread = convert_polygon_for_test(&written, &net_names)
+                .unwrap_or_else(|e| panic!("{name}: re-reading {}: {e}", p.id));
+            let mut reread = reread;
+            reread.id.clone_from(&p.id);
+            assert_eq!(
+                format!("{reread:?}"),
+                format!("{p:?}"),
+                "{name}: {} write->read differs",
+                p.id
+            );
             polygons += 1;
             if p.polygon_type == PolygonType::SplitPlane {
                 split_planes += 1;
