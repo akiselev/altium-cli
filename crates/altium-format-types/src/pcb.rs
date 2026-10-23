@@ -926,6 +926,16 @@ impl From<V7Layer> for LayerRef {
     }
 }
 
+/// Primitive index fields (net, polygon, component, …) store this for "none".
+pub const PRIMITIVE_INDEX_NONE: u16 = 0xFFFF;
+
+/// Polygon index stored on tracks and arcs that draw split-plane boundary lines.
+///
+/// Inferred from the test corpus (akiselev/altium-cli-test-pcbdoc `6bc5aa7`):
+/// all 2,448 primitives with this value are tracks or arcs on internal plane
+/// layers with no net. Not yet checked against the decompiled sources.
+pub const POLYGON_INDEX_PLANE_SPLIT_LINE: u16 = 0xFFFE;
+
 /// PCB primitive flags bitmask (u16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct PcbFlags(u16);

@@ -549,6 +549,10 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   `locked`, `primitive_lock`. The writer keeps them (an ambiguous or unknown designator without
   `component_index` is an error). Known pre-existing defect: `update_board` → `board()` adds one
   region on 65 of 79 corpus boards (also at `18062d6`).
+- Polygon membership (R3): `polygon: Option<usize>` on Track, Arc, Via, Pad, Fill, Region;
+  `plane_split_line` on Track/Arc for the 0xFFFE marker (split-plane lines on plane layers).
+  In the corpus only regions are pour members on readable boards, and they store no net.
+  Writer: primitives with a full V7 layer id keep their V6 layer (were written as NoLayer).
 
 ### PrjPcb
 INI-style format with indexed sections. Complete roundtrip. Read-only high-level API (internal write exists but not surfaced).

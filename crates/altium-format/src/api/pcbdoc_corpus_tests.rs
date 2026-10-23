@@ -252,3 +252,133 @@ fn corpus_r4_identity() {
     assert_eq!(pad_ids, 58_719);
     assert_eq!(boards_round_tripped, 79);
 }
+
+/// R3: every stored polygon index is in range or the split-plane line marker
+/// (all 94 boards). On the readable boards every polygon member is a region on
+/// its polygon's layer with no net of its own (one test board, test-via2, has
+/// a top-layer region in a bottom-layer pour), and membership survives
+/// `update_board` → `board()`.
+#[test]
+fn corpus_r3_polygon_membership() {
+    let (mut stored, mut split_lines) = (0, 0);
+    let (mut members_total, mut layer_mismatches, mut boards_round_tripped) = (0, 0, 0);
+    for (name, mut doc) in corpus_docs() {
+        let polygon_count =
+            find_param_section(&doc, ParamSectionKind::Polygons6).map_or(0, <[_]>::len);
+        for section in &doc.sections {
+            if let PcbDocSection::Primitive(prim) = section {
+                for record in &prim.records {
+                    let common = match &record.primitive {
+                        PcbPrimitive::Track(p) => &p.common,
+                        PcbPrimitive::Arc(p) => &p.common,
+                        PcbPrimitive::Via(p) => &p.common,
+                        PcbPrimitive::Pad(p) => &p.common,
+                        PcbPrimitive::Fill(p) => &p.common,
+                        PcbPrimitive::Text(p) => &p.common,
+                        PcbPrimitive::Region(p) => &p.common,
+                        PcbPrimitive::ComponentBody(p) => &p.common,
+                    };
+                    let index = common.polygon_index;
+                    if index == POLYGON_INDEX_PLANE_SPLIT_LINE {
+                        split_lines += 1;
+                        assert!(
+                            matches!(
+                                prim.kind,
+                                PrimitiveSectionKind::Tracks6 | PrimitiveSectionKind::Arcs6
+                            ) && common.layer.is_internal_plane(),
+                            "{name}: split-line marker on {:?} {:?}",
+                            prim.kind,
+                            common.layer
+                        );
+                    } else if index != PRIMITIVE_INDEX_NONE {
+                        stored += 1;
+                        assert!(
+                            usize::from(index) < polygon_count,
+                            "{name}: {:?} polygon index {index} of {polygon_count}",
+                            prim.kind
+                        );
+                    }
+                }
+            }
+        }
+        let Ok(board) = doc.board() else {
+            assert!(BOARDS_FAILING_AT_BASE.contains(&name.as_str()), "{name}");
+            continue;
+        };
+        let mut members: Vec<(String, Option<usize>, bool)> = Vec::new();
+        macro_rules! no_members {
+            ($list:expr, $split:expr) => {
+                for p in &$list {
+                    assert_eq!(
+                        p.polygon, None,
+                        "{name}: {} unexpectedly in a polygon",
+                        p.id
+                    );
+                    members.push((p.id.clone(), p.polygon, $split(p)));
+                }
+            };
+        }
+        no_members!(board.tracks, |p: &Track| p.plane_split_line);
+        no_members!(board.arcs, |p: &Arc| p.plane_split_line);
+        no_members!(board.vias, |_: &Via| false);
+        no_members!(board.pads, |_: &Pad| false);
+        no_members!(board.fills, |_: &Fill| false);
+        for r in &board.regions {
+            members.push((r.id.clone(), r.polygon, false));
+            let Some(i) = r.polygon else { continue };
+            members_total += 1;
+            assert_eq!(r.net, None, "{name}: pour region {} has a net", r.id);
+            if r.layer.to_v6() != board.polygons[i].layer.to_v6() {
+                assert_eq!(name, "test-via2.PcbDoc", "{}: layer vs polygon {i}", r.id);
+                layer_mismatches += 1;
+            }
+        }
+        let region_count = board.regions.len();
+        doc.update_board(&board)
+            .unwrap_or_else(|e| panic!("{name}: update_board: {e}"));
+        let after = doc
+            .board()
+            .unwrap_or_else(|e| panic!("{name}: board() after update: {e}"));
+        let mut after_members: Vec<(String, Option<usize>, bool)> = Vec::new();
+        after_members.extend(
+            after
+                .tracks
+                .iter()
+                .map(|p| (p.id.clone(), p.polygon, p.plane_split_line)),
+        );
+        after_members.extend(
+            after
+                .arcs
+                .iter()
+                .map(|p| (p.id.clone(), p.polygon, p.plane_split_line)),
+        );
+        after_members.extend(after.vias.iter().map(|p| (p.id.clone(), p.polygon, false)));
+        after_members.extend(after.pads.iter().map(|p| (p.id.clone(), p.polygon, false)));
+        after_members.extend(after.fills.iter().map(|p| (p.id.clone(), p.polygon, false)));
+        if after.regions.len() == region_count {
+            after_members.extend(
+                after
+                    .regions
+                    .iter()
+                    .map(|p| (p.id.clone(), p.polygon, false)),
+            );
+        } else {
+            // Pre-existing extra region after update_board (see corpus_r4_identity).
+            members.retain(|(id, ..)| !id.starts_with("region_"));
+        }
+        assert!(
+            after_members == members,
+            "{name}: polygon membership changed on write"
+        );
+        boards_round_tripped += 1;
+    }
+    eprintln!(
+        "corpus_r3_polygon_membership: {stored} polygon indices and {split_lines} split-plane \
+         line markers stored; {members_total} pour regions on readable boards \
+         ({layer_mismatches} off their polygon's layer); {boards_round_tripped} boards written \
+         and re-read"
+    );
+    assert_eq!(split_lines, 2_448);
+    assert_eq!(layer_mismatches, 1);
+    assert_eq!(boards_round_tripped, 79);
+}

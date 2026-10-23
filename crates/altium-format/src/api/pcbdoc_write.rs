@@ -10,7 +10,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    BarcodeRenderMode, DaisyChainStyle, LayerRef, MaskExpansionState, PadStackMode, PcbFlags,
+    BarcodeRenderMode, DaisyChainStyle, LayerRef, MaskExpansionState,
+    POLYGON_INDEX_PLANE_SPLIT_LINE, PRIMITIVE_INDEX_NONE, PadStackMode, PcbFlags,
     PlaneConnectionStyle, PolySegmentKind, PolygonType, TCacheState, TextKind, V6Layer,
 };
 use altium_format_types::{BarcodeKind, PcbObjectId};
@@ -48,6 +49,8 @@ struct WriteContext {
     net_indices: HashMap<String, u16>,
     /// Components6 position → designator (designators need not be unique).
     component_designators: Vec<String>,
+    /// Number of polygons written to Polygons6 (range of `polygon` indices).
+    polygon_count: usize,
 }
 
 impl WriteContext {
@@ -64,6 +67,7 @@ impl WriteContext {
                 .iter()
                 .map(|c| c.designator.clone())
                 .collect(),
+            polygon_count: board.polygons.len(),
         }
     }
 
@@ -76,6 +80,41 @@ impl WriteContext {
                 .unwrap_or(0xFFFF),
             None => 0xFFFF,
         }
+    }
+
+    /// Resolve a primitive's polygon membership to its Polygons6 index.
+    fn resolve_polygon_index(
+        &self,
+        polygon: Option<usize>,
+        plane_split_line: bool,
+        layer: &LayerRef,
+    ) -> Result<u16> {
+        if plane_split_line {
+            let on_plane = layer_v6_for_write(layer).is_some_and(V6Layer::is_internal_plane);
+            if polygon.is_some() || !on_plane {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: "polygon".to_owned(),
+                    detail: format!(
+                        "plane_split_line needs an internal plane layer and no polygon \
+                         (layer {layer}, polygon {polygon:?})"
+                    ),
+                });
+            }
+            return Ok(POLYGON_INDEX_PLANE_SPLIT_LINE);
+        }
+        let Some(i) = polygon else {
+            return Ok(PRIMITIVE_INDEX_NONE);
+        };
+        u16::try_from(i)
+            .ok()
+            .filter(|_| i < self.polygon_count)
+            .ok_or_else(|| crate::AltiumFormatError::InvalidParamValue {
+                key: "polygon".to_owned(),
+                detail: format!(
+                    "polygon {i} outside the board's {} polygons",
+                    self.polygon_count
+                ),
+            })
     }
 
     /// Resolve a primitive's owning component to its Components6 index.
@@ -139,6 +178,18 @@ impl WriteContext {
     }
 }
 
+/// The V6 layer to store in a primitive's common header: the V6 form of a
+/// V6-compatible layer, else the V6 layer the primitive was read with. A
+/// primitive stored with both a V6 and a full V7 layer id (`0x0100_00ss`, …)
+/// reads as a `LayerRef` carrying the V7 id and the V6 layer's canonical name;
+/// `to_v6()` fails on such a reference, so the name is the V6 source. (Before,
+/// these primitives were written with `NoLayer`.)
+fn layer_v6_for_write(layer: &LayerRef) -> Option<V6Layer> {
+    layer
+        .to_v6()
+        .or_else(|| layer.display_name().and_then(V6Layer::from_string_name))
+}
+
 /// Build a `PcbPrimitiveCommon` for a board context with net/component resolution.
 fn primitive_common_for_board(
     layer: &LayerRef,
@@ -146,13 +197,15 @@ fn primitive_common_for_board(
     component: &Option<String>,
     component_index: Option<usize>,
     flags: PcbFlags,
+    polygon: Option<usize>,
+    plane_split_line: bool,
     ctx: &WriteContext,
 ) -> Result<PcbPrimitiveCommon> {
     Ok(PcbPrimitiveCommon {
-        layer: layer.to_v6().unwrap_or(V6Layer::NoLayer),
+        layer: layer_v6_for_write(layer).unwrap_or(V6Layer::NoLayer),
         flags,
         net_index: ctx.resolve_net_index(net),
-        polygon_index: 0xFFFF, // polygon membership not tracked in API
+        polygon_index: ctx.resolve_polygon_index(polygon, plane_split_line, layer)?,
         component_index: ctx.resolve_component_index(component, component_index)?,
         coordinate_index: 0xFFFF,
         dimension_index: 0xFFFF,
@@ -698,6 +751,8 @@ fn build_track_records(tracks: &[Track], ctx: &WriteContext) -> Result<Vec<Parse
                         &t.component,
                         t.component_index,
                         t.flags,
+                        t.polygon,
+                        t.plane_split_line,
                         ctx,
                     )?,
                     start: t.start,
@@ -728,6 +783,8 @@ fn build_arc_records(arcs: &[Arc], ctx: &WriteContext) -> Result<Vec<ParsedPrimi
                         &a.component,
                         a.component_index,
                         a.flags,
+                        a.polygon,
+                        a.plane_split_line,
                         ctx,
                     )?,
                     center: a.center,
@@ -764,6 +821,8 @@ fn build_via_records(vias: &[Via], ctx: &WriteContext) -> Result<Vec<ParsedPrimi
                         &v.component,
                         v.component_index,
                         v.flags,
+                        v.polygon,
+                        false,
                         ctx,
                     )?,
                     location: v.location,
@@ -841,6 +900,8 @@ fn build_pad_records(pads: &[Pad], ctx: &WriteContext) -> Result<Vec<ParsedPrimi
                         &p.component,
                         p.component_index,
                         p.flags,
+                        p.polygon,
+                        false,
                         ctx,
                     )?,
                     pad_name: p.pad_name.clone(),
@@ -920,6 +981,8 @@ fn build_fill_records(fills: &[Fill], ctx: &WriteContext) -> Result<Vec<ParsedPr
                         &f.component,
                         f.component_index,
                         f.flags,
+                        f.polygon,
+                        false,
                         ctx,
                     )?,
                     corner_1: f.corner1,
@@ -955,6 +1018,8 @@ fn build_text_records(
                         &t.component,
                         t.component_index,
                         t.flags,
+                        None,
+                        false,
                         ctx,
                     )?,
                     location: t.location,
@@ -1028,6 +1093,8 @@ fn build_region_records(
                         &r.component,
                         r.component_index,
                         r.flags,
+                        r.polygon,
+                        false,
                         ctx,
                     )?,
                     kind: r.kind,
@@ -1075,6 +1142,8 @@ fn build_body_records(
                         &b.component,
                         b.component_index,
                         PcbFlags::default(),
+                        None,
+                        false,
                         ctx,
                     )?,
                     v7_layer: b.layer.display_name().unwrap_or("").to_owned(),
@@ -1811,6 +1880,7 @@ pub(crate) fn build_polygon_record_for_test(
             .map(|(i, n)| ((*n).to_owned(), i as u16))
             .collect(),
         component_designators: Vec::new(),
+        polygon_count: 0,
     };
     build_polygon_record(poly, &ctx).map(|r| r.params)
 }
@@ -1840,6 +1910,7 @@ mod tests {
         WriteContext {
             net_indices: HashMap::from([("GND".to_owned(), 0), ("P2V5".to_owned(), 1)]),
             component_designators: Vec::new(),
+            polygon_count: 0,
         }
     }
 
@@ -1923,6 +1994,7 @@ mod tests {
         let ctx = WriteContext {
             net_indices: HashMap::new(),
             component_designators: vec!["R14".to_owned(), "R14".to_owned(), "C1".to_owned()],
+            polygon_count: 0,
         };
         let r14 = Some("R14".to_owned());
         assert_eq!(ctx.resolve_component_index(&None, None).unwrap(), 0xFFFF);
@@ -1942,6 +2014,39 @@ mod tests {
             let err = ctx.resolve_component_index(&designator, index).unwrap_err();
             assert!(err.to_string().contains(needle), "{needle}: {err}");
         }
+    }
+
+    #[test]
+    fn polygon_membership_resolution() {
+        let ctx = WriteContext {
+            net_indices: HashMap::new(),
+            component_designators: Vec::new(),
+            polygon_count: 2,
+        };
+        let top = LayerRef::from_v6(V6Layer::TopLayer);
+        let plane = LayerRef::from_v6(V6Layer::InternalPlane2);
+        assert_eq!(
+            ctx.resolve_polygon_index(None, false, &top).unwrap(),
+            PRIMITIVE_INDEX_NONE
+        );
+        assert_eq!(ctx.resolve_polygon_index(Some(1), false, &top).unwrap(), 1);
+        assert!(ctx.resolve_polygon_index(Some(2), false, &top).is_err());
+        assert_eq!(
+            ctx.resolve_polygon_index(None, true, &plane).unwrap(),
+            POLYGON_INDEX_PLANE_SPLIT_LINE
+        );
+        assert!(ctx.resolve_polygon_index(None, true, &top).is_err());
+        assert!(ctx.resolve_polygon_index(Some(0), true, &plane).is_err());
+        // A V7-form plane layer read together with its V6 layer.
+        let v7_plane = LayerRef::from_v6_and_v7(
+            V6Layer::InternalPlane1,
+            altium_format_types::pcb::V7Layer::new(0x0101_0001),
+        );
+        assert_eq!(layer_v6_for_write(&v7_plane), Some(V6Layer::InternalPlane1));
+        assert_eq!(
+            ctx.resolve_polygon_index(None, true, &v7_plane).unwrap(),
+            POLYGON_INDEX_PLANE_SPLIT_LINE
+        );
     }
 
     #[test]

@@ -552,6 +552,13 @@ pub struct Track {
     pub component_index: Option<usize>,
     /// Primitive flags as stored (selected, locked, …).
     pub flags: PcbFlags,
+    /// Index into [`PcbDocBoard::polygons`] of the polygon pour this primitive
+    /// belongs to (pour fill, not authored copper); `None` for free primitives.
+    pub polygon: Option<usize>,
+    /// A split-plane boundary line on an internal plane layer (stored as
+    /// polygon index [`POLYGON_INDEX_PLANE_SPLIT_LINE`](altium_format_types::pcb::POLYGON_INDEX_PLANE_SPLIT_LINE)),
+    /// not routed copper. `polygon` is `None` when this is set.
+    pub plane_split_line: bool,
     pub start: CoordPoint,
     pub end: CoordPoint,
     pub width: Coord,
@@ -572,6 +579,13 @@ pub struct Arc {
     pub component_index: Option<usize>,
     /// Primitive flags as stored (selected, locked, …).
     pub flags: PcbFlags,
+    /// Index into [`PcbDocBoard::polygons`] of the polygon pour this primitive
+    /// belongs to (pour fill, not authored copper); `None` for free primitives.
+    pub polygon: Option<usize>,
+    /// A split-plane boundary line on an internal plane layer (stored as
+    /// polygon index [`POLYGON_INDEX_PLANE_SPLIT_LINE`](altium_format_types::pcb::POLYGON_INDEX_PLANE_SPLIT_LINE)),
+    /// not routed copper. `polygon` is `None` when this is set.
+    pub plane_split_line: bool,
     pub center: CoordPoint,
     pub radius: Coord,
     pub start_angle: f64,
@@ -593,6 +607,9 @@ pub struct Via {
     pub component_index: Option<usize>,
     /// Primitive flags as stored (selected, locked, …).
     pub flags: PcbFlags,
+    /// Index into [`PcbDocBoard::polygons`] of the polygon pour this primitive
+    /// belongs to (pour fill, not authored copper); `None` for free primitives.
+    pub polygon: Option<usize>,
     pub location: CoordPoint,
     pub diameter: Coord,
     pub hole_size: Coord,
@@ -617,6 +634,9 @@ pub struct Pad {
     pub component_index: Option<usize>,
     /// Primitive flags as stored (selected, locked, …).
     pub flags: PcbFlags,
+    /// Index into [`PcbDocBoard::polygons`] of the polygon pour this primitive
+    /// belongs to (pour fill, not authored copper); `None` for free primitives.
+    pub polygon: Option<usize>,
     pub location: CoordPoint,
     pub shape: PadShape,
     pub x_size: Coord,
@@ -658,6 +678,9 @@ pub struct Fill {
     pub component_index: Option<usize>,
     /// Primitive flags as stored (selected, locked, …).
     pub flags: PcbFlags,
+    /// Index into [`PcbDocBoard::polygons`] of the polygon pour this primitive
+    /// belongs to (pour fill, not authored copper); `None` for free primitives.
+    pub polygon: Option<usize>,
     pub corner1: CoordPoint,
     pub corner2: CoordPoint,
     pub rotation: f64,
@@ -703,6 +726,9 @@ pub struct Region {
     pub component_index: Option<usize>,
     /// Primitive flags as stored (selected, locked, …).
     pub flags: PcbFlags,
+    /// Index into [`PcbDocBoard::polygons`] of the polygon pour this primitive
+    /// belongs to (pour fill, not authored copper); `None` for free primitives.
+    pub polygon: Option<usize>,
     pub kind: RegionKind,
     pub outline: Vec<CoordPoint>,
     pub holes: Vec<Vec<CoordPoint>>,

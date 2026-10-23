@@ -9,8 +9,9 @@ use altium_format_types::color::Color;
 use altium_format_types::common::Unit;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
-    ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, PolyHatchStyle,
-    PolySegmentKind, PolygonType, RegionKind, RuleKind, V6Layer, V7Layer,
+    ClassMemberKind, DimensionKind, LayerRef, POLYGON_INDEX_PLANE_SPLIT_LINE, PRIMITIVE_INDEX_NONE,
+    PlaneConnectionStyle, PolyHatchStyle, PolySegmentKind, PolygonType, RegionKind, RuleKind,
+    V6Layer, V7Layer,
 };
 use altium_format_types::{DielectricType, LayerStackStyle, PcbObjectId};
 use std::collections::HashMap;
@@ -47,6 +48,8 @@ struct ConvertContext {
     wide_strings: Vec<String>,
     /// Pads6 record index → unique id (UniqueIDPrimitiveInformation).
     pad_unique_ids: HashMap<usize, String>,
+    /// Number of Polygons6 records (the range of primitive polygon indices).
+    polygon_count: usize,
 }
 
 impl ConvertContext {
@@ -100,6 +103,54 @@ impl ConvertContext {
                     "{i} outside Components6 ({} components)",
                     self.component_designators.len()
                 ),
+            })
+        }
+    }
+
+    /// Resolve a primitive's polygon index: 0xFFFF is "no polygon", an index
+    /// outside Polygons6 is an error.
+    fn polygon_index(&self, index: u16) -> Result<Option<usize>> {
+        if index == PRIMITIVE_INDEX_NONE {
+            return Ok(None);
+        }
+        let i = usize::from(index);
+        if i < self.polygon_count {
+            Ok(Some(i))
+        } else {
+            Err(AltiumFormatError::InvalidParamValue {
+                key: "polygon index".to_owned(),
+                detail: format!("{i} outside Polygons6 ({} polygons)", self.polygon_count),
+            })
+        }
+    }
+
+    /// A track or arc's polygon index: `(polygon, plane_split_line)`. The
+    /// split-line marker is accepted only on internal plane layers.
+    fn track_polygon(&self, index: u16, layer: V6Layer) -> Result<(Option<usize>, bool)> {
+        if index != POLYGON_INDEX_PLANE_SPLIT_LINE {
+            return Ok((self.polygon_index(index)?, false));
+        }
+        if layer.is_internal_plane() {
+            Ok((None, true))
+        } else {
+            Err(AltiumFormatError::InvalidParamValue {
+                key: "polygon index".to_owned(),
+                detail: format!(
+                    "split-plane line marker {index:#06X} on non-plane layer {layer:?}"
+                ),
+            })
+        }
+    }
+
+    /// Text and component bodies have no `polygon` field: a polygon index on
+    /// one is an error, not dropped.
+    fn reject_polygon_index(&self, index: u16) -> Result<()> {
+        if index == PRIMITIVE_INDEX_NONE {
+            Ok(())
+        } else {
+            Err(AltiumFormatError::InvalidParamValue {
+                key: "polygon index".to_owned(),
+                detail: format!("polygon index {index} on a primitive kind that has no polygon"),
             })
         }
     }
@@ -250,11 +301,14 @@ fn build_context(doc: &PcbDoc) -> Result<ConvertContext> {
     let pad_unique_ids =
         convert_unique_id_primitive_information(doc).context("UniqueIDPrimitiveInformation")?;
 
+    let polygon_count = find_param_section(doc, ParamSectionKind::Polygons6).map_or(0, <[_]>::len);
+
     Ok(ConvertContext {
         net_names,
         component_designators,
         wide_strings,
         pad_unique_ids,
+        polygon_count,
     })
 }
 
@@ -1407,6 +1461,7 @@ fn track_from_internal(
     t: &crate::pcbdoc::primitives::PcbTrack,
     ctx: &ConvertContext,
 ) -> Result<Track> {
+    let track_polygon = ctx.track_polygon(t.common.polygon_index, t.common.layer)?;
     Ok(Track {
         id: format!("track_{idx}"),
         layer: resolve_layer_v6_v7(t.common.layer, t.layer_enum_index),
@@ -1415,6 +1470,8 @@ fn track_from_internal(
         unique_id: None,
         component_index: ctx.component_index(t.common.component_index)?,
         flags: t.common.flags,
+        polygon: track_polygon.0,
+        plane_split_line: track_polygon.1,
         start: t.start,
         end: t.end,
         width: t.width,
@@ -1426,6 +1483,7 @@ fn arc_from_internal(
     a: &crate::pcbdoc::primitives::PcbArc,
     ctx: &ConvertContext,
 ) -> Result<Arc> {
+    let arc_polygon = ctx.track_polygon(a.common.polygon_index, a.common.layer)?;
     Ok(Arc {
         id: format!("arc_{idx}"),
         layer: resolve_layer_v6_v7(a.common.layer, a.layer_enum_index),
@@ -1434,6 +1492,8 @@ fn arc_from_internal(
         unique_id: None,
         component_index: ctx.component_index(a.common.component_index)?,
         flags: a.common.flags,
+        polygon: arc_polygon.0,
+        plane_split_line: arc_polygon.1,
         center: a.center,
         radius: a.radius,
         start_angle: a.start_angle,
@@ -1457,6 +1517,7 @@ fn via_from_internal(idx: usize, v: &PcbVia, ctx: &ConvertContext) -> Result<Via
         unique_id: None,
         component_index: ctx.component_index(v.common.component_index)?,
         flags: v.common.flags,
+        polygon: ctx.polygon_index(v.common.polygon_index)?,
         location: v.location,
         diameter: v.diameter,
         hole_size: v.hole_size,
@@ -1477,6 +1538,7 @@ fn pad_from_internal(idx: usize, p: &PcbPad, ctx: &ConvertContext) -> Result<Pad
         unique_id: ctx.pad_unique_ids.get(&idx).cloned(),
         component_index: ctx.component_index(p.common.component_index)?,
         flags: p.common.flags,
+        polygon: ctx.polygon_index(p.common.polygon_index)?,
         location: p.location,
         shape: p.shape_top,
         x_size: p.size_top.x,
@@ -1514,6 +1576,7 @@ fn fill_from_internal(
         unique_id: None,
         component_index: ctx.component_index(f.common.component_index)?,
         flags: f.common.flags,
+        polygon: ctx.polygon_index(f.common.polygon_index)?,
         corner1: f.corner_1,
         corner2: f.corner_2,
         rotation: f.rotation,
@@ -1530,6 +1593,7 @@ fn text_from_internal(
         .resolve_wide_string(t.wide_string_index)
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| t.text.clone());
+    ctx.reject_polygon_index(t.common.polygon_index)?;
 
     Ok(Text {
         id: format!("text_{idx}"),
@@ -1571,6 +1635,7 @@ fn region_from_internal(idx: usize, r: &PcbRegion, ctx: &ConvertContext) -> Resu
         unique_id: None,
         component_index: ctx.component_index(r.common.component_index)?,
         flags: r.common.flags,
+        polygon: ctx.polygon_index(r.common.polygon_index)?,
         kind: r.kind,
         outline: contour_to_coord_points(&r.outline),
         holes: r.holes.iter().map(contour_to_coord_points).collect(),
@@ -1589,6 +1654,7 @@ fn body_from_internal(
     } else {
         LayerRef::from_v6(b.common.layer)
     };
+    ctx.reject_polygon_index(b.common.polygon_index)?;
     Ok(ComponentBody {
         id: format!("body_{idx}"),
         layer,
@@ -1741,6 +1807,7 @@ pub(crate) fn convert_polygon_for_test(
         component_designators: Vec::new(),
         wide_strings: Vec::new(),
         pad_unique_ids: HashMap::new(),
+        polygon_count: 0,
     };
     convert_polygon(0, record, &ctx)
 }
@@ -1775,6 +1842,7 @@ mod tests {
             component_designators: Vec::new(),
             wide_strings: Vec::new(),
             pad_unique_ids: HashMap::new(),
+            polygon_count: 0,
         }
     }
 
@@ -2028,6 +2096,31 @@ mod tests {
             let err = pad_unique_ids_from_records(&uid_records(&records), 3).unwrap_err();
             assert!(format!("{err}").contains(needle), "{needle}: {err}");
         }
+    }
+
+    #[test]
+    fn polygon_indices_and_split_line_marker() {
+        let mut c = ctx();
+        c.polygon_count = 2;
+        assert_eq!(c.polygon_index(PRIMITIVE_INDEX_NONE).unwrap(), None);
+        assert_eq!(c.polygon_index(1).unwrap(), Some(1));
+        assert!(c.polygon_index(2).is_err());
+        assert!(c.polygon_index(POLYGON_INDEX_PLANE_SPLIT_LINE).is_err());
+        assert_eq!(
+            c.track_polygon(POLYGON_INDEX_PLANE_SPLIT_LINE, V6Layer::InternalPlane3)
+                .unwrap(),
+            (None, true)
+        );
+        assert_eq!(
+            c.track_polygon(1, V6Layer::TopLayer).unwrap(),
+            (Some(1), false)
+        );
+        let err = c
+            .track_polygon(POLYGON_INDEX_PLANE_SPLIT_LINE, V6Layer::TopLayer)
+            .unwrap_err();
+        assert!(err.to_string().contains("non-plane"), "{err}");
+        assert!(c.reject_polygon_index(PRIMITIVE_INDEX_NONE).is_ok());
+        assert!(c.reject_polygon_index(0).is_err());
     }
 
     #[test]
