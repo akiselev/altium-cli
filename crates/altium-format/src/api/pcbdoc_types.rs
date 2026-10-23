@@ -18,11 +18,11 @@ use altium_format_types::pcb::{
 };
 use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, MaskExpansionMode, PadShape, PadStackMode, PcbFlags,
-    PlaneConnectionStyle, PolyHatchStyle, PolygonType, RegionKind, RuleKind,
+    PlaneConnectionStyle, PolyHatchStyle, PolygonType, RegionKind, RuleKind, ViolationKind,
 };
 use altium_format_types::{
     ComponentKind, ComponentPlacementType, ConfinementStyle, DielectricType, LayerStackStyle,
-    NetScope, RuleLayerKind,
+    NetScope, PcbObjectId, RuleLayerKind,
 };
 
 // ── Root type ───────────────────────────────────────────────────────────────
@@ -60,6 +60,14 @@ pub struct PcbDocBoard {
 
     // Models (3D)
     pub models: Vec<Model3D>,
+
+    // Stored DRC results. Read-only: `update_board` keeps them when these lists
+    // are unchanged from `board()` (their indices must still be in range),
+    // clears them when a list is empty, and rejects any other change.
+    /// DRC violations stored in the file.
+    pub violations: Vec<BoardViolation>,
+    /// Violations waived in the file.
+    pub waived_violations: Vec<WaivedBoardViolation>,
 }
 
 // ── Board settings ──────────────────────────────────────────────────────────
@@ -795,6 +803,74 @@ pub struct ComponentBody {
     pub body_opacity_3d: f64,
     pub model_name: String,
     pub outline: Vec<CoordPoint>,
+}
+
+// ── Stored DRC violations ───────────────────────────────────────────────────
+
+/// A DRC violation stored in the PcbDoc (the `T*Violation` storages).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoardViolation {
+    pub kind: ViolationKind,
+    /// Index into [`PcbDocBoard::rules`] of the violated rule (`RULEINDEX`).
+    pub rule_index: usize,
+    /// `LAYER`; `None` for `UNKNOWN`.
+    pub layer: Option<LayerRef>,
+    /// The objects involved (`PRIM1ID`/`PRIM1INDEX`, `PRIM2ID`/`PRIM2INDEX`).
+    pub objects: Vec<ViolationObject>,
+    /// `PRIMID1`/`PRIMID2` (board-outline clearance violations).
+    pub object_ids: Vec<String>,
+    /// Marker points: `LOCATION1`/`LOCATION2`, `LOCATION`, `FX1`/`FY1`…, or the
+    /// 3D points `P1`/`P2` of component clearance violations (with `z`).
+    pub locations: Vec<ViolationLocation>,
+    /// `CIRCLERADIUS` (net antennae violations).
+    pub circle_radius: Option<Coord>,
+    /// `ISHOLECLEARANCEVIOLATION` (clearance violations measured to a hole).
+    pub hole_clearance: Option<bool>,
+    /// The violating area per layer (differential-pair violations).
+    pub areas: Vec<ViolationArea>,
+    pub description: String,
+    /// `INVOLVEDPRIMCOUNT`.
+    pub involved_primitive_count: u32,
+}
+
+/// An object a stored violation names: its kind and its index in the list of
+/// that kind (e.g. `Pad` 12 is `PcbDocBoard::pads[12]`, `Net` 3 is `nets[3]`,
+/// `Polygon` 1 is `polygons[1]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViolationObject {
+    pub kind: PcbObjectId,
+    pub index: usize,
+}
+
+/// A violation marker point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViolationLocation {
+    pub point: CoordPoint,
+    pub z: Option<Coord>,
+}
+
+/// A violating area on one layer: contours of vertices in internal units, as
+/// stored (floating point).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViolationArea {
+    pub layer: Option<LayerRef>,
+    pub contours: Vec<Vec<[f64; 2]>>,
+}
+
+/// A waived violation (the `WaivedViolations` storage).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WaivedBoardViolation {
+    /// Index into [`PcbDocBoard::rules`] (`RULEINDEX`).
+    pub rule_index: usize,
+    /// `PRIM1KIND`/`PRIM1INDEX`, `PRIM2KIND`/`PRIM2INDEX`.
+    pub objects: Vec<ViolationObject>,
+    /// `UNICODE`.
+    pub text: String,
+    pub created_at: String,
+    pub author_id: String,
+    pub author_title: String,
+    pub source: String,
+    pub comment: String,
 }
 
 // ── Annotations ─────────────────────────────────────────────────────────────

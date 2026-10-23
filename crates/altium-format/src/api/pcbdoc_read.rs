@@ -8,6 +8,7 @@
 use altium_format_types::color::Color;
 use altium_format_types::common::Unit;
 use altium_format_types::coord::{Coord, CoordPoint};
+use altium_format_types::pcb::ViolationKind;
 use altium_format_types::pcb::constants::{POLYGON_INDEX_PLANE_SPLIT_LINE, PRIMITIVE_INDEX_NONE};
 use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, PolyHatchStyle,
@@ -24,7 +25,7 @@ use crate::api::pcbdoc_types::*;
 use crate::board_config::PcbBoardConfig;
 use crate::param_collection::ParameterCollection;
 use crate::param_value::{ExactMilCoord, MilCoord};
-use crate::pcbdoc::drc::PcbRuleKindData;
+use crate::pcbdoc::drc::{PcbRuleKindData, PcbViolation};
 use crate::pcbdoc::primitives::PcbPrimitive;
 use crate::pcbdoc::records::{ParamSectionKind, PrefixedParamSectionKind, PrimitiveSectionKind};
 use crate::pcbdoc::{
@@ -182,6 +183,8 @@ pub(crate) fn board_from_internal(doc: &PcbDoc) -> Result<PcbDocBoard> {
     let dimensions = convert_dimensions(doc)?;
     let models = convert_models(doc);
     let rules = convert_rules(doc);
+    let violations = convert_violations(doc).context("stored violations")?;
+    let waived_violations = convert_waived_violations(doc)?;
     let settings = convert_board_settings(doc)?;
 
     // Step 3: Convert primitives from binary sections.
@@ -257,6 +260,8 @@ pub(crate) fn board_from_internal(doc: &PcbDoc) -> Result<PcbDocBoard> {
         component_bodies,
         dimensions,
         models,
+        violations,
+        waived_violations,
     })
 }
 
@@ -1914,6 +1919,415 @@ fn body_from_internal(
     })
 }
 
+// ── Stored DRC violations ───────────────────────────────────────────────────
+
+enum ViolationData<'a> {
+    TwoPoint(&'a crate::pcbdoc::drc::TwoPointViolationData),
+    BoardOutline(&'a crate::pcbdoc::drc::BoardOutlineClearanceViolationData),
+    NetAntennae(&'a crate::pcbdoc::drc::NetAntennaeViolationData),
+    DisconnectedSubnets(&'a crate::pcbdoc::drc::DisconnectedSubnetsViolationData),
+    MatchedNetLengths(&'a crate::pcbdoc::drc::MatchedNetLengthsViolationData),
+    DiffPairs(&'a crate::pcbdoc::drc::DiffPairsViolationData),
+}
+
+/// An object kind as stored in violation records (`PRIMnID`, `PRIMnKIND`).
+/// `PolyRegion` is a region of a polygon pour and `Poly` a polygon; every
+/// other value is an error.
+fn violation_object_kind(key: &str, value: &str) -> Result<PcbObjectId> {
+    PcbObjectId::from_primitive_object_id_str(value)
+        .or(match value {
+            "PolyRegion" => Some(PcbObjectId::Region),
+            "Poly" => Some(PcbObjectId::Polygon),
+            "Component" => Some(PcbObjectId::Component),
+            "Net" => Some(PcbObjectId::Net),
+            "DifferentialPair" => Some(PcbObjectId::DifferentialPair),
+            "Board" => Some(PcbObjectId::Board),
+            _ => None,
+        })
+        .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: format!("unknown violation object kind {value:?}"),
+        })
+}
+
+fn violation_object(
+    n: u8,
+    kind: Option<&str>,
+    index: Option<u32>,
+) -> Result<Option<ViolationObject>> {
+    match (kind, index) {
+        (None, None) => Ok(None),
+        (Some(kind), Some(index)) => Ok(Some(ViolationObject {
+            kind: violation_object_kind(&format!("PRIM{n}ID"), kind)?,
+            index: index as usize,
+        })),
+        _ => Err(AltiumFormatError::InvalidParamValue {
+            key: format!("PRIM{n}INDEX"),
+            detail: format!("object {n} has only one of its kind and index"),
+        }),
+    }
+}
+
+fn violation_point(
+    what: &str,
+    x: Option<MilCoord>,
+    y: Option<MilCoord>,
+    z: Option<Option<MilCoord>>,
+) -> Result<Option<ViolationLocation>> {
+    match (x, y, z) {
+        (None, None, None | Some(None)) => Ok(None),
+        (Some(x), Some(y), None) => Ok(Some(ViolationLocation {
+            point: CoordPoint::new(x.0, y.0),
+            z: None,
+        })),
+        (Some(x), Some(y), Some(Some(z))) => Ok(Some(ViolationLocation {
+            point: CoordPoint::new(x.0, y.0),
+            z: Some(z.0),
+        })),
+        _ => Err(AltiumFormatError::InvalidParamValue {
+            key: what.to_owned(),
+            detail: "incomplete violation point".to_owned(),
+        }),
+    }
+}
+
+/// A violation record's layer; `UNKNOWN` is no layer.
+fn violation_layer(key: &str, raw: &str) -> Result<Option<LayerRef>> {
+    if raw.eq_ignore_ascii_case("UNKNOWN") {
+        Ok(None)
+    } else {
+        layer_from_param_value(key, raw).map(Some)
+    }
+}
+
+pub(crate) fn convert_violations(doc: &PcbDoc) -> Result<Vec<BoardViolation>> {
+    let mut out = Vec::new();
+    for (section, list) in &doc.violations {
+        for (idx, v) in list.iter().enumerate() {
+            out.push(
+                convert_violation(v, doc.rules.len())
+                    .with_context(|| format!("{section:?} record #{idx}"))?,
+            );
+        }
+    }
+    Ok(out)
+}
+
+fn convert_violation(v: &PcbViolation, rule_count: usize) -> Result<BoardViolation> {
+    let (kind, base, data) = match v {
+        PcbViolation::AcuteAngle { base, data } => (
+            ViolationKind::AcuteAngle,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::BackDrill { base, data } => (
+            ViolationKind::BackDrill,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::BoardOutlineClearance { base, data } => (
+            ViolationKind::BoardOutlineClearance,
+            base,
+            ViolationData::BoardOutline(data),
+        ),
+        PcbViolation::Clearance { base, data } => (
+            ViolationKind::Clearance,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::ComponentClearance { base, data } => (
+            ViolationKind::ComponentClearance,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::Creepage { base, data } => {
+            (ViolationKind::Creepage, base, ViolationData::TwoPoint(data))
+        }
+        PcbViolation::DiffPairs { base, data } => (
+            ViolationKind::DiffPairs,
+            base,
+            ViolationData::DiffPairs(data),
+        ),
+        PcbViolation::DisconnectedSubnets { base, data } => (
+            ViolationKind::DisconnectedSubnets,
+            base,
+            ViolationData::DisconnectedSubnets(data),
+        ),
+        PcbViolation::HoleToHole { base, data } => (
+            ViolationKind::HoleToHole,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::MatchedNetLengths { base, data } => (
+            ViolationKind::MatchedNetLengths,
+            base,
+            ViolationData::MatchedNetLengths(data),
+        ),
+        PcbViolation::MaximumViaCount { base, data } => (
+            ViolationKind::MaximumViaCount,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::MaxMinComponentHeight { base, data } => (
+            ViolationKind::MaxMinComponentHeight,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::MaxMinLength { base, data } => (
+            ViolationKind::MaxMinLength,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::MaxMinPadSlotWidth { base, data } => (
+            ViolationKind::MaxMinPadSlotWidth,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::MaxMinViaHoleSize { base, data } => (
+            ViolationKind::MaxMinViaHoleSize,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::MinimumAnnularRing { base, data } => (
+            ViolationKind::MinimumAnnularRing,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::MinSolderMaskSliver { base, data } => (
+            ViolationKind::MinSolderMaskSliver,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::MinWidth { base, data } => {
+            (ViolationKind::MinWidth, base, ViolationData::TwoPoint(data))
+        }
+        PcbViolation::ModifiedPolygon { base, data } => (
+            ViolationKind::ModifiedPolygon,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::NetAntennae { base, data } => (
+            ViolationKind::NetAntennae,
+            base,
+            ViolationData::NetAntennae(data),
+        ),
+        PcbViolation::PadUnderSmd { base, data } => (
+            ViolationKind::PadUnderSmd,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::ParallelSegment { base, data } => (
+            ViolationKind::ParallelSegment,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::ReturnPath { base, data } => (
+            ViolationKind::ReturnPath,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::RoutingNeckDown { base, data } => (
+            ViolationKind::RoutingNeckDown,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::RoutingViaStyle { base, data } => (
+            ViolationKind::RoutingViaStyle,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::ShortCircuit { base, data } => (
+            ViolationKind::ShortCircuit,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::SilkToBoardRegionClearance { base, data } => (
+            ViolationKind::SilkToBoardRegionClearance,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::SilkToSilkClearance { base, data } => (
+            ViolationKind::SilkToSilkClearance,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::SilkToSolderMaskClearance { base, data } => (
+            ViolationKind::SilkToSolderMaskClearance,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::SmdNeckDown { base, data } => (
+            ViolationKind::SmdNeckDown,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::SmdPadEntry { base, data } => (
+            ViolationKind::SmdPadEntry,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::SmdToCorner { base, data } => (
+            ViolationKind::SmdToCorner,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::TestPoint { base, data } => (
+            ViolationKind::TestPoint,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::UnconnectedPin { base, data } => (
+            ViolationKind::UnconnectedPin,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::ViaUnderSmd { base, data } => (
+            ViolationKind::ViaUnderSmd,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::WirebondLength { base, data } => (
+            ViolationKind::WirebondLength,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::WirebondWireToWire { base, data } => (
+            ViolationKind::WirebondWireToWire,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+        PcbViolation::ZAxisClearance { base, data } => (
+            ViolationKind::ZAxisClearance,
+            base,
+            ViolationData::TwoPoint(data),
+        ),
+    };
+    let rule_index = checked_rule_index(base.rule_index, rule_count)?;
+    let mut objects: Vec<ViolationObject> =
+        violation_object(1, Some(&base.prim1_id), Some(base.prim1_index))?
+            .into_iter()
+            .collect();
+    let mut violation = BoardViolation {
+        kind,
+        rule_index,
+        layer: violation_layer("LAYER", &base.layer)?,
+        objects: Vec::new(),
+        object_ids: Vec::new(),
+        locations: Vec::new(),
+        circle_radius: None,
+        hole_clearance: None,
+        areas: Vec::new(),
+        description: base.description.clone(),
+        involved_primitive_count: base.involved_prim_count,
+    };
+    let mut push = |p: Option<ViolationLocation>| violation.locations.extend(p);
+    match data {
+        ViolationData::TwoPoint(d) => {
+            objects.extend(violation_object(2, d.prim2_id.as_deref(), d.prim2_index)?);
+            push(violation_point(
+                "LOCATION1",
+                d.location1_x,
+                d.location1_y,
+                None,
+            )?);
+            push(violation_point(
+                "LOCATION2",
+                d.location2_x,
+                d.location2_y,
+                None,
+            )?);
+            push(violation_point("P1", d.p1_x, d.p1_y, Some(d.p1_z))?);
+            push(violation_point("P2", d.p2_x, d.p2_y, Some(d.p2_z))?);
+            violation.hole_clearance = d.is_hole_clearance_violation;
+        }
+        ViolationData::BoardOutline(d) => {
+            objects.extend(violation_object(2, d.prim2_id.as_deref(), d.prim2_index)?);
+            push(violation_point(
+                "LOCATION1",
+                d.location1_x,
+                d.location1_y,
+                None,
+            )?);
+            push(violation_point(
+                "LOCATION2",
+                d.location2_x,
+                d.location2_y,
+                None,
+            )?);
+            violation.object_ids = d.primid1.iter().chain(d.primid2.iter()).cloned().collect();
+        }
+        ViolationData::NetAntennae(d) => {
+            push(violation_point(
+                "LOCATION",
+                Some(d.location_x),
+                Some(d.location_y),
+                None,
+            )?);
+            violation.circle_radius = Some(d.circle_radius.0);
+        }
+        ViolationData::DisconnectedSubnets(d) => {
+            objects.extend(violation_object(2, d.prim2_id.as_deref(), d.prim2_index)?);
+            push(violation_point("FX1", d.fx1, d.fy1, None)?);
+            push(violation_point("FX2", d.fx2, d.fy2, None)?);
+        }
+        ViolationData::MatchedNetLengths(d) => {
+            objects.extend(violation_object(2, d.prim2_id.as_deref(), d.prim2_index)?);
+        }
+        ViolationData::DiffPairs(d) => {
+            for (n, layer) in d.layers.iter().enumerate() {
+                violation.areas.push(ViolationArea {
+                    layer: violation_layer(&format!("LAYER{}", n + 1), &layer.layer_name)?,
+                    contours: layer
+                        .contours
+                        .iter()
+                        .map(|c| c.vertices.iter().map(|&(x, y)| [x, y]).collect())
+                        .collect(),
+                });
+            }
+        }
+    }
+    violation.objects = objects;
+    Ok(violation)
+}
+
+fn checked_rule_index(index: u32, rule_count: usize) -> Result<usize> {
+    let index = index as usize;
+    if index < rule_count {
+        Ok(index)
+    } else {
+        Err(AltiumFormatError::InvalidParamValue {
+            key: "RULEINDEX".to_owned(),
+            detail: format!("rule index {index} outside the board's {rule_count} rules"),
+        })
+    }
+}
+
+pub(crate) fn convert_waived_violations(doc: &PcbDoc) -> Result<Vec<WaivedBoardViolation>> {
+    doc.waived_violations
+        .iter()
+        .enumerate()
+        .map(|(idx, w)| {
+            (|| {
+                let objects = violation_object(1, Some(&w.prim1_kind), Some(w.prim1_index))?
+                    .into_iter()
+                    .chain(violation_object(2, w.prim2_kind.as_deref(), w.prim2_index)?)
+                    .collect();
+                Ok::<_, AltiumFormatError>(WaivedBoardViolation {
+                    rule_index: checked_rule_index(w.rule_index, doc.rules.len())?,
+                    objects,
+                    text: w.unicode.clone(),
+                    created_at: w.created_at.clone(),
+                    author_id: w.author_id.clone(),
+                    author_title: w.author_title.clone(),
+                    source: w.source.clone(),
+                    comment: w.comment.clone(),
+                })
+            })()
+            .with_context(|| format!("WaivedViolations record #{idx}"))
+        })
+        .collect::<Result<Vec<_>>>()
+}
+
 // ── Board outline extraction ────────────────────────────────────────────────
 
 fn find_board_outline(regions: &[Region]) -> Option<Vec<CoordPoint>> {
@@ -2060,6 +2474,113 @@ pub(crate) fn convert_polygon_for_test(
 
 #[cfg(test)]
 mod tests {
+
+    fn violation(kind: ParamSectionKind, record: &str) -> PcbViolation {
+        let mut params = ParameterCollection::from_str(record).unwrap();
+        crate::pcbdoc::drc::parse_violation(kind, &mut params).unwrap()
+    }
+
+    const BASE: &str = "|SELECTION=FALSE|LOCKED=FALSE|POLYGONOUTLINE=FALSE|USERROUTED=TRUE\
+        |KEEPOUT=FALSE|UNIONINDEX=0|DESCRIPTION=";
+
+    #[test]
+    fn stored_violations_are_typed() {
+        let v = violation(
+            ParamSectionKind::TClearanceViolation,
+            &format!(
+                "{BASE}|LAYER=BOTTOM|RULEINDEX=38|PRIM1ID=PolyRegion|PRIM1INDEX=73\
+                 |PRIM2ID=Pad|PRIM2INDEX=624|INVOLVEDPRIMCOUNT=0\
+                 |LOCATION1.X=11299.2181mil|LOCATION1.Y=9593.1861mil\
+                 |LOCATION2.X=11300mil|LOCATION2.Y=9593mil|"
+            ),
+        );
+        let v = convert_violation(&v, 39).unwrap();
+        assert_eq!(v.kind, ViolationKind::Clearance);
+        assert_eq!(v.rule_index, 38);
+        assert_eq!(
+            v.layer.as_ref().and_then(LayerRef::legacy_v6),
+            Some(V6Layer::BottomLayer)
+        );
+        assert_eq!(
+            v.objects,
+            [
+                ViolationObject {
+                    kind: PcbObjectId::Region,
+                    index: 73
+                },
+                ViolationObject {
+                    kind: PcbObjectId::Pad,
+                    index: 624
+                },
+            ]
+        );
+        assert_eq!(v.locations.len(), 2);
+        assert_eq!(
+            v.locations[1].point,
+            CoordPoint::new(Coord::from_mils_f64(11300.0), Coord::from_mils_f64(9593.0))
+        );
+        assert_eq!(v.locations[0].z, None);
+
+        let v = violation(
+            ParamSectionKind::TComponentClearanceViolation,
+            &format!(
+                "{BASE}|LAYER=MULTILAYER|RULEINDEX=1|PRIM1ID=Component|PRIM1INDEX=3\
+                 |PRIM2ID=ComponentBody|PRIM2INDEX=7|P1.X=10mil|P1.Y=20mil|P1.Z=-0.5mil\
+                 |P2.X=10mil|P2.Y=20mil|P2.Z=1mil|"
+            ),
+        );
+        let v = convert_violation(&v, 2).unwrap();
+        assert_eq!(v.objects[1].kind, PcbObjectId::ComponentBody);
+        assert_eq!(v.locations.len(), 2);
+        assert_eq!(v.locations[0].z, Some(Coord::from_mils_f64(-0.5)));
+
+        let v = violation(
+            ParamSectionKind::TNetAntennaeViolation,
+            &format!(
+                "{BASE}|LAYER=UNKNOWN|RULEINDEX=0|PRIM1ID=Via|PRIM1INDEX=13\
+                 |LOCATION.X=157.4803mil|LOCATION.Y=157.4803mil|CIRCLERADIUS=105.4252mil|"
+            ),
+        );
+        let v = convert_violation(&v, 1).unwrap();
+        assert_eq!(v.kind, ViolationKind::NetAntennae);
+        assert_eq!(v.layer, None);
+        assert_eq!(v.circle_radius, Some(Coord::from_mils_f64(105.4252)));
+        assert_eq!(v.locations.len(), 1);
+    }
+
+    #[test]
+    fn stored_violations_reject_bad_references() {
+        let record = |prim: &str, rule: u32| {
+            format!(
+                "{BASE}|LAYER=TOP|RULEINDEX={rule}|PRIM1ID={prim}|PRIM1INDEX=0\
+                 |LOCATION1.X=0mil|LOCATION1.Y=0mil|"
+            )
+        };
+        let v = violation(ParamSectionKind::TClearanceViolation, &record("Gadget", 0));
+        assert!(
+            convert_violation(&v, 1)
+                .unwrap_err()
+                .to_string()
+                .contains("Gadget")
+        );
+        let v = violation(ParamSectionKind::TClearanceViolation, &record("Board", 1));
+        assert!(
+            convert_violation(&v, 1)
+                .unwrap_err()
+                .to_string()
+                .contains("RULEINDEX")
+        );
+        assert_eq!(
+            convert_violation(&v, 2).unwrap().objects[0].kind,
+            PcbObjectId::Board
+        );
+        let v = violation(
+            ParamSectionKind::TClearanceViolation,
+            &format!("{BASE}|LAYER=TOP|RULEINDEX=0|PRIM1ID=Pad|PRIM1INDEX=0|LOCATION1.X=0mil|"),
+        );
+        assert!(convert_violation(&v, 1).is_err(), "half a location");
+    }
+
     use super::*;
     use crate::param_value::FromParamValue;
 

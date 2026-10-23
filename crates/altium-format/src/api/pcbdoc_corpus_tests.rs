@@ -905,3 +905,162 @@ fn corpus_r12_component_kinds() {
     assert_eq!(counts.get("Standard"), Some(&(14_409 - 433)));
     assert_eq!(boards_round_tripped, 79);
 }
+
+/// R16: stored violations. Every rule and object index is in range, and the
+/// objects sit where the violation says: a layered object named by a violation
+/// is on the violation's layer, except for kinds whose layer can belong to the
+/// other object.
+#[test]
+fn corpus_r16_violations() {
+    use std::collections::BTreeMap;
+    let mut stats: BTreeMap<String, usize> = BTreeMap::new();
+    let mut bump = |k: String| *stats.entry(k).or_default() += 1;
+    let mut write_checked = false;
+    for (name, mut doc) in corpus_docs() {
+        if BOARDS_FAILING_AT_BASE.contains(&name.as_str()) {
+            continue;
+        }
+        let board = doc.board().unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        let write_now =
+            !write_checked && !board.violations.is_empty() && !board.waived_violations.is_empty();
+        let stored: usize = doc.violations.values().map(Vec::len).sum();
+        assert_eq!(board.violations.len(), stored, "{name}");
+        assert_eq!(
+            board.waived_violations.len(),
+            doc.waived_violations.len(),
+            "{name}"
+        );
+        for (i, v) in board.violations.iter().enumerate() {
+            assert!(v.rule_index < board.rules.len(), "{name} violation #{i}");
+            for o in &v.objects {
+                let len = match o.kind {
+                    PcbObjectId::Track => board.tracks.len(),
+                    PcbObjectId::Arc => board.arcs.len(),
+                    PcbObjectId::Via => board.vias.len(),
+                    PcbObjectId::Pad => board.pads.len(),
+                    PcbObjectId::Fill => board.fills.len(),
+                    PcbObjectId::Text => board.texts.len(),
+                    PcbObjectId::Region => board.regions.len(),
+                    PcbObjectId::Polygon => board.polygons.len(),
+                    PcbObjectId::Component => board.components.len(),
+                    PcbObjectId::Net => board.nets.len(),
+                    PcbObjectId::DifferentialPair => board.differential_pairs.len(),
+                    PcbObjectId::ComponentBody => board.component_bodies.len(),
+                    PcbObjectId::Board => 1,
+                    k => panic!("{name} violation #{i}: object kind {k:?}"),
+                };
+                let in_range = o.index < len;
+                bump(format!("{:?} in_range={in_range}", o.kind));
+                if in_range && v.layer.is_some() {
+                    let layer = match o.kind {
+                        PcbObjectId::Track => Some(board.tracks[o.index].layer.clone()),
+                        PcbObjectId::Arc => Some(board.arcs[o.index].layer.clone()),
+                        PcbObjectId::Fill => Some(board.fills[o.index].layer.clone()),
+                        PcbObjectId::Region => Some(board.regions[o.index].layer.clone()),
+                        PcbObjectId::Text => Some(board.texts[o.index].layer.clone()),
+                        _ => None,
+                    };
+                    if let Some(l) = layer {
+                        let same = Some(l.legacy_v6()) == v.layer.as_ref().map(LayerRef::legacy_v6);
+                        bump(format!("{:?} layer_match={same}", o.kind));
+                    }
+                    if o.kind == PcbObjectId::Region {
+                        bump(format!(
+                            "Region polygon={} kind={:?}",
+                            board.regions[o.index].polygon.is_some(),
+                            board.regions[o.index].kind
+                        ));
+                    }
+                }
+            }
+        }
+        for v in &board.violations {
+            let Some(vl) = v.layer.as_ref().map(LayerRef::legacy_v6) else {
+                continue;
+            };
+            let layers: Vec<Option<V6Layer>> = v
+                .objects
+                .iter()
+                .filter_map(|o| match o.kind {
+                    PcbObjectId::Track => Some(&board.tracks[o.index].layer),
+                    PcbObjectId::Arc => Some(&board.arcs[o.index].layer),
+                    PcbObjectId::Fill => Some(&board.fills[o.index].layer),
+                    PcbObjectId::Region => Some(&board.regions[o.index].layer),
+                    PcbObjectId::Text => Some(&board.texts[o.index].layer),
+                    _ => None,
+                })
+                .map(LayerRef::legacy_v6)
+                .collect();
+            if !layers.is_empty() && !layers.contains(&vl) {
+                // Two-object kinds whose layer can be the other object's
+                // (a pad, via or the board edge) in the corpus.
+                assert!(
+                    matches!(
+                        v.kind,
+                        ViolationKind::BoardOutlineClearance
+                            | ViolationKind::Clearance
+                            | ViolationKind::ShortCircuit
+                    ),
+                    "{name}: {:?} names no object on its layer {vl:?}",
+                    v.kind
+                );
+                bump(format!(
+                    "no layered object on violation layer: {:?}",
+                    v.kind
+                ));
+            }
+        }
+        for (i, w) in board.waived_violations.iter().enumerate() {
+            assert!(w.rule_index < board.rules.len(), "{name} waived #{i}");
+            for o in &w.objects {
+                bump(format!("waived {:?}", o.kind));
+            }
+        }
+        if write_now {
+            write_checked = true;
+            r16_write_checks(&name, &mut doc, &board);
+        }
+    }
+    for (k, n) in &stats {
+        eprintln!("{k}: {n}");
+    }
+    assert!(
+        stats.keys().all(|k| !k.contains("in_range=false")),
+        "{stats:?}"
+    );
+    assert_eq!(stats.get("Pad in_range=true"), Some(&1418), "{stats:?}");
+    assert_eq!(stats.get("waived Pad"), Some(&745), "{stats:?}");
+    assert!(write_checked);
+}
+
+/// `update_board` keeps unchanged stored violations, rejects edited ones
+/// (leaving the document as it was) and clears emptied lists.
+fn r16_write_checks(name: &str, doc: &mut PcbDoc, board: &PcbDocBoard) {
+    doc.update_board(board)
+        .unwrap_or_else(|e| panic!("{name}: update_board: {e:#}"));
+    let again = doc.board().unwrap();
+    assert_eq!(again.violations, board.violations, "{name}");
+    assert_eq!(again.waived_violations, board.waived_violations, "{name}");
+
+    let mut edited = board.clone();
+    edited.violations[0].rule_index = 0;
+    edited.violations[0].description.push('x');
+    let err = doc.update_board(&edited).unwrap_err();
+    assert!(err.to_string().contains("read-only"), "{name}: {err}");
+    let mut edited = board.clone();
+    edited.waived_violations[0].comment.push('x');
+    assert!(doc.update_board(&edited).is_err(), "{name}");
+    assert_eq!(doc.board().unwrap().violations, board.violations, "{name}");
+
+    let mut cleared = board.clone();
+    cleared.violations.clear();
+    cleared.waived_violations.clear();
+    doc.update_board(&cleared)
+        .unwrap_or_else(|e| panic!("{name}: update_board (cleared): {e:#}"));
+    // Save → reopen is not checked here: on these boards the reopen fails in
+    // ShapeBasedComponentBodies6 (component body writer, a known open gap).
+    let after = doc.board().unwrap();
+    assert!(after.violations.is_empty(), "{name}");
+    assert!(after.waived_violations.is_empty(), "{name}");
+    assert!(doc.violations.values().all(Vec::is_empty), "{name}");
+}

@@ -1002,6 +1002,51 @@ impl From<V7Layer> for LayerRef {
     }
 }
 
+/// The class of a DRC violation stored in a PcbDoc: one per Altium
+/// `T<Name>Violation` class (the CFB storage the violation is stored in).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ViolationKind {
+    AcuteAngle,
+    BackDrill,
+    BoardOutlineClearance,
+    Clearance,
+    ComponentClearance,
+    Creepage,
+    DiffPairs,
+    DisconnectedSubnets,
+    HoleToHole,
+    MatchedNetLengths,
+    MaximumViaCount,
+    MaxMinComponentHeight,
+    MaxMinLength,
+    MaxMinPadSlotWidth,
+    MaxMinViaHoleSize,
+    MinimumAnnularRing,
+    MinSolderMaskSliver,
+    MinWidth,
+    ModifiedPolygon,
+    NetAntennae,
+    PadUnderSmd,
+    ParallelSegment,
+    ReturnPath,
+    RoutingNeckDown,
+    RoutingViaStyle,
+    ShortCircuit,
+    SilkToBoardRegionClearance,
+    SilkToSilkClearance,
+    SilkToSolderMaskClearance,
+    SmdNeckDown,
+    SmdPadEntry,
+    SmdToCorner,
+    TestPoint,
+    UnconnectedPin,
+    ViaUnderSmd,
+    WirebondLength,
+    WirebondWireToWire,
+    ZAxisClearance,
+}
+
 /// PCB primitive flags bitmask (u16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct PcbFlags(u16);

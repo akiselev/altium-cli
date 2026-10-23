@@ -3557,6 +3557,8 @@ mod tests {
             component_bodies: vec![],
             dimensions: vec![],
             models: vec![],
+            violations: vec![],
+            waived_violations: vec![],
         }
     }
 

@@ -603,6 +603,15 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
 - Component kind (R12): `PcbDocComponent::kind` (COMPONENTKIND / VERSION2 / VERSION3, newest
   wins, Standard when absent; the keys must agree) and `Footprint::kind` (PcbLib COMPONENTKIND).
   Writers store the corpus forms; writing Jumper is an error (storage form unknown).
+- Stored violations (R16): `PcbDocBoard::violations` / `waived_violations` expose the
+  `T*Violation` storages and WaivedViolations as `ViolationKind`, rule index (into `rules`),
+  layer (`UNKNOWN` → None; V6 form from the LAYER string), objects as (`PcbObjectId`, index into
+  that kind's board list; `PolyRegion` → Region, `Poly` → Polygon, also Component, Net,
+  DifferentialPair, ComponentBody, Board), marker points (with z for component clearance), circle
+  radius, hole-clearance flag and diff-pair areas. Unknown object kinds and out-of-range rule
+  indices are errors. Read-only: `update_board` keeps them when unchanged (indices must still be in
+  range; a kept violation is not re-pointed if objects were reordered), clears an emptied list,
+  and rejects edits.
 - Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
   boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
 

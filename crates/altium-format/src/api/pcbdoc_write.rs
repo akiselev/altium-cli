@@ -254,6 +254,99 @@ fn reject_unique_id(kind: &str, unique_id: &Option<String>) -> Result<()> {
     }
 }
 
+// ── Stored DRC violations ──────────────────────────────────────────────────
+
+/// Stored violations are read-only. Per list (violations, waived violations):
+/// an empty list clears the stored records (`false`); a list equal to what the
+/// document holds keeps them (`true`) once every rule and object index is in
+/// range of the board being written; anything else is an error, because the
+/// records cannot be rebuilt from the public form.
+fn check_stored_violations(board: &PcbDocBoard, doc: &PcbDoc) -> Result<(bool, bool)> {
+    use super::pcbdoc_read::{convert_violations, convert_waived_violations};
+    let keep_violations = if board.violations.is_empty() {
+        false
+    } else if board.violations == convert_violations(doc).context("stored violations")? {
+        for (i, v) in board.violations.iter().enumerate() {
+            check_violation_indices(board, v.rule_index, &v.objects)
+                .with_context(|| format!("stored violation #{i}"))?;
+        }
+        true
+    } else {
+        return Err(crate::AltiumFormatError::InvalidParamValue {
+            key: "violations".to_owned(),
+            detail: "stored violations are read-only: keep them as read, or empty the list \
+                     to clear them"
+                .to_owned(),
+        });
+    };
+    let keep_waived = if board.waived_violations.is_empty() {
+        false
+    } else if board.waived_violations == convert_waived_violations(doc)? {
+        for (i, w) in board.waived_violations.iter().enumerate() {
+            check_violation_indices(board, w.rule_index, &w.objects)
+                .with_context(|| format!("waived violation #{i}"))?;
+        }
+        true
+    } else {
+        return Err(crate::AltiumFormatError::InvalidParamValue {
+            key: "waived_violations".to_owned(),
+            detail: "waived violations are read-only: keep them as read, or empty the list \
+                     to clear them"
+                .to_owned(),
+        });
+    };
+    Ok((keep_violations, keep_waived))
+}
+
+fn check_violation_indices(
+    board: &PcbDocBoard,
+    rule_index: usize,
+    objects: &[ViolationObject],
+) -> Result<()> {
+    if rule_index >= board.rules.len() {
+        return Err(crate::AltiumFormatError::InvalidParamValue {
+            key: "RULEINDEX".to_owned(),
+            detail: format!(
+                "rule index {rule_index} outside the board's {} rules",
+                board.rules.len()
+            ),
+        });
+    }
+    for o in objects {
+        let len = match o.kind {
+            PcbObjectId::Track => board.tracks.len(),
+            PcbObjectId::Arc => board.arcs.len(),
+            PcbObjectId::Via => board.vias.len(),
+            PcbObjectId::Pad => board.pads.len(),
+            PcbObjectId::Fill => board.fills.len(),
+            PcbObjectId::Text => board.texts.len(),
+            PcbObjectId::Region => board.regions.len(),
+            PcbObjectId::ComponentBody => board.component_bodies.len(),
+            PcbObjectId::Polygon => board.polygons.len(),
+            PcbObjectId::Component => board.components.len(),
+            PcbObjectId::Net => board.nets.len(),
+            PcbObjectId::DifferentialPair => board.differential_pairs.len(),
+            PcbObjectId::Board => 1,
+            kind => {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: "PRIM1ID".to_owned(),
+                    detail: format!("violation object kind {kind:?} has no board list"),
+                });
+            }
+        };
+        if o.index >= len {
+            return Err(crate::AltiumFormatError::InvalidParamValue {
+                key: "PRIM1INDEX".to_owned(),
+                detail: format!(
+                    "{:?} index {} outside the board's {len} objects of that kind",
+                    o.kind, o.index
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 // ── Core entry point ───────────────────────────────────────────────────────
 
 /// Convert a public `PcbDocBoard` back into internal `PcbDoc` sections.
@@ -275,8 +368,15 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
             ),
         });
     }
+    let (keep_violations, keep_waived) = check_stored_violations(board, doc)?;
     let ctx = WriteContext::new(board);
     attach_pad_unique_ids(doc).context("UniqueIDPrimitiveInformation")?;
+    if !keep_violations {
+        doc.violations.values_mut().for_each(Vec::clear);
+    }
+    if !keep_waived {
+        doc.waived_violations.clear();
+    }
 
     // ── Step 1: Rebuild WideStrings first (needed for text primitive indices) ──
     let (wide_strings_data, wide_indices) = rebuild_wide_strings(&board.texts);
