@@ -16,8 +16,9 @@ Date: 2026-10-23. Lane brief: `docs/handoff/ecad-b5-altium-format-lane.md` (on
 | `704229b` | R22 review fixes; R20; R21 (+ Q15 classes and diff pairs); A1, A3–A5; ASCII SchDoc; IgnoreOnLoad; harness owners; Dimensions6 (R23) |
 | `c8f8fa8` | A2: VariationKind 0 and 2 refused (coordinator decision) |
 | `8a8f04a` | second review fixes |
-| next | R1–R17 corpus tests kept on their 79 base boards |
-| this commit | this report |
+| `5f91b97` | R1–R17 corpus tests kept on their 79 base boards |
+| `bfeb138` | Classes6 planned before any write (a refused update emptied it) |
+| this commit | the report, final |
 
 ## Sources read
 
@@ -260,7 +261,18 @@ fail:
   - altium-format-spec: 248 passed; altium-format-types: 20 passed; altium-cli: 1 + 1 passed.
 - **Corpus tests** (all `corpus_*`, the coordinator-approved fixture set):
   `CARGO_TARGET_DIR=/tmp/target-altium-opt2 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_DEV_OPT_LEVEL=2 cargo test -p altium-format --features test-fixtures --lib corpus_ -- --test-threads 3`
-  Result: __CORPUS__
+  Results: all 23 `corpus_*` tests pass.
+  - **First full run, on `704229b`:** 15 passed, 8 failed.
+    - Six failures were stale "79 boards" counts. Those tests now skip the 15 newly readable
+      boards explicitly.
+    - Two were R3/R5 checks on those boards; they are listed open above.
+  - **Rerun on the final code:** the 8, plus `corpus_r21_classes_and_pairs`, `corpus_r9`,
+    `corpus_r10`, `corpus_schdoc_open_errors` and `corpus_board_reads`: 13 passed, 1 failed.
+    The failure was R21: a refused class update had already emptied Classes6. Classes6 is now
+    planned before any write; after that fix R21 passes.
+  - **Not re-run after the last two commits** (they passed in the full run):
+    `corpus_r13`–`r17`, `r2`, `r22` and `corpus_r5_pcblib_pad_modes`. The later changes do not
+    touch their write paths, apart from the class records, which are built the same way.
 - `cargo check --workspace --tests` is clean; `cargo fmt --all --check` is clean.
 - No proptests and no other fixture tests were run.
 
@@ -294,6 +306,9 @@ fail:
   and `overwrite_pcb_footprint: Option<bool>` are new fields: struct literals break (filled in
   spec and cli).
 - `ChannelRoomNamingStyle` variants are renamed, along with their spec strings.
+- **Pre-existing hazard:** `update_board` is not transactional. A refusal raised after its
+  first write leaves the document partly updated. Classes6 is now planned before any write;
+  the other late checks are not.
 - **Stricter:**
   - unknown PrjPcb sections and lines;
   - variant keys;
