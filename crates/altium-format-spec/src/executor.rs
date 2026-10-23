@@ -320,6 +320,8 @@ fn apply_pcbdoc_components(board: &mut api::PcbDocBoard, specs: &[PcbDocComponen
                 unique_id: String::new(),
                 locked: false,
                 primitive_lock: true,
+                designator_visible: true,
+                comment_visible: false,
                 source_designator: Some(spec.designator.clone()),
                 kind: altium_format_types::ComponentKind::Standard,
                 parameters: spec
@@ -559,6 +561,18 @@ fn primitive_to_text(prim: &PcbDocPrimitiveSpec) -> Result<Option<api::PcbDocTex
         is_mirrored: prop_bool(p, "is_mirrored").unwrap_or(false),
         is_comment: prop_bool(p, "is_comment").unwrap_or(false),
         is_designator: prop_bool(p, "is_designator").unwrap_or(false),
+        // The spec has no text style syntax: the writer's previous defaults.
+        font_kind: altium_format_types::pcb::TextKind::StrokeFont,
+        stroke_font_id: 0,
+        bold: false,
+        italic: false,
+        inverted: false,
+        inverted_border: Coord::ZERO,
+        use_inverted_rectangle: false,
+        inverted_rect_width: Coord::ZERO,
+        inverted_rect_height: Coord::ZERO,
+        justification: altium_format_types::pcb::TextAutoposition::Manual,
+        hidden: false,
     }))
 }
 
@@ -1795,6 +1809,16 @@ fn pcb_graphic_from_spec(spec: &PcbGraphicSpec) -> Result<api::PcbGraphic, SpecE
             color: altium_format_types::color::Color::default(),
             font_name: String::new(),
             is_mirrored: false,
+            font_kind: altium_format_types::pcb::TextKind::StrokeFont,
+            font_id: 0,
+            bold: false,
+            italic: false,
+            inverted: false,
+            inverted_border: Coord::ZERO,
+            use_inverted_rectangle: false,
+            inverted_rect_width: Coord::ZERO,
+            inverted_rect_height: Coord::ZERO,
+            justification: None,
         }),
         PcbGraphicType::Via => api::PcbGraphic::Via(api::ViaGraphic {
             unique_id: Some(spec.unique_id.clone()),

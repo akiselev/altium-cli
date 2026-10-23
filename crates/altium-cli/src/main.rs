@@ -1536,6 +1536,19 @@ fn instantiate_footprint_primitives(
                             is_mirrored: text.is_mirrored,
                             is_comment: false,
                             is_designator: false,
+                            font_kind: text.font_kind,
+                            // PcbLib's font id is not confirmed to be the
+                            // PcbDoc stroke font id; use the default.
+                            stroke_font_id: 0,
+                            bold: text.bold,
+                            italic: text.italic,
+                            inverted: text.inverted,
+                            inverted_border: text.inverted_border,
+                            use_inverted_rectangle: text.use_inverted_rectangle,
+                            inverted_rect_width: text.inverted_rect_width,
+                            inverted_rect_height: text.inverted_rect_height,
+                            justification: text.justification.unwrap_or_default(),
+                            hidden: false,
                         });
                         text_counter += 1;
                     }

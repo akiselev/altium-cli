@@ -3583,6 +3583,8 @@ mod tests {
             unique_id: String::new(),
             locked: false,
             primitive_lock: true,
+            designator_visible: true,
+            comment_visible: false,
             source_designator: Some(designator.to_string()),
             kind: altium_format_types::ComponentKind::Standard,
             parameters: Vec::new(),

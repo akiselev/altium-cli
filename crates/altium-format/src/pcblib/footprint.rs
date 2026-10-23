@@ -116,10 +116,12 @@ fn parse_parameters_stream(
         .remove_optional::<String>("REVISIONGUID")?
         .unwrap_or_default();
     let component_kind = params.remove_optional::<ComponentKind>("COMPONENTKIND")?;
-    if let Some(kind) = component_kind.filter(|k| *k as u8 > ComponentKind::NetTieNoBom as u8) {
+    // The corpus stores 0-5 here (FragasLab-Footprint: 5 = StandardNoBom);
+    // Jumper (6) has never been seen in a footprint.
+    if let Some(kind) = component_kind.filter(|k| *k as u8 > ComponentKind::StandardNoBom as u8) {
         return Err(AltiumFormatError::InvalidParamValue {
             key: "COMPONENTKIND".to_owned(),
-            detail: format!("{kind:?} is not a COMPONENTKIND value (0-4)"),
+            detail: format!("{kind:?} is not a footprint COMPONENTKIND value (0-5)"),
         });
     }
     // Known optional metadata parameters in footprint Parameters streams.

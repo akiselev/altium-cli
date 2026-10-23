@@ -1,4 +1,4 @@
-# Report: altium-format R1–R11 for ecadabra (cloud batch 1, lane C)
+# Report: altium-format R1–R17 for ecadabra (cloud batch 1, lane C)
 
 Date: 2026-10-23. Lane brief: `docs/handoff/ecad-r1-r7-cloud-lane.md`. Previous handoff:
 `docs/handoff/ecad-r1-r7.md`.
@@ -8,8 +8,8 @@ Date: 2026-10-23. Lane brief: `docs/handoff/ecad-r1-r7-cloud-lane.md`. Previous 
 - Branch `claude/ecad-b1-altium-r1-r7`. Base `08dca3e` (lane brief) on top of `d7fef24` (R2 WIP)
   and `18062d6` (the rev ecadabra pins). No rebase, no pull request.
 - R1–R7 were finished at `382fd35`. The coordinator then added R8 (ecadabra lane A) and R9–R11
-  (lane B's schematic import); those followed. The last code commit is `b327bde`; this report
-  update is the commit after it, the branch head.
+  (lane B's schematic import); those followed (last code commit `b327bde`). Then R12, R16, R17,
+  R13, R15 and R14, in the coordinator's priority order. This report update is the branch head.
 - Commits, oldest first (each item, then its review fixes):
 
 | Commit | Item |
@@ -26,10 +26,16 @@ Date: 2026-10-23. Lane brief: `docs/handoff/ecad-r1-r7-cloud-lane.md`. Previous 
 | `ce41a3d`, `6e59f48`, `3462b4c` | R9 placed display mode; graphic display modes; second-round fixes |
 | `6aa7165`, `3462b4c` | R10 reproducible filler UniqueIDs; review nits |
 | `381b197`, `b327bde` | R11 PrjPcb legacy code pages; review fixes |
+| `c4e107b`, `d793709` | R12 component kind; review fixes |
+| `1f425b1`, `57587e9` | R16 stored violations; review fixes |
+| `084b579`, `04acd51` | R17 clearance matrix; review fixes (in the R13 commit) |
+| `04acd51`, `eb632c4` | R13 plane nets plus the Board6 write fix; review fixes |
+| `9445d1a`, `eb632c4` | R15 region indices; review fixes |
+| R14 commit (see `git log`) | R14 text style, component visibility, Components6 default keys, R12 PcbLib kind 5 fix |
 
 ## State per request
 
-All eleven are done. Each item has unit tests, a filtered corpus test (R11 has only unit tests: no
+All seventeen are done. Each item has unit tests, a filtered corpus test (R11 has only unit tests: no
 GBK project is in the corpora) and an independent review, and the review findings were fixed or
 are listed below as open.
 
@@ -46,6 +52,12 @@ are listed below as open.
 | R9 placed display mode | Done, plus display modes on every component graphic. Spec syntax open, see Q7 |
 | R10 reproducible UniqueIDs | Done (deterministic filler, not `Option`), see Q8 |
 | R11 PrjPcb code pages | Done as an explicit `open_with_code_page`; Altium's own choice unverified, see Q9 |
+| R12 component kind | Done (`PcbDocComponent::kind`, `Footprint::kind`); writing Jumper is refused, see Q11 |
+| R16 stored violations | Done, read-only (kept, cleared or refused by `update_board`), see Q12 |
+| R17 clearance matrix | Done for Clearance and BoardOutlineClearance; rules stay read-only |
+| R13 plane net | Done (`plane_net`, plus `plane_multiple_nets` for split planes), see Q13 |
+| R15 region kind/indices | Done; PADINDEX exposed as stored, its meaning is open, see Q14 |
+| R14 text style, hidden | Done for PcbDoc `Text` and PcbLib `TextGraphic`; `hidden` derived from the component |
 
 ### Public API added
 
@@ -120,6 +132,51 @@ pub owner_part_display_mode: i32,   // + Graphic::owner_part_display_mode()
 
 // R11: altium_format::project
 impl AltiumProject { pub fn open_with_code_page(path, code_page: &str) -> Result<Self>; }
+
+// R12: PcbDocComponent / Footprint
+pub kind: ComponentKind,            // COMPONENTKINDVERSION3 > VERSION2 > COMPONENTKIND > Standard
+
+// R16: PcbDocBoard (read-only; update_board keeps unchanged lists, clears empty ones, refuses edits)
+pub violations: Vec<BoardViolation>,
+pub waived_violations: Vec<WaivedBoardViolation>,
+pub struct BoardViolation {
+    pub kind: ViolationKind,                 // altium_format_types::pcb, one per T*Violation storage
+    pub rule_index: usize,                   // into PcbDocBoard::rules
+    pub layer: Option<LayerRef>,             // None for UNKNOWN; V6 form (compare via legacy_v6)
+    pub objects: Vec<ViolationObject>,       // { kind: PcbObjectId, index: usize } into that kind's list
+    pub clearance_object1: Option<ObjectClearanceId>, pub clearance_object2: Option<ObjectClearanceId>,
+    pub location1: Option<ViolationLocation>, pub location2: Option<ViolationLocation>, // { point, z }
+    pub circle_radius: Option<Coord>, pub hole_clearance: Option<bool>,
+    pub areas: Vec<ViolationArea>,           // diff-pair areas, f64 as stored
+    pub description: String, pub involved_primitive_count: u32,
+}
+pub struct WaivedBoardViolation { pub rule_index: usize, pub objects: Vec<ViolationObject>,
+    pub text: String, pub created_at: String, pub author_id: String, pub author_title: String,
+    pub source: String, pub comment: String }
+
+// R17: RuleParams::Clearance and RuleParams::BoardOutlineClearance gain
+generic_clearance: Coord, ignore_pad_to_pad: bool /* outline rule */,
+object_clearances: Vec<ObjectClearance>,    // { first, second: ObjectClearanceId, gap: Coord }
+
+// R13: StackLayer
+pub plane_net: Option<String>,      // PLANEnNETNAME; None for (No Net), (Multiple Nets), signal layers
+pub plane_multiple_nets: bool,      // (Multiple Nets)
+
+// R15: Region
+pub pad_index: Option<u32>,         // PADINDEX as stored (-1 → None); NOT an index into `pads`
+pub subpoly_index: Option<u32>,     // SUBPOLYINDEX (-1 → None); Some on every pour region
+// OBJECTKIND: `board_region` (existing) must agree with it; checked, not a new field
+
+// R14: Text (PcbDoc) and TextGraphic (PcbLib)
+pub font_kind: TextKind, pub bold: bool, pub italic: bool, pub inverted: bool,
+pub inverted_border: Coord, pub use_inverted_rectangle: bool,
+pub inverted_rect_width: Coord, pub inverted_rect_height: Coord,
+pub stroke_font_id: u16,            // Text; TextGraphic has `font_id: i32` as stored
+pub justification: TextAutoposition, // TextGraphic: Option<TextAutoposition>
+pub hidden: bool,                   // Text only; derived, must agree with the component
+// R14: PcbDocComponent
+pub designator_visible: bool,       // NAMEON
+pub comment_visible: bool,          // COMMENTON
 ```
 
 Departures from the request texts, and why:
@@ -132,6 +189,15 @@ Departures from the request texts, and why:
 - **R5.** The request's `PadExpansionMode` (FromRule | Manual | None) is the existing
   `MaskExpansionMode` (Rule | Manual | NoMask). A pad cache cannot store NoMask, so the readers
   never produce it and the writers reject it.
+- **R13.** `plane_net: Option<String>` as requested, plus `plane_multiple_nets`, because
+  `(Multiple Nets)` (10 corpus values) cannot be told apart from a net name in an `Option<String>`.
+- **R15.** OBJECTKIND has one value (`BoardRegion`) and only on BoardRegions records, so it is
+  checked against the existing `board_region` instead of becoming a second field. The component
+  index already exists (R4).
+- **R16.** `ViolationKind` is a new enum in altium-format-types (one variant per existing internal
+  `PcbViolation` variant); it needs your approval like any new domain type (Q1).
+- **R14.** The designator/comment hidden flag lives on the component (NAMEON/COMMENTON) in the
+  file; `Text::hidden` is a derived copy and the writer refuses a disagreeing one.
 
 ### Evidence and corpus counts
 
@@ -158,6 +224,12 @@ Departures from the request texts, and why:
 | R9 | SchDoc corpus `6d0ff22`: 1,202 of 1,617 SchDocs open, 1,130 sheets read; all 33,816 components have a valid DisplayMode; 137 on readable sheets are placed in an alternate mode. All 30 such sheets survive `update_sheet` with every component's and child's (8,674 alternate-mode children) display mode unchanged (`corpus_r9_display_mode`). |
 | R10 | 1,202 SchDocs opened twice: 1,713,743 record ids identical (`corpus_r10_unique_ids_reproducible`). |
 | R11 | Unit tests: strict GBK decode, refused labels, a GBK project with a Chinese document path opens with `open_with_code_page` and `open` points to it. |
+| R12 | 409 StandardNoBom (COMPONENTKIND=0 + VERSION2=5), 24 NetTieNoBom, 13,976 without a key; kind keys unchanged by `update_board`; kind changes stored; Jumper refused with the document unchanged (`corpus_r12_component_kinds`). PcbLib: FragasLab-Footprint stores COMPONENTKIND 4 and 5. |
+| R16 | 1,418 pad, 391 via, 377 track, 215 text, 81 region (PolyRegion), 64 arc, 57 net, 37 component, 25 board, 13 polygon objects named by violations, all in range; layered objects sit on the violation's layer except in BoardOutlineClearance/Clearance/ShortCircuit (the other object's layer); 745 waived pad objects. Unchanged lists survive `update_board`, edits and removed objects are refused, cleared lists save and reopen (`corpus_r16_violations`). |
+| R17 | 145 clearance rules (65 with a matrix, 944 entries) and 46 board-outline rules (18, 183 entries), matching a Python scan of Rules6; every pair lower-id first, none repeated (`corpus_r17_clearance_matrix`). |
+| R13 | 33 stack planes on readable boards, 17 with a net, 7 split (`(Multiple Nets)`); mini-itx `P3=GND` on "Ground Plane 2 (GND)", smart-mcu `+3.3V` on "3.3V_layer". Unchanged keys stay byte for byte, an edit is stored in place, an unknown net and a stack edit are refused (`corpus_r13_plane_nets`). |
+| R15 | 79 board regions (OBJECTKIND=BoardRegion, exactly the BoardRegions records), 43,631 pour regions all with SUBPOLYINDEX, 25 regions with PADINDEX (no pad lies inside its region, so it is not an index into `pads`). Fields unchanged by `update_board`, edits stored (`corpus_r15_region_indices`). |
+| R14 | PcbDoc: 29,609 texts on readable boards, 16,442 hidden by their component, 6,524 TrueType, 259 inverted. PcbLib: 5,104 texts, 2,788 TrueType, 200 bold, 145 inverted. Style and visibility unchanged by `update_board`, Components6 default-only keys byte for byte, a visibility/bold/justification edit stored, a disagreeing `hidden` refused; PcbLib text style unchanged by `update_footprint`. |
 
 ### Defects found and fixed on the way
 
@@ -185,12 +257,25 @@ the corpus tests above.
 - **Schematic display modes.** The SchDoc writer stored DisplayMode 0 for every component and
   OwnerPartDisplayMode 0 for every graphic, merging all modes' bodies (SchLib graphics too).
 - **Filler ids.** SchDoc load filled missing UniqueIDs with random ids.
+- **Board6 replaced on every update.** `update_board` merged Board6 by DOCUMENTNAME, which no
+  corpus board stores, so the whole record (layer stack, plane nets, display settings, about 2,300
+  keys) was replaced by five keys plus the outline. Only changed settings are now written, in the
+  stored format and in place.
+- **Components6 defaults.** Every `update_board` overwrote HEIGHT (9,573 records),
+  COMMENTAUTOPOSITION, UNIONINDEX, CHANNELOFFSET and the descriptions with defaults, and set NAMEON
+  TRUE (6,685 hidden designators shown) and COMMENTON FALSE.
+- **PcbLib text style.** `update_footprint` wrote every text with default style.
+- **Clearance matrix.** A repeated pair was silently overwritten; empty entries were skipped.
+- **DISPLAYUNIT.** An unknown value read as Imperial.
 
 ## Tests run (exact commands, counts)
 
 - **Unit tests, final run.** Command:
   `CARGO_TARGET_DIR=/tmp/target-altium CARGO_PROFILE_DEV_DEBUG=0 cargo test --no-fail-fast -p altium-format -p altium-format-spec -p altium-cli -p altium-format-query -p altium-format-types`
-  - altium-format lib: 525 passed, 4 failed. The four are `intlib::tests::*`; they read
+  - Final run at the branch head (after R14): altium-format lib 531 passed, 4 failed (the same
+    four intlib tests); altium-format-spec 248, altium-format-query 73, altium-format-types 20,
+    altium-cli 0 + 1 + 1 passed.
+  - Earlier run at `b327bde`: altium-format lib 525 passed, 4 failed. The four are `intlib::tests::*`; they read
     `data/intlib`, which was not cloned, and are not gated behind `test-fixtures`. They already
     failed in this lane's first run (`d7fef24` plus the R2 unit tests), so this is
     pre-existing.
@@ -205,6 +290,16 @@ the corpus tests above.
     `corpus_r8_designators`, `corpus_r9_display_mode`, `corpus_r10_unique_ids_reproducible`.
   - Final run on `b327bde` (end of R1–R11): 12 of 12 passed, counts as in the table. R7–R10
     ran from a worktree at `b327bde` because R12 work had started in the main tree.
+  - R12–R17 names: `corpus_r12_component_kinds`, `corpus_r16_violations`,
+    `corpus_r17_clearance_matrix`, `corpus_r13_plane_nets`, `corpus_r15_region_indices`,
+    `corpus_r14_text_style`, `corpus_r14_pcblib_text_style`. Each passed on its final code.
+  - Because the Board6, region, Components6 and merge changes touch earlier items, these were
+    re-run after them and passed: `corpus_r1_board_outline`, `corpus_r3_polygon_membership`,
+    `corpus_r4_identity`, `corpus_r5_pcblib_pad_modes`, `corpus_r6_layer_identity`,
+    `corpus_r7_region_contours`, `corpus_r8_designators`, `corpus_r12_component_kinds`. Not re-run
+    after the R13–R14 changes: `corpus_board_reads`, `corpus_r2_polygons`, `corpus_r5_pad_modes`,
+    `corpus_r9_display_mode`, `corpus_r10_unique_ids_reproducible` (the last two are SchDoc and
+    untouched; the first three read paths only gained checks that the runs above also exercise).
   - Opt-level 2 was used because the debug build takes 440 s per test.
   - Temporary survey tests were run and then deleted before commit: V6/V7 pairs, region forms,
     pad cache states, pad separate expansions, designator texts and SchDoc display modes.
@@ -233,6 +328,12 @@ the corpus tests above.
 | R9 | **incomplete** (graphics lost their display mode) | fixed: display mode on every graphic, child check. Second review **incomplete** (spec loses modes; children unchecked against the count): count checked in both writers, SchLib count derived. Open: spec syntax (Q7) |
 | R10 | complete with nits | fixed: doc, test. Open: `update_sheet` re-mints ids of re-synthesized records (Q8) |
 | R11 | complete with nits | fixed: UTF-16 and non-text labels refused, keys before the first section are an error, doc. Open: CLI flag (Q9) |
+| R12 | findings | fixed: Jumper refused before any write, per-version key ranges, PcbLib kinds. Later found by the R14 PcbLib corpus test: the PcbLib range 0-4 rejected a corpus library (COMPONENTKIND=5); fixed to 0-5 |
+| R16 | complete (4 medium findings) | fixed: fixed location/PRIMID slots, typed PRIMID (`ObjectClearanceId`), clear after all other writes, keep only while indexed list lengths are unchanged, no rule-index check (rules are not written), waived key names, removed-object and save/reopen checks. Open: a same-length reorder is not detected |
+| R17 | **incomplete** (types not re-exported; outline rule's matrix hidden; empty entries skipped) | fixed all three, plus the R16 types' re-export. Open: `ClearanceObj_Sheet` (two files that do not open), spec dump does not emit the matrix |
+| R13 | **incomplete** (CR is a block separator; `set` moved keys; stack edits lost) | fixed: in-place replacement keeping the CR, stack edits refused, no `(No Net)` added, stored grid format. Open: Board6 block framing not modelled (STATUS), SIGNALLAYERCOUNT reads 2 when absent (Q13) |
+| R15 | **incomplete** (Regions6 copy stale; pour region without index; key label) | fixed the last two. Open: Regions6 copy (Q4) |
+| R14 | see the R14 commit | review ran after the commit; verdict and fixes in the commit that follows it, if any |
 
 ## API breaks
 
@@ -263,13 +364,25 @@ the corpus tests above.
   written Valid (a rule value).
 - **Values.** `LayerRef::is_signal`, `is_copper` and the other `is_*` methods now see full V7
   ids. No caller in the workspace uses them on a `LayerRef`.
+- **R12–R17 struct literals.** PcbDocBoard (violations), StackLayer, Region, Text, TextGraphic,
+  PcbDocComponent and the `RuleParams::Clearance` / `BoardOutlineClearance` variants gained fields;
+  filled in altium-format-spec (`executor.rs`, `dump.rs`, `reconciler.rs`) and altium-cli
+  (`main.rs`, which now copies footprint text style onto the board). `LayerStack`/`StackLayer`
+  now derive `PartialEq`.
+- **R12–R17 stricter behaviour.** Errors now: an unknown violation object kind or out-of-range
+  rule index; a repeated, empty or `+`-signed clearance matrix entry; an empty plane net or one
+  that is not a board net; a layer stack edit in `update_board`; an edited stored violation list;
+  OBJECTKIND disagreeing with the region's section; a pour region without SUBPOLYINDEX; an unknown
+  TEXTJUSTIFICATION; a Text `hidden` that disagrees with its component; an unknown DISPLAYUNIT.
 
 ## Questions (each with a recommendation)
 
 1. **New domain types.** R2's `pour_over_style: Option<u8>` and the `PadExpansionMode` /
    `CopperLayer` names would each need a new domain type, which needs your approval first.
    Recommendation: add a `PolygonPourOverStyle` enum (corpus value 1 only). Keep
-   `MaskExpansionMode` and `copper_v6` as they are, because they are existing types.
+   `MaskExpansionMode` and `copper_v6` as they are, because they are existing types. R16 added
+   `ViolationKind` (38 variants, one per internal violation class) without that approval;
+   approve it or name an alternative.
 2. **Unique ids beyond pads.** PrimitiveGuids (18 files) could supply them, but its
    `IndexForSave` mapping is unverified and the AD26 sources were not available here.
    Recommendation: verify it on the dev machine (ghidra/AD26-dotnet) before exposing anything.
@@ -282,12 +395,14 @@ the corpus tests above.
 
    Recommendation: confirm them against the decompiled sources on the dev machine. These
    constants could not be checked here: `POLYGON_INDEX_PLANE_SPLIT_LINE`, the `V7_*` constants,
-   and `V7_UTILITY_SPECIES_V6`.
+   `V7_UTILITY_SPECIES_V6`, and (R13/R15) `PLANE_NET_NAME_NONE`, `PLANE_NET_NAME_MULTIPLE`,
+   `PLANE_NET_NAME_COUNT`, `BOARD_REGION_OBJECT_KIND`. AD26-dotnet is not in this checkout.
 4. **Open writer gaps** (STATUS.md):
    - component bodies are written in the vertex format, so a ShapeBasedComponentBodies6 section
      with records gets an unreadable record;
    - bodies and texts go to the legacy section when the modern one exists but is empty;
-   - Regions6 keeps stale geometry when ShapeBasedRegions6 exists;
+   - Regions6 keeps stale geometry when ShapeBasedRegions6 exists, and (R15) stale PADINDEX /
+     SUBPOLYINDEX; it cannot be rebuilt, because it stores Altium's polygonised arcs;
    - region internal fields are preserved by position within each section;
    - the PcbLib writer still writes NoLayer/Top/Bottom for layers without a V6 form;
    - the spec dump emits pour members as authored copper.
@@ -321,6 +436,27 @@ the corpus tests above.
     and the writer rebuilds PrimitiveParameters from them, so every `update_board` empties the
     BOM section. Recommendation: read PrimitiveParameters into `parameters` before the next
     writer change.
+11. **R12 Jumper.** No corpus record shows how Altium stores Jumper (6), so both writers refuse
+    it. Recommendation: check AD26's writer on the dev machine.
+12. **R16 violations are read-only.** Their records cannot be rebuilt from the public form, so
+    `update_board` keeps them unchanged or clears them. Recommendation: ecadabra re-runs DRC
+    itself; clear the lists when the board's objects change.
+13. **R13 / Board6.** A Board6 record is 26 `|RECORD=Board` blocks; the parameter reader keeps
+    one RECORD key and attaches block-ending CRs to values (legacy `dielectric_material` reads
+    `"FR-4\r"`). `SIGNALLAYERCOUNT` is absent on all 94 boards, so `signal_layer_count` reads 2.
+    Recommendation: model Board6 as blocks in the next format lane; derive the signal layer count
+    from the stack.
+14. **R15 PADINDEX.** It is not an index into the board's pads; in uwarg-usbc-sink PADINDEX
+    67+k matches the k-th pad of the component, elsewhere neither reading fits. Recommendation:
+    check `IPCB_Region.PadIndex` in AD26 before ecadabra uses it.
+15. **Other pre-existing write defects found (not fixed, outside the requests).**
+    DifferentialPairs6: the reader reads `POSITIVENET`/`NEGATIVENET` but the corpus stores
+    `POSITIVENETNAME`/`NEGATIVENETNAME` (pairs read with empty nets, 36 boards), and the writer
+    replaces the records with three keys. Nets6: the merge regenerates every net UNIQUEID and
+    resets other keys. Classes6: merged by NAME although five boards repeat a class name across
+    kinds, and removed members' `Mk` keys stay. Recommendation: fix these three next; they are the
+    same class as the Board6 and Components6 fixes made here.
+
 
 ## What ecadabra's importer must change (per field)
 
@@ -354,6 +490,18 @@ the corpus tests above.
 - **R11.** Open the three GBK projects with
   `AltiumProject::open_with_code_page(path, "gbk")`; `open` errors on non-UTF-8 files and says
   so.
+- **R12.** Map `PcbDocComponent::kind` / `Footprint::kind` (StandardNoBom, NetTie*, Graphical,
+  Mechanical) instead of guessing from parameters.
+- **R16.** Import `board.violations` / `waived_violations`; resolve `objects[i]` as
+  `(kind, index)` into the board list of that kind; compare `layer` with `legacy_v6()`.
+- **R17.** Take per-object clearances from `RuleParams::Clearance::object_clearances` (absent pairs
+  use `gap`); board-edge clearances from `BoardOutlineClearance::object_clearances`.
+- **R13.** Use `StackLayer::plane_net`; treat `plane_multiple_nets` as a split plane whose nets
+  come from its split-plane polygons.
+- **R15.** Use `subpoly_index` to group pour fill regions; do not use `pad_index` until Q14 is
+  answered.
+- **R14.** Map the text style fields; skip or mark `hidden` texts; read visibility from
+  `PcbDocComponent::designator_visible` / `comment_visible`.
 
 ## Setup as it ran
 

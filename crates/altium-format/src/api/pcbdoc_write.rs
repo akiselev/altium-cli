@@ -14,7 +14,7 @@ use altium_format_types::pcb::constants::{
 };
 use altium_format_types::pcb::{
     BarcodeRenderMode, DaisyChainStyle, LayerRef, MaskExpansionState, PadStackMode, PcbFlags,
-    PlaneConnectionStyle, PolySegmentKind, PolygonType, TCacheState, TextKind, V6Layer,
+    PlaneConnectionStyle, PolySegmentKind, PolygonType, TCacheState, V6Layer,
 };
 use altium_format_types::{BarcodeKind, PcbObjectId};
 
@@ -366,6 +366,17 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
             ),
         });
     }
+    for (i, text) in board.texts.iter().enumerate() {
+        if text.hidden != super::pcbdoc_read::text_hidden_by_component(text, &board.components) {
+            return Err(crate::AltiumFormatError::InvalidParamValue {
+                key: "NAMEON".to_owned(),
+                detail: format!(
+                    "text #{i}: `hidden` disagrees with its component; set the component's \
+                     designator_visible / comment_visible instead"
+                ),
+            });
+        }
+    }
     let (keep_violations, keep_waived) = check_stored_violations(board, doc)?;
     super::pcbdoc_read::check_plane_nets(&board.settings.layer_stack, &board.nets)
         .context("layer stack")?;
@@ -399,12 +410,13 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
         build_net_records(&board.nets),
         "NAME",
     );
-    merge_param_section(
+    merge_param_section_keeping(
         doc,
         ParamSectionKind::Components6,
         build_component_records(&board.components)?,
         // Designators repeat (test-padshapes has ten R14); the unique id does not.
         "UNIQUEID",
+        COMPONENT_DEFAULT_ONLY_KEYS,
     );
     check_component_designators(board)?;
     drop_absent_source_designators(doc, &board.components)?;
@@ -701,8 +713,8 @@ fn build_component_records(components: &[PcbDocComponent]) -> Result<Vec<Standar
             params.insert("X", MilCoord(comp.location.x).to_param_value());
             params.insert("Y", MilCoord(comp.location.y).to_param_value());
             params.insert("PATTERN", comp.pattern.clone());
-            params.insert("NAMEON", "TRUE".to_string());
-            params.insert("COMMENTON", "FALSE".to_string());
+            params.insert("NAMEON", comp.designator_visible.to_param_value());
+            params.insert("COMMENTON", comp.comment_visible.to_param_value());
             params.insert("GROUPNUM", "0".to_string());
             params.insert("COUNT", "0".to_string());
             params.insert("ROTATION", format!(" {:.13}", comp.rotation));
@@ -1508,25 +1520,25 @@ fn build_text_records(
                     )?,
                     location: t.location,
                     height: t.height,
-                    stroke_font_type: 0,
-                    text_kind: TextKind::default(),
+                    stroke_font_type: t.stroke_font_id,
+                    text_kind: t.font_kind,
                     rotation: t.rotation,
                     is_mirrored: t.is_mirrored,
                     stroke_width: t.width,
                     is_comment: t.is_comment,
                     is_designator: t.is_designator,
                     user_routed: false,
-                    is_bold: false,
-                    is_italic: false,
+                    is_bold: t.bold,
+                    is_italic: t.italic,
                     font_name: t.font_name.clone(),
-                    is_inverted: false,
-                    margin_border_width: 0,
+                    is_inverted: t.inverted,
+                    margin_border_width: t.inverted_border.to_internal(),
                     wide_string_index,
                     union_index: 0,
-                    is_inverted_rect: false,
-                    textbox_rect_width: 0,
-                    textbox_rect_height: 0,
-                    textbox_rect_justification: 0,
+                    is_inverted_rect: t.use_inverted_rectangle,
+                    textbox_rect_width: t.inverted_rect_width.to_internal(),
+                    textbox_rect_height: t.inverted_rect_height.to_internal(),
+                    textbox_rect_justification: t.justification as u8,
                     text_offset_width: 0,
                     unk_vec_x: 0,
                     unk_vec_y: 0,
@@ -2038,19 +2050,10 @@ fn preserve_fill_fields(new: &mut PcbFill, old: &PcbFill) {
 }
 
 fn preserve_text_fields(new: &mut PcbText, old: &PcbText) {
-    // Formatting fields not exposed in API
-    new.stroke_font_type = old.stroke_font_type;
-    new.text_kind = old.text_kind;
+    // Formatting fields not exposed in the API (font kind and id, bold,
+    // italic, inverted and justification come from the API text).
     new.user_routed = old.user_routed;
-    new.is_bold = old.is_bold;
-    new.is_italic = old.is_italic;
-    new.is_inverted = old.is_inverted;
-    new.margin_border_width = old.margin_border_width;
     new.union_index = old.union_index;
-    new.is_inverted_rect = old.is_inverted_rect;
-    new.textbox_rect_width = old.textbox_rect_width;
-    new.textbox_rect_height = old.textbox_rect_height;
-    new.textbox_rect_justification = old.textbox_rect_justification;
     new.text_offset_width = old.text_offset_width;
     new.unk_vec_x = old.unk_vec_x;
     new.unk_vec_y = old.unk_vec_y;
@@ -2392,11 +2395,44 @@ fn replace_param_section(
 /// For matched records: old params are the base, new params overwrite on top.
 /// For new records (no old match): used as-is.
 /// Old records with no new match are removed.
+/// Components6 keys `build_component_records` fills with defaults because the
+/// API does not carry them: they are written only for new components (before,
+/// the merge overwrote stored heights, auto-positions, union indices, channel
+/// offsets and descriptions on every update, and added absent ones).
+pub(crate) const COMPONENT_DEFAULT_ONLY_KEYS: &[&str] = &[
+    "SELECTION",
+    "POLYGONOUTLINE",
+    "USERROUTED",
+    "KEEPOUT",
+    "GROUPNUM",
+    "COUNT",
+    "HEIGHT",
+    "COMMENTAUTOPOSITION",
+    "UNIONINDEX",
+    "CHANNELOFFSET",
+    "SOURCEFOOTPRINTLIBRARY",
+    "SOURCEDESCRIPTION",
+    "FOOTPRINTDESCRIPTION",
+];
+
 fn merge_param_section(
     doc: &mut PcbDoc,
     kind: ParamSectionKind,
     new_records: Vec<StandardParamRecord>,
     match_key: &str,
+) {
+    merge_param_section_keeping(doc, kind, new_records, match_key, &[]);
+}
+
+/// [`merge_param_section`], except that `default_only` keys are taken from the
+/// new record only for a record with no stored match: a stored record keeps its
+/// values, and does not gain keys it never had.
+fn merge_param_section_keeping(
+    doc: &mut PcbDoc,
+    kind: ParamSectionKind,
+    new_records: Vec<StandardParamRecord>,
+    match_key: &str,
+    default_only: &[&str],
 ) {
     // Extract old records from the existing section.
     let old_records = take_param_records(doc, kind);
@@ -2420,7 +2456,15 @@ fn merge_param_section(
                 // Start with all old params, then overwrite with new values.
                 let mut merged_params = (*old_params).clone();
                 for (k, v) in new_rec.params.iter() {
-                    merged_params.set(k, v.to_owned());
+                    let default_only = default_only.iter().any(|d| d.eq_ignore_ascii_case(k));
+                    // A stored record keeps (or keeps lacking) these keys.
+                    if default_only {
+                        continue;
+                    }
+                    // In place, so the record keeps Altium's key order.
+                    if !merged_params.replace_in_place(k, v.to_owned()) {
+                        merged_params.insert(k, v.to_owned());
+                    }
                 }
                 StandardParamRecord {
                     params: merged_params,
@@ -2766,6 +2810,8 @@ mod tests {
             unique_id: unique_id.to_owned(),
             locked: true,
             primitive_lock: false,
+            designator_visible: true,
+            comment_visible: false,
             source_designator: Some(designator.to_owned()),
             kind: altium_format_types::ComponentKind::Standard,
             parameters: Vec::new(),

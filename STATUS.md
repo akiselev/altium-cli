@@ -601,7 +601,8 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   Known defect (pre-existing): the reader never fills `PcbDocComponent::parameters`, and the
   writer rebuilds PrimitiveParameters from them, so `update_board` empties the BOM section.
 - Component kind (R12): `PcbDocComponent::kind` (COMPONENTKIND / VERSION2 / VERSION3, newest
-  wins, Standard when absent; the keys must agree) and `Footprint::kind` (PcbLib COMPONENTKIND).
+  wins, Standard when absent; the keys must agree) and `Footprint::kind` (PcbLib COMPONENTKIND,
+  0-5: FragasLab-Footprint stores 5 = StandardNoBom; Jumper is refused).
   Writers store the corpus forms; writing Jumper is an error (storage form unknown).
 - Stored violations (R16): `PcbDocBoard::violations` / `waived_violations` expose the
   `T*Violation` storages and WaivedViolations as `ViolationKind`, rule index (into `rules`),
@@ -629,6 +630,17 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   the last value of its block (`PLANE16NETNAME`, `LAYERnDIELMATERIAL` on legacy stacks →
   `dielectric_material = "FR-4\r"`, `VP.HY`, …). The plane-net reader strips that CR and
   `ParameterCollection::replace_in_place` keeps it; the block framing itself is not modelled.
+- Text style (R14): PcbDoc `Text` carries `font_kind`, `stroke_font_id`, `bold`, `italic`,
+  `inverted`, `inverted_border`, `use_inverted_rectangle`, `inverted_rect_width/height`,
+  `justification` (`TextAutoposition`) and a derived `hidden` (designator/comment text of a
+  component with NAMEON/COMMENTON false, now `PcbDocComponent::designator_visible` /
+  `comment_visible`). PcbLib `TextGraphic` carries the same style (font id as stored; its meaning
+  next to PcbDoc's stroke font id is unconfirmed; justification `Option`). Both writers store them
+  (before: PcbDoc preserved them by position, PcbLib wrote defaults, so `update_footprint`
+  dropped bold, italic, TrueType and inverted settings). Components6 keys the API does not carry
+  (HEIGHT, COMMENTAUTOPOSITION, UNIONINDEX, CHANNELOFFSET, descriptions, …) are now written only
+  for new components; before, every `update_board` overwrote them with defaults and reset NAMEON
+  to TRUE and COMMENTON to FALSE.
 - Region indices (R15): `Region::subpoly_index` (SUBPOLYINDEX; set on all 43,631 pour regions of
   readable boards, plus 267 outside pours) and `Region::pad_index` (PADINDEX as stored, 25 corpus
   regions; what it indexes is unconfirmed, it is not an index into `pads`). OBJECTKIND must be

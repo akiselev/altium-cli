@@ -19,7 +19,7 @@ use altium_format_types::pcb::{
 use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, MaskExpansionMode, ObjectClearanceId, PadShape,
     PadStackMode, PcbFlags, PlaneConnectionStyle, PolyHatchStyle, PolygonType, RegionKind,
-    RuleKind, ViolationKind,
+    RuleKind, TextAutoposition, TextKind, ViolationKind,
 };
 use altium_format_types::{
     ComponentKind, ComponentPlacementType, ConfinementStyle, DielectricType, LayerStackStyle,
@@ -242,6 +242,10 @@ pub struct PcbDocComponent {
     /// Components6 `PRIMITIVELOCK`: the component's primitives cannot be
     /// edited on their own.
     pub primitive_lock: bool,
+    /// Components6 `NAMEON`: the designator text is shown.
+    pub designator_visible: bool,
+    /// Components6 `COMMENTON`: the comment text is shown.
+    pub comment_visible: bool,
     /// The stored `SOURCEDESIGNATOR` (the schematic designator), `None` when
     /// the record has none. `designator` is this, or else the text of the
     /// component's designator Text primitive. The writer stores exactly this
@@ -767,6 +771,27 @@ pub struct Text {
     pub is_mirrored: bool,
     pub is_comment: bool,
     pub is_designator: bool,
+    /// Stroke, TrueType or barcode text (`FONTTYPE`).
+    pub font_kind: TextKind,
+    /// Stroke font (`FONTID`: 0 default, 1 sans serif, 2 serif, as stored).
+    pub stroke_font_id: u16,
+    pub bold: bool,
+    pub italic: bool,
+    /// `INVERTED`: text drawn knocked out of a filled border.
+    pub inverted: bool,
+    /// Border width around inverted text (`INVERTEDTTTEXTBORDER`).
+    pub inverted_border: Coord,
+    /// `USEINVERTEDRECTANGLE`: the inverted border is a fixed rectangle.
+    pub use_inverted_rectangle: bool,
+    /// `TEXTBOXRECTWIDTH` / `TEXTBOXRECTHEIGHT`.
+    pub inverted_rect_width: Coord,
+    pub inverted_rect_height: Coord,
+    /// `TEXTJUSTIFICATION` of text in its rectangle.
+    pub justification: TextAutoposition,
+    /// A designator or comment text whose component hides it
+    /// ([`PcbDocComponent::designator_visible`] / `comment_visible`). Derived:
+    /// `update_board` requires it to agree with the component.
+    pub hidden: bool,
 }
 
 /// A PCB region (copper pour, board cutout, keepout, etc.).

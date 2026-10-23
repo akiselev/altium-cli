@@ -14,7 +14,7 @@ use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, PolyHatchStyle,
     PolySegmentKind, PolygonType, RegionKind, RuleKind, V6Layer, V7Layer,
 };
-use altium_format_types::pcb::{ObjectClearanceId, ViolationKind};
+use altium_format_types::pcb::{ObjectClearanceId, TextAutoposition, ViolationKind};
 use altium_format_types::{ComponentKind, DielectricType, LayerStackStyle, PcbObjectId};
 use std::collections::HashMap;
 
@@ -235,6 +235,10 @@ pub(crate) fn board_from_internal(doc: &PcbDoc) -> Result<PcbDocBoard> {
                 &mut component_bodies,
             )?;
         }
+    }
+
+    for text in &mut texts {
+        text.hidden = text_hidden_by_component(text, &components);
     }
 
     // Step 4: Extract board geometry from internal regions (arc-preserving).
@@ -667,6 +671,12 @@ fn convert_components(doc: &PcbDoc, ctx: &ConvertContext) -> Result<Vec<PcbDocCo
             .context("Components6 PRIMITIVELOCK")?;
         let kind = component_kind_from_params(&mut params)
             .with_context(|| format!("Components6 record #{index} kind"))?;
+        let designator_visible: bool = params
+            .remove_required("NAMEON")
+            .context("Components6 NAMEON")?;
+        let comment_visible: bool = params
+            .remove_required("COMMENTON")
+            .context("Components6 COMMENTON")?;
 
         let id = designator.clone();
         components.push(PcbDocComponent {
@@ -684,6 +694,8 @@ fn convert_components(doc: &PcbDoc, ctx: &ConvertContext) -> Result<Vec<PcbDocCo
             unique_id,
             locked,
             primitive_lock,
+            designator_visible,
+            comment_visible,
             source_designator,
             kind,
             parameters: Vec::new(),
@@ -1952,7 +1964,33 @@ fn text_from_internal(
         is_mirrored: t.is_mirrored,
         is_comment: t.is_comment,
         is_designator: t.is_designator,
+        font_kind: t.text_kind,
+        stroke_font_id: t.stroke_font_type,
+        bold: t.is_bold,
+        italic: t.is_italic,
+        inverted: t.is_inverted,
+        inverted_border: Coord::from_internal(t.margin_border_width),
+        use_inverted_rectangle: t.is_inverted_rect,
+        inverted_rect_width: Coord::from_internal(t.textbox_rect_width),
+        inverted_rect_height: Coord::from_internal(t.textbox_rect_height),
+        justification: TextAutoposition::try_from(t.textbox_rect_justification).map_err(|_| {
+            AltiumFormatError::InvalidParamValue {
+                key: "TEXTJUSTIFICATION".to_owned(),
+                detail: format!("unknown justification {}", t.textbox_rect_justification),
+            }
+        })?,
+        // Set from the owning component in board_from_internal.
+        hidden: false,
     })
+}
+
+/// Whether a designator or comment text is hidden by its component.
+pub(crate) fn text_hidden_by_component(text: &Text, components: &[PcbDocComponent]) -> bool {
+    text.component_index
+        .and_then(|c| components.get(c))
+        .is_some_and(|c| {
+            (text.is_designator && !c.designator_visible) || (text.is_comment && !c.comment_visible)
+        })
 }
 
 fn contour_to_coord_points(contour: &Contour) -> Vec<CoordPoint> {

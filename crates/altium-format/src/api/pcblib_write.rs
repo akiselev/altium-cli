@@ -14,7 +14,7 @@ use altium_format_types::ComponentKind;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
     BarcodeRenderMode, DaisyChainStyle, HoleType, LayerRef, MaskExpansionState, PadShape,
-    PadStackMode, PcbFlags, PlaneConnectionStyle, TCacheState, TextKind, V6Layer,
+    PadStackMode, PcbFlags, PlaneConnectionStyle, TCacheState, V6Layer,
 };
 
 /// Build a `PcbPrimitiveCommon` for a library context (no net/polygon/component links).
@@ -32,9 +32,9 @@ fn default_primitive_common(layer: &LayerRef, flags: PcbFlags) -> PcbPrimitiveCo
 
 /// Convert a public `Footprint` to a fresh internal `PcbFootprint`.
 pub(crate) fn footprint_to_internal(fp: &Footprint, cfb_key: &str) -> Result<PcbFootprint> {
-    // COMPONENTKIND knows kinds 0-4; how a footprint stores StandardNoBom or
-    // Jumper is not known (no corpus footprint stores a kind at all).
-    if fp.kind as u8 > ComponentKind::NetTieNoBom as u8 {
+    // Footprints store COMPONENTKIND 0-5 (5 = StandardNoBom in the corpus);
+    // how a footprint stores Jumper is not known.
+    if fp.kind as u8 > ComponentKind::StandardNoBom as u8 {
         return Err(crate::AltiumFormatError::InvalidParamValue {
             key: "COMPONENTKIND".to_owned(),
             detail: format!(
@@ -493,22 +493,22 @@ fn text_to_internal(g: &TextGraphic) -> PcbText {
         common: default_primitive_common(&g.layer, g.flags),
         location: g.location,
         height: g.height,
-        text_kind: TextKind::default(),
+        text_kind: g.font_kind,
         rotation: g.rotation,
         is_mirrored: g.is_mirrored,
         stroke_width: g.width,
-        is_italic: false,
-        is_bold: false,
+        is_italic: g.italic,
+        is_bold: g.bold,
         unknown_45: 0,
         font_name: g.font_name.clone(),
-        inverted: false,
-        inverted_tt_text_border: Coord::ZERO,
+        inverted: g.inverted,
+        inverted_tt_text_border: g.inverted_border,
         wide_string_index: -1,
         union_index: 0,
-        is_inverted_rect: false,
-        ttf_text_width: Coord::ZERO,
-        ttf_text_height: Coord::ZERO,
-        font_id: 0,
+        is_inverted_rect: g.use_inverted_rectangle,
+        ttf_text_width: g.inverted_rect_width,
+        ttf_text_height: g.inverted_rect_height,
+        font_id: g.font_id,
         barcode_inverted: false,
         barcode_full_width: Coord::ZERO,
         barcode_full_height: Coord::ZERO,
@@ -519,7 +519,7 @@ fn text_to_internal(g: &TextGraphic) -> PcbText {
         barcode_render_mode: BarcodeRenderMode::ByMinWidth,
         multiline: false,
         barcode_font_name: String::new(),
-        ttf_inverted_justify: None,
+        ttf_inverted_justify: g.justification,
         ttf_offset_from_inverted_rect: None,
         tail_unknown_227: None,
         multiline_auto_position: None,
@@ -672,7 +672,12 @@ mod tests {
         assert_eq!(standard.component_kind, None);
         let net_tie = footprint_to_internal(&footprint(ComponentKind::NetTieNoBom), "FP").unwrap();
         assert_eq!(net_tie.component_kind, Some(ComponentKind::NetTieNoBom));
-        assert!(footprint_to_internal(&footprint(ComponentKind::StandardNoBom), "FP").is_err());
+        assert_eq!(
+            footprint_to_internal(&footprint(ComponentKind::StandardNoBom), "FP")
+                .unwrap()
+                .component_kind,
+            Some(ComponentKind::StandardNoBom)
+        );
         assert!(footprint_to_internal(&footprint(ComponentKind::Jumper), "FP").is_err());
         // Updating keeps an explicit stored kind when unchanged, clears it otherwise.
         let mut existing = standard;

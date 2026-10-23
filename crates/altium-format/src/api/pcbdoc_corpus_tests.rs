@@ -7,7 +7,8 @@
 use std::path::{Path, PathBuf};
 
 use super::*;
-use altium_format_types::pcb::TCacheState;
+use crate::api::pcbdoc_write::COMPONENT_DEFAULT_ONLY_KEYS;
+use altium_format_types::pcb::{TCacheState, TextKind};
 
 /// CFB PcbDocs in `data/pcbdoc` that `PcbDoc::open` reads (ASCII PcbDocs and
 /// the CFB files `open` rejects are not part of these checks).
@@ -1336,4 +1337,110 @@ fn corpus_r15_region_indices() {
         "pad {with_pad}, subpoly {with_subpoly} ({pour_subpoly} in pours), board {board_regions}"
     );
     assert_eq!((board_regions, with_pad, pour_subpoly), (79, 25, 43631));
+}
+
+/// R14: text style and designator/comment visibility are read, survive
+/// `update_board` together with the Components6 keys the API does not carry,
+/// and an edit is written.
+#[test]
+fn corpus_r14_text_style() {
+    let style = |b: &PcbDocBoard| -> Vec<String> {
+        b.texts
+            .iter()
+            .map(|t| {
+                format!(
+                    "{:?} {} {} {} {} {:?} {} {:?} {:?} {:?} {}",
+                    t.font_kind,
+                    t.stroke_font_id,
+                    t.bold,
+                    t.italic,
+                    t.inverted,
+                    t.inverted_border,
+                    t.use_inverted_rectangle,
+                    t.inverted_rect_width,
+                    t.inverted_rect_height,
+                    t.justification,
+                    t.hidden
+                )
+            })
+            .collect()
+    };
+    let stored = |doc: &PcbDoc| -> Vec<Vec<(String, String)>> {
+        find_param_section(doc, ParamSectionKind::Components6)
+            .map(|records| {
+                records
+                    .iter()
+                    .map(|r| {
+                        r.params
+                            .iter()
+                            .filter(|(k, _)| {
+                                COMPONENT_DEFAULT_ONLY_KEYS.contains(k)
+                                    || matches!(*k, "NAMEON" | "COMMENTON")
+                            })
+                            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                            .collect()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let (mut texts, mut hidden, mut truetype, mut inverted) = (0, 0, 0, 0);
+    let mut edit_checked = false;
+    for (name, mut doc) in corpus_docs() {
+        if BOARDS_FAILING_AT_BASE.contains(&name.as_str()) {
+            continue;
+        }
+        let board = doc.board().unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        for t in &board.texts {
+            texts += 1;
+            hidden += usize::from(t.hidden);
+            truetype += usize::from(t.font_kind == TextKind::TrueTypeFont);
+            inverted += usize::from(t.inverted);
+        }
+        let before = stored(&doc);
+        doc.update_board(&board)
+            .unwrap_or_else(|e| panic!("{name}: update_board: {e:#}"));
+        let again = doc.board().unwrap();
+        assert_eq!(style(&again), style(&board), "{name}");
+        let after = stored(&doc);
+        assert_eq!(after.len(), before.len(), "{name}");
+        if let Some(i) = (0..after.len()).find(|&i| after[i] != before[i]) {
+            panic!(
+                "{name}: Components6 record #{i} keys changed:\n before {:?}\n after  {:?}",
+                before[i], after[i]
+            );
+        }
+
+        if !edit_checked {
+            let Some(t) = board
+                .texts
+                .iter()
+                .position(|t| t.is_designator && t.component_index.is_some())
+            else {
+                continue;
+            };
+            edit_checked = true;
+            let c = board.texts[t].component_index.unwrap();
+            let mut edited = board.clone();
+            edited.components[c].designator_visible = !board.components[c].designator_visible;
+            let err = doc.update_board(&edited).unwrap_err();
+            assert!(format!("{err:#}").contains("hidden"), "{name}: {err:#}");
+            for text in &mut edited.texts {
+                text.hidden = text_hidden_by_component(text, &edited.components);
+            }
+            edited.texts[t].bold = !board.texts[t].bold;
+            edited.texts[t].justification = TextAutoposition::BottomRight;
+            doc.update_board(&edited).unwrap();
+            let again = doc.board().unwrap();
+            assert_eq!(again.texts[t].hidden, !board.texts[t].hidden, "{name}");
+            assert_eq!(again.texts[t].bold, !board.texts[t].bold, "{name}");
+            assert_eq!(
+                again.texts[t].justification,
+                TextAutoposition::BottomRight,
+                "{name}"
+            );
+        }
+    }
+    eprintln!("{texts} texts, {hidden} hidden, {truetype} TrueType, {inverted} inverted");
+    assert!(edit_checked && hidden > 0);
 }
