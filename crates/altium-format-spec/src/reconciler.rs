@@ -3585,6 +3585,7 @@ mod tests {
             primitive_lock: true,
             designator_visible: true,
             comment_visible: false,
+            channel_offset: None,
             source_designator: Some(designator.to_string()),
             kind: altium_format_types::ComponentKind::Standard,
             parameters: Vec::new(),

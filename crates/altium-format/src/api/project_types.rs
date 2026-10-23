@@ -243,6 +243,10 @@ pub struct ComparisonOption {
 /// Serialized as `L1..L17` rows of 17 N/W/E/F characters.
 #[derive(Debug, Clone)]
 pub struct ErcConnectionMatrix {
+    /// `cells[r][c]` is character `c` of line `L<r+1>` as stored. Altium reads a
+    /// pair (row code, column code) as `cells[column][row]` (transposed;
+    /// `ERCConnectionMatrix.ErrorLevel`, altium-re Psch2-erc src/erc.rs.md). All 17
+    /// rows are required when the section exists; an absent section is all NoReport.
     pub cells: [[ErrorLevel; 17]; 17],
 }
 
@@ -287,7 +291,11 @@ pub struct DifferenceLevel {
 pub struct ProjectVariant {
     pub unique_id: String,
     pub description: String,
-    pub overwrite_pcb_footprint: bool,
+    /// `AllowFabrication` (`None` when not stored).
+    pub allow_fabrication: Option<bool>,
+    /// `OverwritePcbFootprint` (`None` when not stored).
+    pub overwrite_pcb_footprint: Option<bool>,
+    /// `Variation1..n`; `VariationCount`, when stored, must equal their number.
     pub variations: Vec<ComponentVariation>,
     pub param_variations: Vec<ParameterVariation>,
 }

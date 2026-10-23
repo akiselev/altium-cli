@@ -6,7 +6,9 @@ use std::io::Read as _;
 use std::path::Path;
 
 use altium_format_types::constants::component::DESIGNATOR;
-use altium_format_types::constants::file_headers::SCH_SHEET_BINARY_HEADER_V50;
+use altium_format_types::constants::file_headers::{
+    SCH_ICON_STORAGE_HEADER, SCH_SHEET_ASCII_HEADER_V50, SCH_SHEET_BINARY_HEADER_V50,
+};
 use altium_format_types::constants::parsing::INSTRUCTION_EXTRA_OBJECT_INDEX;
 use altium_format_types::constants::pin::{
     DEF_VALUE, DESIGNATOR_CUSTOM_COLOR, DESIGNATOR_CUSTOM_FONT_ID,
@@ -59,7 +61,7 @@ use crate::param_collection::ParameterCollection;
 use crate::param_value::ToParamValue;
 use crate::sch_records::{SchPin, SchPrimitiveBase, SchRecord, SchSheet, serialize_record};
 use crate::schdoc::dispatch::dispatch_record_type;
-use crate::schdoc::fileheader::parse_fileheader_stream;
+use crate::schdoc::fileheader::{parse_fileheader_stream, parse_header_and_records};
 use crate::schdoc::types::{SchDocEmbeddedObject, SchDocHeaderMetadata};
 use crate::tracked_cfb::TrackedCfbDocument;
 use crate::util::generate_unique_id;
@@ -72,9 +74,16 @@ const CFB_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 const SCHDOC_ASCII_HEADER_PREFIX: &[u8] =
     b"|HEADER=Protel for Windows - Schematic Capture Ascii File Version";
 
-fn preflight_check_schdoc_bytes(head: &[u8]) -> Result<()> {
+/// The container a SchDoc is stored in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SchDocContainer {
+    Cfb,
+    Ascii,
+}
+
+fn preflight_check_schdoc_bytes(head: &[u8]) -> Result<SchDocContainer> {
     if head.starts_with(&CFB_MAGIC) {
-        return Ok(());
+        return Ok(SchDocContainer::Cfb);
     }
     if head.starts_with(b"<<<<<<< ") {
         return Err(AltiumFormatError::InvalidParamValue {
@@ -84,16 +93,13 @@ fn preflight_check_schdoc_bytes(head: &[u8]) -> Result<()> {
         });
     }
     if head.starts_with(SCHDOC_ASCII_HEADER_PREFIX) {
-        return Err(AltiumFormatError::InvalidParamValue {
-            key: "HEADER".to_owned(),
-            detail: "unsupported SchDoc document type: ASCII SchDoc is not supported yet (expected CFB/Binary SchDoc)"
-                .to_owned(),
-        });
+        return Ok(SchDocContainer::Ascii);
     }
-    Ok(())
+    // Anything else goes to the CFB reader, which reports what it finds.
+    Ok(SchDocContainer::Cfb)
 }
 
-fn preflight_check_schdoc_container(path: &Path) -> Result<()> {
+fn preflight_check_schdoc_container(path: &Path) -> Result<SchDocContainer> {
     let mut file = std::fs::File::open(path)?;
     let mut head = [0u8; 128];
     let read = file.read(&mut head)?;
@@ -114,6 +120,7 @@ impl SchDoc {
                 graphically_locked: false,
                 union_index: 0,
                 style_id: 0,
+                ignore_on_load: false,
             },
             fonts: vec![SchFont {
                 id: 1,
@@ -265,6 +272,7 @@ impl SchDoc {
                         graphically_locked: false,
                         union_index: 0,
                         style_id: 0,
+                        ignore_on_load: false,
                     },
                     fonts: sheet
                         .fonts
@@ -302,18 +310,127 @@ impl SchDoc {
     }
 
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
-        preflight_check_schdoc_bytes(data).context("detecting SchDoc container format")?;
-        let tracked = TrackedCfbDocument::from_bytes(data.to_vec())
-            .context("opening SchDoc CFB container")?;
-        Self::parse_from_cfb(tracked)
+        match preflight_check_schdoc_bytes(data).context("detecting SchDoc container format")? {
+            SchDocContainer::Cfb => {
+                let tracked = TrackedCfbDocument::from_bytes(data.to_vec())
+                    .context("opening SchDoc CFB container")?;
+                Self::parse_from_cfb(tracked)
+            }
+            SchDocContainer::Ascii => Self::parse_from_ascii(data).context("parsing ASCII SchDoc"),
+        }
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        preflight_check_schdoc_container(path.as_ref())
-            .context("detecting SchDoc container format")?;
-        let tracked =
-            TrackedCfbDocument::open(path.as_ref()).context("opening SchDoc CFB container")?;
-        Self::parse_from_cfb(tracked)
+        match preflight_check_schdoc_container(path.as_ref())
+            .context("detecting SchDoc container format")?
+        {
+            SchDocContainer::Cfb => {
+                let tracked = TrackedCfbDocument::open(path.as_ref())
+                    .context("opening SchDoc CFB container")?;
+                Self::parse_from_cfb(tracked)
+            }
+            SchDocContainer::Ascii => {
+                let data = std::fs::read(path.as_ref())?;
+                Self::parse_from_ascii(&data).context("parsing ASCII SchDoc")
+            }
+        }
+    }
+
+    /// An ASCII SchDoc: one `|KEY=VALUE` record per line (LF or CRLF), in three
+    /// sections, each opened by a `|HEADER=` line:
+    /// 1. `Protel for Windows - Schematic Capture Ascii File Version 5.0` with
+    ///    `WEIGHT`, then the sheet's records (the binary `/FileHeader` content);
+    /// 2. `Icon storage` (the binary `/Storage` stream);
+    /// 3. the ASCII header again (the binary `/Additional` stream).
+    ///
+    /// All 289 ASCII SchDocs of the test corpus have empty sections 2 and 3, so
+    /// a line in either is refused (their record layout is unverified). The
+    /// document saves as a binary (CFB) SchDoc.
+    fn parse_from_ascii(data: &[u8]) -> Result<Self> {
+        let crlf = data.windows(2).any(|w| w == b"\r\n");
+        let body =
+            data.strip_suffix(b"\n")
+                .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                    key: "HEADER".to_owned(),
+                    detail: "ASCII SchDoc does not end with a line break".to_owned(),
+                })?;
+        let lines: Vec<&[u8]> = if crlf {
+            body.split(|&b| b == b'\n')
+                .map(|l| {
+                    l.strip_suffix(b"\r")
+                        .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                            key: "HEADER".to_owned(),
+                            detail: "ASCII SchDoc mixes LF and CRLF line breaks".to_owned(),
+                        })
+                })
+                .collect::<Result<_>>()?
+        } else {
+            body.split(|&b| b == b'\n').collect()
+        };
+        if lines.iter().any(|l| l.contains(&b'\r')) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "HEADER".to_owned(),
+                detail: "stray carriage return in an ASCII SchDoc line".to_owned(),
+            });
+        }
+        let is_header = |l: &[u8]| l.starts_with(b"|HEADER=");
+        let headers: Vec<usize> = (0..lines.len()).filter(|&i| is_header(lines[i])).collect();
+        let [first, storage, additional] = headers[..] else {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "HEADER".to_owned(),
+                detail: format!(
+                    "expected 3 |HEADER= lines (sheet, Icon storage, additional), found {}",
+                    headers.len()
+                ),
+            });
+        };
+        if first != 0 {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "HEADER".to_owned(),
+                detail: "first line is not the sheet header".to_owned(),
+            });
+        }
+        let storage_header = format!("|HEADER={SCH_ICON_STORAGE_HEADER}");
+        if lines[storage] != storage_header.as_bytes() {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "HEADER".to_owned(),
+                detail: format!("line {}: expected {storage_header:?}", storage + 1),
+            });
+        }
+        let additional_header = format!("|HEADER={SCH_SHEET_ASCII_HEADER_V50}");
+        if lines[additional] != additional_header.as_bytes() {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "HEADER".to_owned(),
+                detail: format!("line {}: expected {additional_header:?}", additional + 1),
+            });
+        }
+        if additional != storage + 1 || additional + 1 != lines.len() {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "HEADER".to_owned(),
+                detail: "ASCII Icon storage or additional records are not supported \
+                         (no corpus file has any)"
+                    .to_owned(),
+            });
+        }
+        let parsed = parse_header_and_records(&lines[..storage], SCH_SHEET_ASCII_HEADER_V50)
+            .context("parsing the sheet section")?;
+        let embedded_objects = Vec::new();
+        let mut additional_records = Vec::new();
+        validate_invariants(&parsed.records, &additional_records, &embedded_objects)
+            .context("validating SchDoc invariants")?;
+        let mut records = parsed.records;
+        ensure_unique_ids(&mut records, &mut additional_records);
+        Ok(Self {
+            header: SchDocHeaderMetadata {
+                header: parsed.header.header,
+                weight: parsed.header.weight,
+                minor_version: parsed.header.minor_version,
+                unique_id: parsed.header.unique_id,
+            },
+            records,
+            additional_records,
+            embedded_objects,
+        })
     }
 
     fn parse_from_cfb(mut tracked: TrackedCfbDocument) -> Result<Self> {
@@ -1255,18 +1372,47 @@ mod tests {
     }
 
     #[test]
-    fn schdoc_ascii_format_reports_unsupported_type() {
-        let tmp = tempfile::NamedTempFile::new().expect("create temp file");
-        std::fs::write(
-            tmp.path(),
-            b"|HEADER=Protel for Windows - Schematic Capture Ascii File Version 5.0|WEIGHT=1\n",
-        )
-        .expect("write temp schdoc");
-        let err = SchDoc::open(tmp.path()).expect_err("ASCII SchDoc must be rejected");
-        let msg = err.to_string();
+    fn schdoc_ascii_format_reads_and_saves_as_cfb() {
+        const SHEET: &str = "|HEADER=Protel for Windows - Schematic Capture Ascii File Version 5.0\
+            |WEIGHT=2|MINORVERSION=10|UNIQUEID=NFJGQUSK";
+        const RECORDS: &str = "|RECORD=31|FONTIDCOUNT=1|SIZE1=10|FONTNAME1=Arial\n\
+            |RECORD=29|OWNERPARTID=-1|LOCATION.X=800|LOCATION.Y=329|COLOR=128|UNIQUEID=AAAAAAAA";
+        let tail = "|HEADER=Icon storage\n\
+            |HEADER=Protel for Windows - Schematic Capture Ascii File Version 5.0\n";
+        for eol in ["\n", "\r\n"] {
+            let text = format!("{SHEET}\n{RECORDS}\n{tail}").replace('\n', eol);
+            let doc = SchDoc::from_bytes(text.as_bytes()).expect("ASCII SchDoc reads");
+            assert_eq!(doc.records.len(), 2);
+            let tmp = tempfile::NamedTempFile::new().expect("create temp file");
+            doc.save(tmp.path()).expect("save as CFB");
+            let again = SchDoc::open(tmp.path()).expect("reopen CFB");
+            assert_eq!(format!("{:?}", doc.records), format!("{:?}", again.records));
+        }
+        let refused = |text: String| {
+            SchDoc::from_bytes(text.as_bytes())
+                .err()
+                .expect("refused")
+                .to_string()
+        };
+        // Mixed line breaks, a missing section, or content in the storage
+        // or additional sections are refused.
+        assert!(refused(format!("{SHEET}\r\n{RECORDS}\n{tail}")).contains("ASCII"));
+        assert!(refused(format!("{SHEET}\n{RECORDS}\n")).contains("ASCII"));
+        assert!(refused(format!("{SHEET}\n{RECORDS}\n{tail}|RECORD=29\n")).contains("ASCII"));
         assert!(
-            msg.contains("unsupported SchDoc document type: ASCII SchDoc"),
-            "unexpected error: {msg}"
+            refused(format!(
+                "{SHEET}\n{RECORDS}\n|HEADER=Icon storage\n|RECORD=29\n\
+                 |HEADER=Protel for Windows - Schematic Capture Ascii File Version 5.0\n"
+            ))
+            .contains("ASCII")
+        );
+        // Weight must match.
+        assert!(
+            refused(format!(
+                "{}\n{RECORDS}\n{tail}",
+                SHEET.replace("WEIGHT=2", "WEIGHT=3")
+            ))
+            .contains("ASCII")
         );
     }
 

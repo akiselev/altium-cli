@@ -62,7 +62,7 @@ fn build_unique_id_index<'a>(records: &'a [SchRecord]) -> HashMap<&'a str, &'a S
 /// Copy format-internal base fields from an existing record to a new record.
 ///
 /// Preserves: `index_in_sheet`, `selection_memory`, `style_id`,
-/// `graphically_locked`, `union_index`. Does NOT preserve `owner_index`
+/// `graphically_locked`, `union_index`, `is_not_accessible`, `ignore_on_load`. Does NOT preserve `owner_index`
 /// (recomputed from tree structure) or `owner_part_id`/`owner_part_display_mode`
 /// (only relevant within components and set explicitly).
 fn preserve_base_fields(new_base: &mut SchPrimitiveBase, old_base: &SchPrimitiveBase) {
@@ -72,6 +72,7 @@ fn preserve_base_fields(new_base: &mut SchPrimitiveBase, old_base: &SchPrimitive
     new_base.graphically_locked = old_base.graphically_locked;
     new_base.union_index = old_base.union_index;
     new_base.is_not_accessible = old_base.is_not_accessible;
+    new_base.ignore_on_load = old_base.ignore_on_load;
 }
 
 /// Look up an existing record by unique_id and preserve its base fields.

@@ -3,7 +3,8 @@
 use indexmap::IndexMap;
 
 use altium_format_types::project::{
-    DifferenceCheckLevel, DocAnnotationScope, DocAutoNetClassScope, ErrorLevel, VariationKind,
+    DifferenceCheckLevel, DocAnnotationScope, DocAutoNetClassScope, ERC_ERROR_KIND_COUNT,
+    ERC_LEVEL_NAMED_KEYS, ErrorLevel, VariationKind,
 };
 
 use crate::api::{
@@ -82,8 +83,8 @@ pub(crate) fn project_from_internal(proj: &AltiumProject) -> crate::Result<Proje
         database_update: parse_database_update(proj),
         comparison_options: parse_comparison_options(proj),
         erc_matrix: parse_erc_matrix(proj)?,
-        erc_levels: parse_erc_levels(proj),
-        modification_levels: parse_modification_levels(proj),
+        erc_levels: parse_erc_levels(proj)?,
+        modification_levels: parse_modification_levels(proj)?,
         difference_levels: parse_difference_levels(proj)?,
         variants: parse_variants(proj)?,
         parameters: parse_parameters(proj),
@@ -183,9 +184,30 @@ fn parse_output_groups(proj: &AltiumProject) -> Vec<OutputGroup> {
 fn parse_erc_matrix(proj: &AltiumProject) -> crate::Result<ErcConnectionMatrix> {
     let matrix_map = proj.erc_matrix();
     let mut matrix = ErcConnectionMatrix::default();
+    if matrix_map.is_empty() {
+        // No section: Altium's matrix is all NoReport (Psch2-erc ParseFromStrings).
+        return Ok(matrix);
+    }
+    if let Some(stray) = matrix_map
+        .keys()
+        .find(|k| !(1..=17).any(|n| **k == format!("L{n}")))
+    {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: stray.clone(),
+            detail: "unexpected key in [ERC Connection Matrix] (rows are L1..L17)".to_owned(),
+        })
+        .context("parsing ERC connection matrix");
+    }
     for row in 0..17 {
         let key = format!("L{}", row + 1);
-        if let Some(row_str) = matrix_map.get(&key) {
+        let Some(row_str) = matrix_map.get(&key) else {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key,
+                detail: "missing row".to_owned(),
+            })
+            .context("parsing ERC connection matrix");
+        };
+        {
             let chars: Vec<char> = row_str.chars().collect();
             if chars.len() != 17 {
                 return Err(AltiumFormatError::InvalidParamValue {
@@ -207,28 +229,78 @@ fn parse_erc_matrix(proj: &AltiumProject) -> crate::Result<ErcConnectionMatrix> 
     Ok(matrix)
 }
 
-fn parse_erc_levels(proj: &AltiumProject) -> Vec<ErcLevel> {
+/// `[Electrical Rules Check]`: `Type<v+1>=<level>` (or a named key) per ERC
+/// error kind `v`. An unknown key or a level that is not 0..=3 is an error
+/// (Altium itself ignores such lines; here they would be silently lost).
+fn parse_erc_levels(proj: &AltiumProject) -> crate::Result<Vec<ErcLevel>> {
     proj.erc_levels()
         .iter()
         .map(|(key, value)| {
-            let level_int = value.parse::<i32>().unwrap_or(0);
-            let level = ErrorLevel::try_from(level_int).unwrap_or(ErrorLevel::NoReport);
-            ErcLevel {
+            let known = match key.strip_prefix("Type") {
+                Some(n) => {
+                    n.parse::<u16>().is_ok_and(|n| {
+                        (1..=ERC_ERROR_KIND_COUNT).contains(&n)
+                            && !ERC_LEVEL_NAMED_KEYS.iter().any(|(_, v)| *v + 1 == n)
+                    }) && !n.starts_with(['0', '+'])
+                }
+                None => ERC_LEVEL_NAMED_KEYS.iter().any(|(k, _)| k == key),
+            };
+            if !known {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: key.clone(),
+                    detail: "not an ERC error kind key".to_owned(),
+                })
+                .context("parsing [Electrical Rules Check]");
+            }
+            let level_int =
+                value
+                    .parse::<i32>()
+                    .map_err(|e| AltiumFormatError::InvalidParamValue {
+                        key: key.clone(),
+                        detail: format!("level '{value}': {e}"),
+                    });
+            let level = level_int
+                .and_then(|v| ErrorLevel::try_from(v).map_err(AltiumFormatError::InvalidEnumValue))
+                .with_context(|| format!("parsing [Electrical Rules Check] '{key}'"))?;
+            Ok(ErcLevel {
                 key: key.clone(),
                 level,
-            }
+            })
         })
         .collect()
 }
 
-fn parse_modification_levels(proj: &AltiumProject) -> Vec<ModificationLevel> {
+/// A `Type<n>` key (n >= 1, no sign or leading zero) of the level sections.
+fn level_type_index(section: &str, key: &str) -> crate::Result<u16> {
+    key.strip_prefix("Type")
+        .filter(|n| !n.starts_with(['0', '+']))
+        .and_then(|n| n.parse::<u16>().ok())
+        .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: "expected Type<n>".to_owned(),
+        })
+        .with_context(|| format!("parsing [{section}]"))
+}
+
+fn parse_modification_levels(proj: &AltiumProject) -> crate::Result<Vec<ModificationLevel>> {
     proj.modification_levels()
         .iter()
-        .filter_map(|(key, value)| {
-            let index = key.strip_prefix("Type")?.parse::<u16>().ok()?;
-            Some(ModificationLevel {
+        .map(|(key, value)| {
+            let index = level_type_index("Modification Levels", key)?;
+            let enabled = match value.as_str() {
+                "1" => true,
+                "0" => false,
+                other => {
+                    return Err(AltiumFormatError::InvalidParamValue {
+                        key: key.clone(),
+                        detail: format!("expected 0 or 1, got '{other}'"),
+                    })
+                    .context("parsing [Modification Levels]");
+                }
+            };
+            Ok(ModificationLevel {
                 difference_kind_index: index,
-                enabled: value == "1",
+                enabled,
             })
         })
         .collect()
@@ -237,14 +309,17 @@ fn parse_modification_levels(proj: &AltiumProject) -> Vec<ModificationLevel> {
 fn parse_difference_levels(proj: &AltiumProject) -> crate::Result<Vec<DifferenceLevel>> {
     proj.difference_levels()
         .iter()
-        .filter_map(|(key, value)| {
-            let index = key.strip_prefix("Type")?.parse::<u16>().ok()?;
-            let level_int = value.parse::<i32>().ok()?;
-            Some((key.clone(), index, level_int))
-        })
-        .map(|(key, index, level_int)| {
-            let level = DifferenceCheckLevel::try_from(level_int)
-                .map_err(AltiumFormatError::InvalidEnumValue)
+        .map(|(key, value)| {
+            let index = level_type_index("Difference Levels", key)?;
+            let level = value
+                .parse::<i32>()
+                .map_err(|e| AltiumFormatError::InvalidParamValue {
+                    key: key.clone(),
+                    detail: format!("level '{value}': {e}"),
+                })
+                .and_then(|v| {
+                    DifferenceCheckLevel::try_from(v).map_err(AltiumFormatError::InvalidEnumValue)
+                })
                 .with_context(|| format!("parsing difference level '{key}'"))?;
             Ok(DifferenceLevel {
                 difference_kind_index: index,
@@ -366,54 +441,184 @@ fn pipe_get_int(pairs: &[(&str, &str)], key: &str) -> i32 {
     pipe_get_str(pairs, key).parse().unwrap_or(0)
 }
 
+/// Pipe pairs of a variation line; every pair must be `KEY=VALUE` with a key
+/// from `allowed`, each at most once.
+fn strict_pipe_pairs<'a>(
+    key: &str,
+    value: &'a str,
+    allowed: &[&str],
+) -> crate::Result<Vec<(&'a str, &'a str)>> {
+    let mut pairs: Vec<(&str, &str)> = Vec::new();
+    for seg in value.split('|').filter(|seg| !seg.is_empty()) {
+        let (k, v) = seg
+            .split_once('=')
+            .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("'{seg}' is not KEY=VALUE"),
+            })?;
+        if !allowed.iter().any(|a| a.eq_ignore_ascii_case(k)) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("unknown field '{k}' (known: {allowed:?})"),
+            });
+        }
+        if pairs.iter().any(|(p, _)| p.eq_ignore_ascii_case(k)) {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("field '{k}' repeated"),
+            });
+        }
+        pairs.push((k, v));
+    }
+    Ok(pairs)
+}
+
+fn required_pipe<'a>(pairs: &[(&str, &'a str)], line: &str, field: &str) -> crate::Result<&'a str> {
+    pairs
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(field))
+        .map(|(_, v)| *v)
+        .ok_or_else(|| AltiumFormatError::InvalidParamValue {
+            key: line.to_owned(),
+            detail: format!("missing field '{field}'"),
+        })
+}
+
+/// A `0`/`1` flag of a variant section.
+fn variant_flag(map: &IndexMap<String, String>, key: &str) -> crate::Result<Option<bool>> {
+    map.get(key)
+        .map(|v| match v.as_str() {
+            "1" => Ok(true),
+            "0" => Ok(false),
+            other => Err(AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("expected 0 or 1, got '{other}'"),
+            }),
+        })
+        .transpose()
+}
+
+/// A count key of a variant section; it must equal the number of indexed lines.
+fn check_variant_count(
+    map: &IndexMap<String, String>,
+    key: &str,
+    found: usize,
+) -> crate::Result<()> {
+    if let Some(v) = map.get(key) {
+        let n: usize = v
+            .parse()
+            .map_err(|e| AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("'{v}': {e}"),
+            })?;
+        if n != found {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!("count {n} but {found} indexed lines"),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// `[ProjectVariantN]`: `UniqueId`, `Description`, `AllowFabrication`,
+/// `OverwritePcbFootprint`, `VariationCount` + `Variation1..n`
+/// (`Designator|UniqueId|Kind|AlternatePart`), `ParamVariation1..n`
+/// (`Designator|ParameterName|VariantValue`) and `ParameterCount`. No PrjPcb
+/// with variants is in the test corpora, so every other key, a gap in an
+/// indexed list, a count that disagrees, or variant-level parameters
+/// (`ParameterCount > 0`, layout unknown) are errors.
 fn parse_variants(proj: &AltiumProject) -> crate::Result<Vec<ProjectVariant>> {
     proj.variants()
         .iter()
         .enumerate()
         .map(|(i, map)| {
-            let mut variations = Vec::new();
-            let mut param_variations = Vec::new();
-
-            for j in 1.. {
-                let var_key = format!("Variation{j}");
-                if let Some(val) = map.get(&var_key) {
-                    let pairs = parse_pipe_pairs(val);
-                    let kind_int = pipe_get_int(&pairs, "Kind");
+            let section = format!("[ProjectVariant{}]", i + 1);
+            (|| -> crate::Result<ProjectVariant> {
+                let mut variations = Vec::new();
+                while let Some(val) = map.get(&format!("Variation{}", variations.len() + 1)) {
+                    let line = format!("Variation{}", variations.len() + 1);
+                    let pairs = strict_pipe_pairs(
+                        &line,
+                        val,
+                        &["Designator", "UniqueId", "Kind", "AlternatePart"],
+                    )?;
+                    let kind_raw = required_pipe(&pairs, &line, "Kind")?;
+                    let kind_int: i32 =
+                        kind_raw
+                            .parse()
+                            .map_err(|e| AltiumFormatError::InvalidParamValue {
+                                key: line.clone(),
+                                detail: format!("Kind '{kind_raw}': {e}"),
+                            })?;
                     let kind = VariationKind::try_from(kind_int)
                         .map_err(AltiumFormatError::InvalidEnumValue)
-                        .with_context(|| format!("Variant{}: Variation{j}", i + 1))?;
+                        .with_context(|| line.clone())?;
                     variations.push(ComponentVariation {
-                        designator: pipe_get_str(&pairs, "Designator").to_owned(),
-                        unique_id: pipe_get_str(&pairs, "UniqueId").to_owned(),
+                        designator: required_pipe(&pairs, &line, "Designator")?.to_owned(),
+                        unique_id: required_pipe(&pairs, &line, "UniqueId")?.to_owned(),
                         kind,
-                        alternate_part: pipe_get_str(&pairs, "AlternatePart").to_owned(),
+                        alternate_part: required_pipe(&pairs, &line, "AlternatePart")?.to_owned(),
                     });
-                } else {
-                    break;
                 }
-            }
-
-            for j in 1.. {
-                let pvar_key = format!("ParamVariation{j}");
-                if let Some(val) = map.get(&pvar_key) {
-                    let pairs = parse_pipe_pairs(val);
+                let mut param_variations = Vec::new();
+                while let Some(val) =
+                    map.get(&format!("ParamVariation{}", param_variations.len() + 1))
+                {
+                    let line = format!("ParamVariation{}", param_variations.len() + 1);
+                    let pairs = strict_pipe_pairs(
+                        &line,
+                        val,
+                        &["Designator", "ParameterName", "VariantValue"],
+                    )?;
                     param_variations.push(ParameterVariation {
-                        designator: pipe_get_str(&pairs, "Designator").to_owned(),
-                        parameter_name: pipe_get_str(&pairs, "ParameterName").to_owned(),
-                        variant_value: pipe_get_str(&pairs, "VariantValue").to_owned(),
+                        designator: required_pipe(&pairs, &line, "Designator")?.to_owned(),
+                        parameter_name: required_pipe(&pairs, &line, "ParameterName")?.to_owned(),
+                        variant_value: required_pipe(&pairs, &line, "VariantValue")?.to_owned(),
                     });
-                } else {
-                    break;
                 }
-            }
-
-            Ok(ProjectVariant {
-                unique_id: get_str(map, "UniqueId").to_owned(),
-                description: get_str(map, "Description").to_owned(),
-                overwrite_pcb_footprint: get_bool(map, "OverwritePcbFootprint"),
-                variations,
-                param_variations,
-            })
+                check_variant_count(map, "VariationCount", variations.len())?;
+                check_variant_count(map, "ParameterCount", 0).context(
+                    "variant-level parameters are not supported (their layout is unverified)",
+                )?;
+                let indexed = |k: &str, prefix: &str| {
+                    k.strip_prefix(prefix)
+                        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                };
+                for key in map.keys() {
+                    let known = matches!(
+                        key.as_str(),
+                        "UniqueId"
+                            | "Description"
+                            | "AllowFabrication"
+                            | "OverwritePcbFootprint"
+                            | "VariationCount"
+                            | "ParameterCount"
+                    ) || (indexed(key, "Variation")
+                        && key[9..]
+                            .parse::<usize>()
+                            .is_ok_and(|n| n >= 1 && n <= variations.len()))
+                        || (indexed(key, "ParamVariation")
+                            && key[14..]
+                                .parse::<usize>()
+                                .is_ok_and(|n| n >= 1 && n <= param_variations.len()));
+                    if !known {
+                        return Err(AltiumFormatError::InvalidParamValue {
+                            key: key.clone(),
+                            detail: "unknown key, or an indexed line after a gap".to_owned(),
+                        });
+                    }
+                }
+                Ok(ProjectVariant {
+                    unique_id: get_str(map, "UniqueId").to_owned(),
+                    description: get_str(map, "Description").to_owned(),
+                    allow_fabrication: variant_flag(map, "AllowFabrication")?,
+                    overwrite_pcb_footprint: variant_flag(map, "OverwritePcbFootprint")?,
+                    variations,
+                    param_variations,
+                })
+            })()
+            .with_context(|| section.clone())
         })
         .collect()
 }

@@ -106,7 +106,7 @@ All design properties are optional scalars on `ProjectSpec`. A value of `None`
 | Property | Type | Maps to | Accepted values |
 | --- | --- | --- | --- |
 | `hierarchy_mode` | enum | `FlattenMode` | `smart`, `flat`, `hierarchical_global_ports`, `global`, `hierarchical_strict` |
-| `channel_room_naming_style` | enum | `ChannelRoomNamingStyle` | `flat_numeric_with_names`, `flat_numeric`, `fully_qualified`, `fully_qualified_short`, `mixed_name_path` |
+| `channel_room_naming_style` | enum | `ChannelRoomNamingStyle` | `flat_numeric_with_names`, `flat_alpha_with_names`, `numeric_name_path`, `alpha_name_path`, `mixed_name_path` |
 | `channel_designator_format` | string | `channel_designator_format` | any string |
 | `channel_room_level_separator` | string | `channel_room_level_separator` | any string |
 | `allow_port_net_names` | bool | `allow_port_net_names` | `true` / `false` |

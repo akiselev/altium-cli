@@ -497,7 +497,19 @@ impl FromParamValue for SignalValue {
                 detail: format!("non-finite value '{value}'"),
             });
         }
-        Ok(SignalValue(v))
+        let value_out = SignalValue(v);
+        // Only the stored form the writer reproduces is accepted, so a save
+        // can never round a value (e.g. 1.0E-9 or 51.125) silently.
+        if value_out.to_param_value() != value {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: key.to_owned(),
+                detail: format!(
+                    "'{value}' is not in the 4-significant-digit form Altium stores \
+                     (' 51.00', '-1.000')"
+                ),
+            });
+        }
+        Ok(value_out)
     }
 }
 
@@ -864,6 +876,12 @@ mod tests {
         }
         assert!(SignalValue::from_param_value("MAXIMUM", "abc").is_err());
         assert!(SignalValue::from_param_value("MAXIMUM", "inf").is_err());
+        for lossy in ["1.0E-9", " 51.125", "51.00", " 51.0"] {
+            assert!(
+                SignalValue::from_param_value("MAXIMUM", lossy).is_err(),
+                "{lossy}"
+            );
+        }
     }
 
     #[test]

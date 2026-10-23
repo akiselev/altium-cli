@@ -680,6 +680,9 @@ fn convert_components(doc: &PcbDoc, ctx: &ConvertContext) -> Result<Vec<PcbDocCo
         let comment_visible: bool = params
             .remove_required("COMMENTON")
             .context("Components6 COMMENTON")?;
+        let channel_offset: Option<u32> = params
+            .remove_optional("CHANNELOFFSET")
+            .context("Components6 CHANNELOFFSET")?;
 
         let id = designator.clone();
         components.push(PcbDocComponent {
@@ -699,6 +702,7 @@ fn convert_components(doc: &PcbDoc, ctx: &ConvertContext) -> Result<Vec<PcbDocCo
             primitive_lock,
             designator_visible,
             comment_visible,
+            channel_offset,
             source_designator,
             kind,
             parameters: Vec::new(),
@@ -1014,6 +1018,13 @@ pub(crate) fn remove_param_contour(params: &mut ParameterCollection) -> Result<P
     Ok(PcbContour { segments })
 }
 
+/// True for a Classes6 member key (`M0`, `M17`, …).
+pub(crate) fn is_class_member_key(key: &str) -> bool {
+    key.len() > 1
+        && key.as_bytes()[0].eq_ignore_ascii_case(&b'M')
+        && key[1..].bytes().all(|b| b.is_ascii_digit())
+}
+
 fn convert_classes(doc: &PcbDoc) -> Result<Vec<NetClass>> {
     let records = match find_param_section(doc, ParamSectionKind::Classes6) {
         Some(r) => r,
@@ -1021,36 +1032,43 @@ fn convert_classes(doc: &PcbDoc) -> Result<Vec<NetClass>> {
     };
 
     let mut classes = Vec::with_capacity(records.len());
-    for rec in records {
-        let mut params = rec.params.clone();
-        let name: String = params
-            .remove_with_default("NAME", String::new())
-            .context("Classes6 name")?;
-        let kind_raw: u8 = params
-            .remove_with_default("KIND", 0u8)
-            .context("Classes6 kind")?;
-        let kind = ClassMemberKind::try_from(kind_raw).unwrap_or(ClassMemberKind::Net);
+    for (index, rec) in records.iter().enumerate() {
+        let class = (|| -> Result<NetClass> {
+            let mut params = rec.params.clone();
+            // Members outside Windows-1252 are stored in UNICODE__Mn sidecars.
+            params.apply_unicode_sidecars()?;
+            let name: String = params.remove_required("NAME")?;
+            let kind_raw: u8 = params.remove_required("KIND")?;
+            let kind = ClassMemberKind::try_from(kind_raw).map_err(|e| {
+                AltiumFormatError::InvalidParamValue {
+                    key: "KIND".to_owned(),
+                    detail: e.to_string(),
+                }
+            })?;
+            let super_class: bool = params.remove_required("SUPERCLASS")?;
 
-        // Members are stored as M0, M1, M2, ... keys.
-        let mut members = Vec::new();
-        let mut i = 0;
-        loop {
-            let key = format!("M{i}");
-            let member: Option<String> = params.remove_optional(&key).unwrap_or(None);
-            match member {
-                Some(m) => members.push(m),
-                None => break,
+            // Members are stored as M0, M1, M2, ... keys, without gaps.
+            let mut members = Vec::new();
+            while let Some(m) = params.remove_optional::<String>(&format!("M{}", members.len()))? {
+                members.push(m);
             }
-            i += 1;
-        }
+            if let Some((stray, _)) = params.iter().find(|(k, _)| is_class_member_key(k)) {
+                return Err(AltiumFormatError::InvalidParamValue {
+                    key: stray.to_owned(),
+                    detail: format!("member key after a gap (members M0..M{})", members.len()),
+                });
+            }
 
-        let id = name.clone();
-        classes.push(NetClass {
-            id,
-            name,
-            kind,
-            members,
-        });
+            Ok(NetClass {
+                id: name.clone(),
+                name,
+                kind,
+                super_class,
+                members,
+            })
+        })()
+        .with_context(|| format!("Classes6 record #{index}"))?;
+        classes.push(class);
     }
     Ok(classes)
 }
@@ -1065,14 +1083,15 @@ fn convert_differential_pairs(doc: &PcbDoc) -> Result<Vec<DifferentialPair>> {
     for rec in records {
         let mut params = rec.params.clone();
         let name: String = params
-            .remove_with_default("NAME", String::new())
+            .remove_required("NAME")
             .context("DifferentialPairs6 name")?;
+        // The corpus (988 records) stores POSITIVENETNAME / NEGATIVENETNAME.
         let positive_net: String = params
-            .remove_with_default("POSITIVENET", String::new())
-            .context("DifferentialPairs6 positive net")?;
+            .remove_required("POSITIVENETNAME")
+            .with_context(|| format!("DifferentialPairs6 '{name}' positive net"))?;
         let negative_net: String = params
-            .remove_with_default("NEGATIVENET", String::new())
-            .context("DifferentialPairs6 negative net")?;
+            .remove_required("NEGATIVENETNAME")
+            .with_context(|| format!("DifferentialPairs6 '{name}' negative net"))?;
 
         let id = name.clone();
         pairs.push(DifferentialPair {
@@ -1094,33 +1113,39 @@ fn convert_dimensions(doc: &PcbDoc) -> Result<Vec<Dimension>> {
     let mut dims = Vec::with_capacity(records.len());
     for (idx, rec) in records.iter().enumerate() {
         let mut params = rec.params.clone();
+        // All 92 corpus dimension records store these keys, the lengths as
+        // "<decimal>mil" (they were read as bare integers, which failed on every
+        // board with a dimension).
         let kind_raw: u8 = params
-            .remove_with_default("DIMENSIONKIND", 0u8)
-            .context("Dimensions6 kind")?;
-        let kind = DimensionKind::try_from(kind_raw).unwrap_or(DimensionKind::NoDimension);
+            .remove_required("DIMENSIONKIND")
+            .with_context(|| format!("Dimensions6 #{idx} kind"))?;
+        let kind = DimensionKind::try_from(kind_raw)
+            .map_err(|e| AltiumFormatError::InvalidParamValue {
+                key: "DIMENSIONKIND".to_owned(),
+                detail: e.to_string(),
+            })
+            .with_context(|| format!("Dimensions6 #{idx} kind"))?;
         let layer =
             parse_layer_param(&mut params, V6Layer::NoLayer).context("Dimensions6 layer")?;
-        let text_x: i32 = params
-            .remove_with_default("TEXTX", 0)
-            .context("Dimensions6 text_x")?;
-        let text_y: i32 = params
-            .remove_with_default("TEXTY", 0)
-            .context("Dimensions6 text_y")?;
-        let text_height: i32 = params
-            .remove_with_default("TEXTHEIGHT", 100_000)
-            .context("Dimensions6 text_height")?;
-        let text_width: i32 = params
-            .remove_with_default("TEXTWIDTH", 0)
-            .context("Dimensions6 text_width")?;
+        let mils = |params: &mut ParameterCollection, key: &str| -> Result<Coord> {
+            params
+                .remove_required::<ExactMilCoord>(key)
+                .map(|v| v.0)
+                .with_context(|| format!("Dimensions6 #{idx} {key}"))
+        };
+        let text_x = mils(&mut params, "TEXTX")?;
+        let text_y = mils(&mut params, "TEXTY")?;
+        let text_height = mils(&mut params, "TEXTHEIGHT")?;
+        let text_width = mils(&mut params, "TEXTWIDTH")?;
 
         dims.push(Dimension {
             id: format!("dimension_{idx}"),
             kind,
             layer,
-            text_x: Coord::from_internal(text_x),
-            text_y: Coord::from_internal(text_y),
-            text_height: Coord::from_internal(text_height),
-            text_width: Coord::from_internal(text_width),
+            text_x,
+            text_y,
+            text_height,
+            text_width,
         });
     }
     Ok(dims)
@@ -1313,16 +1338,10 @@ fn rule_params_from_internal(rule: &PcbRule) -> Result<RuleParams> {
             phase_tolerance: opt(&d.phase_tolerance),
             phase_delay_tolerance: d.phase_delay_tolerance,
             phase_distance: opt(&d.phase_distance),
-            amplitude: opt(&d.amplitude),
-            serpentine_gap: opt(&d.gap),
-            style: d.style,
         },
         PcbRuleKindData::ParallelSegment(d) => RuleParams::ParallelSegment {
             gap: d.gap.0,
             limit: d.limit.0,
-            parallel_length: opt(&d.parallel_length),
-            check_parallel: d.check_parallel,
-            check_adjacent_layers: d.check_adjacent_layers,
         },
         PcbRuleKindData::DaisyChainStubLength(d) => {
             RuleParams::DaisyChainStubLength { limit: d.limit.0 }
@@ -1469,7 +1488,6 @@ fn rule_params_from_internal(rule: &PcbRule) -> Result<RuleParams> {
             max_gap: d.max_limit.0,
             preferred_gap: d.most_freq_gap.0,
             max_uncoupled_length: d.max_uncoupled_length.0,
-            most_frequent_width: opt(&d.most_freq_width),
             filter_layer_stack_id: d.filter_layer_stack_id.clone(),
             per_layer: d
                 .per_layer
@@ -1487,7 +1505,7 @@ fn rule_params_from_internal(rule: &PcbRule) -> Result<RuleParams> {
                 })
                 .collect::<Result<_>>()?,
             impedance: RuleImpedance {
-                impedance_driven: d.impedance_driven,
+                impedance_driven: None,
                 min: d.min_imp,
                 max: d.max_imp,
                 favored: d.fav_imp,

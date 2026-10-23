@@ -67,9 +67,9 @@ use altium_format_types::{
         },
         record_structure::{
             ASSIGNED_INTERFACE, ASSIGNED_INTERFACE_SIGNAL, COLLAPSED, DISTANCE_FROM_TOP,
-            INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX, OWNER_INDEX_ADDITIONAL_LIST,
-            OWNER_PART_DISPLAY_MODE, OWNER_PART_ID, PARAM_TYPE, RECORD, RECORD_EX,
-            SELECTION_MEMORY, UNION_INDEX, UNIQUE_ID, URL,
+            IGNORE_ON_LOAD, INDEX_IN_SHEET, IS_IMAGE_PARAMETER, OWNER_INDEX,
+            OWNER_INDEX_ADDITIONAL_LIST, OWNER_PART_DISPLAY_MODE, OWNER_PART_ID, PARAM_TYPE,
+            RECORD, RECORD_EX, SELECTION_MEMORY, UNION_INDEX, UNIQUE_ID, URL,
         },
         sheet::{
             AREA_COLOR, AUTHOR, BORDER_ON, CUSTOM_MARGIN_WIDTH, CUSTOM_X, CUSTOM_X_FRAC,
@@ -191,6 +191,11 @@ pub(crate) struct SchPrimitiveBase {
     pub union_index: i32,
     #[param(key = STYLE_ID, default = 0i32)]
     pub style_id: i32,
+    /// `IgnoreOnLoad`: AD 26 skips the object when loading (AD 26 constants:
+    /// "only written when true"; 221 corpus records, mostly polygons). Kept here
+    /// as typed data so the record is neither lost nor silently dropped.
+    #[param(key = IGNORE_ON_LOAD, default = false)]
+    pub ignore_on_load: bool,
 }
 
 /// Extends `SchPrimitiveBase` with location and color fields for graphical objects.

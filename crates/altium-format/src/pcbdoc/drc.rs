@@ -7,8 +7,8 @@
 use altium_format_derive::{FromParams, ToParams};
 use altium_format_types::{
     BgaFanoutDirection, BgaFanoutViaMode, ComponentOrientationFlags, ConnectStyleTarget,
-    CornerStyle, FanoutDirection, FanoutStyle, LengthenerStyle, NetScope, NetTopology,
-    PlaneConnectionStyle, PolygonReliefAngle, RouteVia, RuleKind, RuleLayerKind,
+    CornerStyle, FanoutDirection, FanoutStyle, NetScope, NetTopology, PlaneConnectionStyle,
+    PolygonReliefAngle, RouteVia, RuleKind, RuleLayerKind,
 };
 
 use crate::api::pcb_common::PcbContour;
@@ -246,12 +246,6 @@ pub(crate) struct ParallelSegmentRuleData {
     pub gap: MilCoord,
     #[param(key = "LIMIT")]
     pub limit: MilCoord,
-    #[param(key = "PARALLELLENGTH", optional)]
-    pub parallel_length: Option<MilCoord>,
-    #[param(key = "CHECKPARALLEL", optional)]
-    pub check_parallel: Option<bool>,
-    #[param(key = "CHECKADJACENTLAYERS", optional)]
-    pub check_adjacent_layers: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -484,16 +478,6 @@ pub(crate) struct MatchedLengthsRuleData {
     pub phase_delay_tolerance: Option<f64>,
     #[param(key = "PHASEDISTANCE", optional)]
     pub phase_distance: Option<MilCoord>,
-    /// Serpentine amplitude. From `IPCB_MatchedNetLengthsConstraint.GetState_Amplitude`.
-    #[param(key = "AMPLITUDE", optional)]
-    pub amplitude: Option<MilCoord>,
-    /// Serpentine gap. From `IPCB_MatchedNetLengthsConstraint.GetState_Gap`.
-    #[param(key = "GAP", optional)]
-    pub gap: Option<MilCoord>,
-    /// Serpentine style. From `IPCB_MatchedNetLengthsConstraint.GetState_Style`.
-    /// String values from `xPCBTypes.Consts.cLengthenerStyleStrings`.
-    #[param(key = "STYLE", optional)]
-    pub style: Option<LengthenerStyle>,
 }
 
 #[derive(FromParams, ToParams, Debug)]
@@ -801,7 +785,8 @@ pub(crate) struct ViasUnderSmdRuleData {
 #[derive(FromParams, ToParams, Debug)]
 #[param(tier2)]
 pub(crate) struct MaximumViaCountRuleData {
-    #[param(key = "MAXVIACOUNT")]
+    /// `Limit` (AD 26 `TMaximumViaCountRule`, rule-params.tsv ord 18; not in the corpus).
+    #[param(key = "LIMIT")]
     pub max_via_count: u32,
 }
 
@@ -1259,9 +1244,6 @@ pub(crate) struct DiffPairsRoutingRuleData {
     pub impedance_profile_id: Option<String>,
     pub impedance_profile_value: Option<f64>,
     pub substack_overrides: Vec<DiffPairsSubstackOverride>,
-    /// Whether the rule is impedance-driven (not profile-driven).
-    /// From `IPCB_DifferentialPairsRoutingRule3.GetState_ImpedanceDriven`.
-    pub impedance_driven: Option<bool>,
     /// Minimum impedance in ohms.
     /// From `IPCB_DifferentialPairsRoutingRule3.GetState_MinImpedance`.
     pub min_imp: Option<f64>,
@@ -1271,9 +1253,6 @@ pub(crate) struct DiffPairsRoutingRuleData {
     /// Preferred/favored impedance in ohms.
     /// From `IPCB_DifferentialPairsRoutingRule3.GetState_FavoredImpedance`.
     pub fav_imp: Option<f64>,
-    /// Most frequent width across all layers.
-    /// From `IPCB_DifferentialPairsRoutingRule3.GetState_MostFrequentWidth`.
-    pub most_freq_width: Option<MilCoord>,
     /// Layer-stack filter GUID.
     /// From `IPCB_DifferentialPairsRoutingRule3.GetState_FilterLayerStackID`.
     pub filter_layer_stack_id: Option<String>,
@@ -1356,11 +1335,9 @@ impl DiffPairsRoutingRuleData {
 
         // Impedance-driven fields (non-profile).
         // From IPCB_DifferentialPairsRoutingRule3: GetState_ImpedanceDriven/Min/Max/Favored.
-        let impedance_driven: Option<bool> = params.remove_optional("IMPEDANCEDRIVEN")?;
         let min_imp: Option<f64> = params.remove_optional("MINIMP")?;
         let max_imp: Option<f64> = params.remove_optional("MAXIMP")?;
         let fav_imp: Option<f64> = params.remove_optional("FAVIMP")?;
-        let most_freq_width: Option<MilCoord> = params.remove_optional("MOSTFREQWIDTH")?;
         let filter_layer_stack_id: Option<String> = params.remove_optional("FILTERLAYERSTACKID")?;
 
         // Per-substack overrides for diff-pairs routing.
@@ -1424,11 +1401,9 @@ impl DiffPairsRoutingRuleData {
             impedance_profile_id,
             impedance_profile_value,
             substack_overrides,
-            impedance_driven,
             min_imp,
             max_imp,
             fav_imp,
-            most_freq_width,
             filter_layer_stack_id,
         })
     }
@@ -1472,9 +1447,6 @@ impl DiffPairsRoutingRuleData {
         if let Some(v) = self.impedance_profile_value {
             params.insert("IMPEDANCEPROFILEVALUE", v.to_param_value());
         }
-        if let Some(v) = self.impedance_driven {
-            params.insert("IMPEDANCEDRIVEN", v.to_param_value());
-        }
         if let Some(v) = self.min_imp {
             params.insert("MINIMP", v.to_param_value());
         }
@@ -1483,9 +1455,6 @@ impl DiffPairsRoutingRuleData {
         }
         if let Some(v) = self.fav_imp {
             params.insert("FAVIMP", v.to_param_value());
-        }
-        if let Some(v) = &self.most_freq_width {
-            params.insert("MOSTFREQWIDTH", v.to_param_value());
         }
         if let Some(v) = &self.filter_layer_stack_id {
             params.insert("FILTERLAYERSTACKID", v.to_param_value());
@@ -1915,6 +1884,7 @@ pub(crate) fn parse_rule(prefix: u16, params: &mut ParameterCollection) -> Resul
         }
     };
     params.assert_exhausted()?;
+    check_kind_keys(&kind_data)?;
     Ok(PcbRule {
         prefix,
         base,
@@ -2522,6 +2492,84 @@ pub(crate) struct DrcOptions {
     pub report_holes_in_voids: bool,
 }
 
+/// Key rules the shared per-kind structs cannot express on their own.
+fn check_kind_keys(kind_data: &PcbRuleKindData) -> Result<()> {
+    let err = |key: &str, detail: &str| {
+        Err(AltiumFormatError::InvalidParamValue {
+            key: key.to_owned(),
+            detail: detail.to_owned(),
+        })
+    };
+    match kind_data {
+        // Fabrication test points store SIDE (94/94 corpus rules); AD 26's
+        // TAssyTestPointStyleRule reads neither SIDE nor BoardEdgeClearance.
+        PcbRuleKindData::FabricationTestpointStyle(d) if d.side.is_none() => {
+            err("SIDE", "missing on a FabricationTestpoint rule")
+        }
+        PcbRuleKindData::AssyTestPointStyle(d)
+            if d.side.is_some() || d.board_edge_clearance.is_some() =>
+        {
+            err(
+                "SIDE",
+                "SIDE / BOARDEDGECLEARANCE on an AssemblyTestpoint rule",
+            )
+        }
+        // Fabrication usage rules store both keys (94/94); assembly rules mostly omit them.
+        PcbRuleKindData::FabricationTestpointUsage(d)
+            if d.valid.is_none() || d.allow_multiple.is_none() =>
+        {
+            err(
+                "VALID",
+                "VALID and ALLOWMULTIPLE required on FabricationTestPointUsage",
+            )
+        }
+        // Top-level settings are all five keys or none, and then per-object
+        // settings are required (the corpus never mixes the two forms).
+        PcbRuleKindData::PowerPlaneConnectStyle(d) => {
+            let n = [
+                d.connect_style.is_some(),
+                d.relief_expansion.is_some(),
+                d.relief_entries.is_some(),
+                d.relief_conductor_width.is_some(),
+                d.relief_air_gap.is_some(),
+            ]
+            .iter()
+            .filter(|b| **b)
+            .count();
+            match (n, d.type_overrides.is_empty()) {
+                (5, true) | (0, false) => Ok(()),
+                _ => err(
+                    "PLANECONNECTSTYLE",
+                    "PlaneConnect needs all five top-level keys or per-object settings only",
+                ),
+            }
+        }
+        PcbRuleKindData::PolygonConnectStyle(d) => {
+            let n = [
+                d.connect_style.is_some(),
+                d.relief_conductor_width.is_some(),
+                d.relief_entries.is_some(),
+                d.polygon_relief_angle.is_some(),
+                d.air_gap_width.is_some(),
+            ]
+            .iter()
+            .filter(|b| **b)
+            .count();
+            let extra = d.conductor_by_pad_edge.is_some()
+                || d.enable_min_distance.is_some()
+                || d.min_distance.is_some();
+            match (n, d.pad_type_overrides.is_empty()) {
+                (5, true) | (0, false) if !(n == 0 && extra) => Ok(()),
+                _ => err(
+                    "CONNECTSTYLE",
+                    "PolygonConnect needs all five top-level keys or per-object settings only",
+                ),
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
 // ── Serialization dispatch ──────────────────────────────────────────────────
 
 /// Serialize a `PcbRule` back to a `PrefixedParamRecord`.
@@ -2870,11 +2918,9 @@ mod tests {
 
     #[test]
     fn room_definition_rejects_partial_vertex_and_missing_keys() {
-        let partial = format!(
-            "RoomDefinition|KIND0=0|VX0=0mil|VY0=0mil\
-             |CONFINEMENTSTYLE=ConfineIn|FORMATCOPY=TRUE|LOCKCOMPONENTS=FALSE"
-        );
-        assert!(rule_of(&partial).is_err());
+        let partial = "RoomDefinition|KIND0=0|VX0=0mil|VY0=0mil\
+             |CONFINEMENTSTYLE=ConfineIn|FORMATCOPY=TRUE|LOCKCOMPONENTS=FALSE";
+        assert!(rule_of(partial).is_err());
         let no_lock = format!(
             "RoomDefinition{}|CONFINEMENTSTYLE=ConfineIn|FORMATCOPY=TRUE",
             vertex(0, 0, "0mil", "0mil", LINE_ARC)
@@ -2938,6 +2984,42 @@ mod tests {
         assert!(d.connect_style.is_none());
         assert_eq!(d.type_overrides[0].prefix, ConnectStyleTarget::Pad);
         assert!(rule_of("PlaneConnect|PAD.PLANECONNECTSTYLE=Relief").is_err());
+        // Mixed or partial top-level forms are refused.
+        assert!(rule_of(&format!("{full}|RELIEFENTRIES=4")).is_err());
+        assert!(rule_of("PlaneConnect|RELIEFENTRIES=4").is_err());
+        assert!(rule_of("PlaneConnect").is_err());
+    }
+
+    #[test]
+    fn maximum_via_count_reads_limit() {
+        let rule = rule_of("MaximumViaCount|LIMIT=12").unwrap();
+        let PcbRuleKindData::MaximumViaCount(d) = &rule.kind_data else {
+            panic!()
+        };
+        assert_eq!(d.max_via_count, 12);
+        assert!(rule_of("MaximumViaCount|MAXVIACOUNT=12").is_err());
+    }
+
+    #[test]
+    fn testpoint_keys_per_kind() {
+        let style = "TESTPOINTUNDERCOMPONENT=TRUE|MINSIZE=40mil|MAXSIZE=100mil|PREFEREDSIZE=60mil\
+            |MINHOLESIZE=0mil|MAXHOLESIZE=40mil|PREFEREDHOLESIZE=32mil|TESTPOINTGRID=1mil\
+            |USEGRID=TRUE|GRIDTOLERANCE=0.01mil|ALLOWSIDETOP=TRUE|ALLOWSIDEBOTTOM=TRUE";
+        assert!(rule_of(&format!("FabricationTestpoint|{style}|SIDE=3")).is_ok());
+        assert!(rule_of(&format!("FabricationTestpoint|{style}")).is_err());
+        assert!(rule_of(&format!("AssemblyTestpoint|{style}")).is_ok());
+        assert!(rule_of(&format!("AssemblyTestpoint|{style}|SIDE=3")).is_err());
+        assert!(rule_of("FabricationTestPointUsage|VALID=0|ALLOWMULTIPLE=FALSE").is_ok());
+        assert!(rule_of("FabricationTestPointUsage|VALID=0").is_err());
+        assert!(rule_of("AssemblyTestPointUsage").is_ok());
+    }
+
+    #[test]
+    fn signal_value_rule_round_trips() {
+        let rule = rule_of("SupplyNets|VOLTAGE= 5.000").unwrap();
+        let rec = serialize_rule(&rule).unwrap();
+        assert_eq!(rec.params.get("VOLTAGE"), Some(" 5.000"));
+        assert!(rule_of("SupplyNets|VOLTAGE=5.0001").is_err());
     }
 
     // ── MilCoord roundtrip ──────────────────────────────────────────────────

@@ -20,6 +20,26 @@ pub(crate) struct ParsedFileHeader {
 
 pub(crate) fn parse_fileheader_stream(data: &[u8]) -> Result<ParsedFileHeader> {
     let blocks = parse_blocks(data).context("parsing /FileHeader block stream")?;
+    let mut texts = Vec::with_capacity(blocks.len());
+    for (block_idx, block) in blocks.iter().enumerate() {
+        if block.format != BlockFormat::Text {
+            return Err(AltiumFormatError::InvalidParamValue {
+                key: "FileHeader".to_owned(),
+                detail: format!("block #{block_idx} must be text, found binary"),
+            });
+        }
+        texts.push(block.data.as_slice());
+    }
+    parse_header_and_records(&texts, SCH_SHEET_BINARY_HEADER_V50)
+}
+
+/// The header record and the content records of a sheet, one parameter text
+/// per entry: the `/FileHeader` blocks of a binary SchDoc, or the lines of an
+/// ASCII SchDoc's first section. `expected_header` is the HEADER value.
+pub(crate) fn parse_header_and_records(
+    blocks: &[&[u8]],
+    expected_header: &str,
+) -> Result<ParsedFileHeader> {
     if blocks.is_empty() {
         return Err(AltiumFormatError::InvalidParamValue {
             key: "FileHeader".to_owned(),
@@ -27,27 +47,16 @@ pub(crate) fn parse_fileheader_stream(data: &[u8]) -> Result<ParsedFileHeader> {
         });
     }
 
-    let mut header_params = match blocks[0].format {
-        BlockFormat::Text => ParameterCollection::from_bytes(&blocks[0].data)
-            .context("parsing /FileHeader block #0")?,
-        BlockFormat::Binary => {
-            return Err(AltiumFormatError::InvalidParamValue {
-                key: "FileHeader".to_owned(),
-                detail: "block #0 must be text".to_owned(),
-            });
-        }
-    };
+    let mut header_params =
+        ParameterCollection::from_bytes(blocks[0]).context("parsing /FileHeader block #0")?;
 
     let header: String = header_params
         .remove_required(HEADER)
         .context("reading /FileHeader HEADER")?;
-    if header != SCH_SHEET_BINARY_HEADER_V50 {
+    if header != expected_header {
         return Err(AltiumFormatError::InvalidParamValue {
             key: HEADER.to_owned(),
-            detail: format!(
-                "expected {:?}, got {:?}",
-                SCH_SHEET_BINARY_HEADER_V50, header
-            ),
+            detail: format!("expected {expected_header:?}, got {header:?}"),
         });
     }
 
@@ -92,14 +101,7 @@ pub(crate) fn parse_fileheader_stream(data: &[u8]) -> Result<ParsedFileHeader> {
     }
 
     for (block_idx, block) in blocks.iter().enumerate().skip(1) {
-        if block.format != BlockFormat::Text {
-            return Err(AltiumFormatError::InvalidParamValue {
-                key: "FileHeader".to_owned(),
-                detail: format!("block #{block_idx} must be text, found binary"),
-            });
-        }
-
-        let mut params = ParameterCollection::from_bytes(&block.data)
+        let mut params = ParameterCollection::from_bytes(block)
             .with_context(|| format!("parsing /FileHeader block #{block_idx}"))?;
         let record_raw: i32 = params
             .remove_required(RECORD)

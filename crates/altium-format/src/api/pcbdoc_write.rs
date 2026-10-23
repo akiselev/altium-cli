@@ -442,16 +442,13 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
         build_polygon_records(&board.polygons, &ctx)?,
     );
     let enriched_classes = ensure_standard_classes(board);
+    merge_class_section(doc, &enriched_classes).context("writing Classes6")?;
+    // Pairs keep their stored keys (UNIQUEID, GATHERCONTROL, …), matched by name.
     merge_param_section(
-        doc,
-        ParamSectionKind::Classes6,
-        build_class_records(&enriched_classes),
-        "NAME",
-    );
-    replace_param_section(
         doc,
         ParamSectionKind::DifferentialPairs6,
         build_diff_pair_records(&board.differential_pairs),
+        "NAME",
     );
     write_board_settings(doc, &board.settings)?;
     replace_board_outline(doc, board.settings.outline.as_ref())?;
@@ -736,7 +733,9 @@ fn build_component_records(components: &[PcbDocComponent]) -> Result<Vec<Standar
             params.insert("HEIGHT", "0mil".to_string());
             params.insert("COMMENTAUTOPOSITION", "0".to_string());
             params.insert("UNIONINDEX", "0".to_string());
-            params.insert("CHANNELOFFSET", "0".to_string());
+            if let Some(offset) = comp.channel_offset {
+                params.insert("CHANNELOFFSET", offset.to_param_value());
+            }
             if let Some(source) = &comp.source_designator {
                 params.insert("SOURCEDESIGNATOR", source.clone());
             }
@@ -998,6 +997,7 @@ fn ensure_standard_classes(board: &PcbDocBoard) -> Vec<NetClass> {
             id: "all-components".to_string(),
             name: "All Components".to_string(),
             kind: ClassMemberKind::Component,
+            super_class: true,
             members,
         });
     }
@@ -1008,6 +1008,7 @@ fn ensure_standard_classes(board: &PcbDocBoard) -> Vec<NetClass> {
             id: "all-nets".to_string(),
             name: "All Nets".to_string(),
             kind: ClassMemberKind::Net,
+            super_class: true,
             members,
         });
     }
@@ -1015,19 +1016,59 @@ fn ensure_standard_classes(board: &PcbDocBoard) -> Vec<NetClass> {
     classes
 }
 
-fn build_class_records(classes: &[NetClass]) -> Vec<StandardParamRecord> {
-    classes
+/// Write Classes6. A class keeps its stored record (matched by name and kind,
+/// each stored record used once; names repeat across kinds on five corpus
+/// boards) except for its members, whose `Mn` keys and Unicode sidecars are
+/// rewritten from the API (stale keys of removed members are dropped).
+fn merge_class_section(doc: &mut PcbDoc, classes: &[NetClass]) -> Result<()> {
+    let old = take_param_records(doc, ParamSectionKind::Classes6);
+    let mut used = vec![false; old.len()];
+    let records = classes
         .iter()
         .map(|cls| {
-            let mut params = ParameterCollection::new();
-            params.insert("NAME", cls.name.clone());
-            params.insert("KIND", (cls.kind as u8).to_param_value());
+            let kind = (cls.kind as u8).to_param_value();
+            let matched = old.iter().enumerate().position(|(i, r)| {
+                !used[i]
+                    && r.params.get("NAME") == Some(cls.name.as_str())
+                    && r.params.get("KIND") == Some(kind.as_str())
+            });
+            let mut params = match matched {
+                Some(i) => {
+                    used[i] = true;
+                    let mut p = old[i].params.clone();
+                    let stale: Vec<String> = p
+                        .iter()
+                        .filter(|(k, _)| {
+                            crate::api::pcbdoc_read::is_class_member_key(k)
+                                || k.eq_ignore_ascii_case("UNICODE")
+                                || k.to_ascii_uppercase().starts_with("UNICODE__")
+                        })
+                        .map(|(k, _)| k.to_owned())
+                        .collect();
+                    for k in stale {
+                        p.remove_required::<String>(&k)?;
+                    }
+                    p
+                }
+                None => ParameterCollection::new(),
+            };
+            for (k, v) in [
+                ("NAME", cls.name.clone()),
+                ("KIND", kind.clone()),
+                ("SUPERCLASS", cls.super_class.to_param_value()),
+            ] {
+                if !params.replace_in_place(k, v.clone()) {
+                    params.insert(k, v);
+                }
+            }
             for (i, member) in cls.members.iter().enumerate() {
                 params.insert(&format!("M{i}"), member.clone());
             }
-            StandardParamRecord { params }
+            Ok(StandardParamRecord { params })
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    replace_param_section(doc, ParamSectionKind::Classes6, records);
+    Ok(())
 }
 
 fn build_diff_pair_records(pairs: &[DifferentialPair]) -> Vec<StandardParamRecord> {
@@ -1036,8 +1077,8 @@ fn build_diff_pair_records(pairs: &[DifferentialPair]) -> Vec<StandardParamRecor
         .map(|dp| {
             let mut params = ParameterCollection::new();
             params.insert("NAME", dp.name.clone());
-            params.insert("POSITIVENET", dp.positive_net.clone());
-            params.insert("NEGATIVENET", dp.negative_net.clone());
+            params.insert("POSITIVENETNAME", dp.positive_net.clone());
+            params.insert("NEGATIVENETNAME", dp.negative_net.clone());
             StandardParamRecord { params }
         })
         .collect()
@@ -2424,7 +2465,6 @@ pub(crate) const COMPONENT_DEFAULT_ONLY_KEYS: &[&str] = &[
     "HEIGHT",
     "COMMENTAUTOPOSITION",
     "UNIONINDEX",
-    "CHANNELOFFSET",
     "SOURCEFOOTPRINTLIBRARY",
     "SOURCEDESCRIPTION",
     "FOOTPRINTDESCRIPTION",
@@ -2827,6 +2867,7 @@ mod tests {
             primitive_lock: false,
             designator_visible: true,
             comment_visible: false,
+            channel_offset: None,
             source_designator: Some(designator.to_owned()),
             kind: altium_format_types::ComponentKind::Standard,
             parameters: Vec::new(),

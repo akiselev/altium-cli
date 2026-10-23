@@ -42,7 +42,8 @@ pub struct AltiumProject {
     comparison_options: IndexMap<String, String>,
     /// `[SmartPDF]` section.
     smart_pdf: IndexMap<String, String>,
-    /// `[Variant{N}]` sections.
+    /// `[ProjectVariant{N}]` sections (the name AD writes; `docs/spec-lang/blocks/prjpcb.md`,
+    /// KiCad's Altium importer).
     variants: Vec<IndexMap<String, String>>,
     /// `[Parameter{N}]` sections.
     parameters: Vec<IndexMap<String, String>>,
@@ -269,6 +270,13 @@ impl AltiumProject {
                         outputs: Vec::new(),
                     }),
                     Section::Variant => variants.push(IndexMap::new()),
+                    // An unknown section would be dropped by read and write alike.
+                    Section::Unknown => {
+                        return Err(crate::AltiumFormatError::InvalidParamValue {
+                            key: format!("[{header}]"),
+                            detail: "unknown PrjPcb section".to_owned(),
+                        });
+                    }
                     Section::Parameter => parameters.push(IndexMap::new()),
                     Section::DiffPairSuffix => diff_pair_suffixes.push(IndexMap::new()),
                     _ => {}
@@ -290,7 +298,12 @@ impl AltiumProject {
                             detail: "key line before the first [section] header".to_owned(),
                         });
                     }
-                    Section::Unknown => {}
+                    Section::Unknown => {
+                        return Err(crate::AltiumFormatError::InvalidParamValue {
+                            key,
+                            detail: "key in an unknown PrjPcb section".to_owned(),
+                        });
+                    }
                     Section::Design => {
                         design.insert(key, value);
                     }
@@ -373,9 +386,13 @@ impl AltiumProject {
                         unique_ids_mappings.insert(key, value);
                     }
                 }
+            } else {
+                // Not a header and not KEY=VALUE: refused rather than dropped.
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: line.to_owned(),
+                    detail: "PrjPcb line is neither a [section] header nor KEY=VALUE".to_owned(),
+                });
             }
-            // Lines with no `=` and not a section header are silently ignored
-            // (not valid INI key-value pairs).
         }
 
         Ok(AltiumProject {
@@ -434,7 +451,7 @@ fn detect_section(header: &str) -> Section {
     if is_numbered_prefix(header, "OutputGroup") {
         return Section::OutputGroup;
     }
-    if is_numbered_prefix(header, "Variant") {
+    if is_numbered_prefix(header, "ProjectVariant") {
         return Section::Variant;
     }
     if is_numbered_prefix(header, "Parameter") {
@@ -635,6 +652,108 @@ mod tests {
         );
     }
 
+    #[test]
+    fn project_variants_read_and_write_as_project_variant_sections() {
+        let text = format!(
+            "{}\r\n[ProjectVariant1]\r\nUniqueId=ABCDEFGH\r\nDescription=NoFit\r\n\
+             AllowFabrication=0\r\nParameterCount=0\r\nVariationCount=1\r\n\
+             Variation1=Designator=R1|UniqueId=\\QWERTYUI|Kind=1|AlternatePart=\r\n\
+             ParamVariation1=Designator=R2|ParameterName=Value|VariantValue=10k\r\n",
+            super::BLANK_AD26_INI.trim_end()
+        );
+        let project = super::AltiumProject::parse("v".to_owned(), &text).unwrap();
+        let api = project.project().unwrap();
+        assert_eq!(api.variants.len(), 1);
+        let v = &api.variants[0];
+        assert_eq!(v.description, "NoFit");
+        assert_eq!(v.allow_fabrication, Some(false));
+        assert_eq!(v.variations[0].designator, "R1");
+        assert_eq!(
+            v.variations[0].kind,
+            altium_format_types::project::VariationKind::NotFitted
+        );
+        assert_eq!(v.param_variations[0].variant_value, "10k");
+        let written = crate::api::project_write::write_ini(&project);
+        assert!(written.contains("[ProjectVariant1]"), "{written}");
+        assert!(!written.contains("\n[Variant1]"));
+
+        let refused = |extra: &str| {
+            let text = format!("{}\r\n{extra}", super::BLANK_AD26_INI.trim_end());
+            super::AltiumProject::parse("v".to_owned(), &text)
+                .and_then(|p| p.project().map(|_| ()))
+                .unwrap_err()
+                .to_string()
+        };
+        // The old fabricated section name is now an unknown section.
+        assert!(refused("[Variant1]\r\nDescription=x\r\n").contains("[Variant1]"));
+        assert!(refused("[NoSuchSection]\r\n").contains("unknown PrjPcb section"));
+        assert!(refused("[Design]\r\nnot a key line\r\n").contains("neither"));
+        let bad_variant = |body: &str| refused(&format!("[ProjectVariant1]\r\n{body}"));
+        for body in [
+            "VariationCount=2\r\nVariation1=Designator=R1|UniqueId=x|Kind=1|AlternatePart=\r\n",
+            "Variation1=Designator=R1|UniqueId=x|Kind=9|AlternatePart=\r\n",
+            "Variation1=Designator=R1|UniqueId=x|Kind=one|AlternatePart=\r\n",
+            "Variation1=Designator=R1|Kind=1\r\n",
+            "Variation1=Designator=R1|UniqueId=x|Kind=1|AlternatePart=|Extra=1\r\n",
+            "Variation2=Designator=R1|UniqueId=x|Kind=1|AlternatePart=\r\n",
+            "AllowFabrication=yes\r\n",
+            "ParameterCount=1\r\n",
+            "Mystery=1\r\n",
+        ] {
+            assert!(bad_variant(body).contains("ProjectVariant1"), "{body}");
+        }
+    }
+
+    #[test]
+    fn erc_levels_and_matrix_parse_strictly() {
+        // The AD 26 blank project stores all 165 ERC kinds and the full matrix.
+        let blank = super::AltiumProject::parse("blank".to_owned(), super::BLANK_AD26_INI).unwrap();
+        let project = blank.project().unwrap();
+        assert_eq!(project.erc_levels.len(), 165);
+        assert_eq!(project.modification_levels.len(), 161);
+        let bad = |edit: &dyn Fn(&mut super::AltiumProject)| {
+            let mut p = super::AltiumProject::parse("b".to_owned(), super::BLANK_AD26_INI).unwrap();
+            edit(&mut p);
+            p.project().map(|_| ()).unwrap_err().to_string()
+        };
+        for (key, value) in [
+            ("Type1", "x"),
+            ("Type1", "4"),
+            ("Type1", ""),
+            ("Type0", "1"),
+            ("Type166", "1"),
+            ("Type120", "1"), // stored as MultiChannelAlternate
+            ("Type01", "1"),
+            ("Bogus", "1"),
+        ] {
+            let msg = bad(&|p| {
+                p.erc_levels_mut().insert(key.to_owned(), value.to_owned());
+            });
+            assert!(
+                msg.contains("Electrical Rules Check"),
+                "{key}={value}: {msg}"
+            );
+        }
+        let msg = bad(&|p| {
+            p.erc_matrix_mut().shift_remove("L17");
+        });
+        assert!(msg.contains("missing row"), "{msg}");
+        let msg = bad(&|p| {
+            p.erc_matrix_mut().insert("L18".to_owned(), "N".repeat(17));
+        });
+        assert!(msg.contains("L18"), "{msg}");
+        let msg = bad(&|p| {
+            p.modification_levels
+                .insert("Type1".to_owned(), "2".to_owned());
+        });
+        assert!(msg.contains("Modification Levels"), "{msg}");
+        let msg = bad(&|p| {
+            p.difference_levels
+                .insert("TypeX".to_owned(), "1".to_owned());
+        });
+        assert!(msg.contains("Difference Levels"), "{msg}");
+    }
+
     use super::*;
 
     #[test]
@@ -746,13 +865,13 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_section_ignored() {
+    fn test_unknown_section_refused() {
+        // Unknown sections were dropped by read and write alike; now an error.
         let input = "[UnknownFutureSection]\nKey=Value\n[Design]\nVersion=1.0\n";
-        let project = AltiumProject::parse("UnkTest".to_owned(), input).unwrap();
-        assert_eq!(
-            project.design().get("Version").map(|s| s.as_str()),
-            Some("1.0")
-        );
+        let err = AltiumProject::parse("UnkTest".to_owned(), input)
+            .err()
+            .expect("unknown section refused");
+        assert!(err.to_string().contains("UnknownFutureSection"), "{err}");
     }
 
     #[test]

@@ -14,8 +14,8 @@ use altium_format_types::common::Unit;
 use altium_format_types::coord::{Coord, CoordPoint};
 use altium_format_types::pcb::{
     BgaFanoutDirection, BgaFanoutViaMode, ComponentCollisionCheckMode, ComponentOrientationFlags,
-    ConnectStyleTarget, CornerStyle, FanoutDirection, FanoutStyle, LengthenerStyle, NetTopology,
-    PolygonReliefAngle, RouteVia, V6Layer,
+    ConnectStyleTarget, CornerStyle, FanoutDirection, FanoutStyle, NetTopology, PolygonReliefAngle,
+    RouteVia, V6Layer,
 };
 use altium_format_types::pcb::{
     ClassMemberKind, DimensionKind, LayerRef, MaskExpansionMode, ObjectClearanceId, PadShape,
@@ -247,6 +247,9 @@ pub struct PcbDocComponent {
     pub designator_visible: bool,
     /// Components6 `COMMENTON`: the comment text is shown.
     pub comment_visible: bool,
+    /// Components6 `CHANNELOFFSET` as stored (`None` on 597 of 14,409 corpus
+    /// records); the writer stores it when `Some`.
+    pub channel_offset: Option<u32>,
     /// The stored `SOURCEDESIGNATOR` (the schematic designator), `None` when
     /// the record has none. `designator` is this, or else the text of the
     /// component's designator Text primitive. The writer stores exactly this
@@ -362,6 +365,12 @@ pub struct NetClass {
     pub id: String,
     pub name: String,
     pub kind: ClassMemberKind,
+    /// `SUPERCLASS`: Altium's built-in class of all objects of the kind
+    /// (`All Nets`, `All Pads`, …).
+    pub super_class: bool,
+    /// `M0`, `M1`, … as stored (Unicode sidecars applied). Pad class members:
+    /// no populated user pad class exists in the corpus, so their form is
+    /// unverified.
     pub members: Vec<String>,
 }
 
@@ -425,7 +434,7 @@ pub struct DiffPairSubstack {
 /// Impedance settings shared by Width and DiffPairsRouting (each `None` when absent).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RuleImpedance {
-    /// `IMPEDANCEDRIVEN`.
+    /// `IMPEDANCEDRIVEN` (Width rules only; DiffPairsRouting does not store it).
     pub impedance_driven: Option<bool>,
     /// `MINIMP`, `MAXIMP`, `FAVIMP` (ohms).
     pub min: Option<f64>,
@@ -563,19 +572,10 @@ pub enum RuleParams {
         phase_tolerance: Option<Coord>,
         phase_delay_tolerance: Option<f64>,
         phase_distance: Option<Coord>,
-        /// Serpentine `AMPLITUDE`, `GAP` and `STYLE`.
-        amplitude: Option<Coord>,
-        serpentine_gap: Option<Coord>,
-        style: Option<LengthenerStyle>,
     },
     ParallelSegment {
         gap: Coord,
         limit: Coord,
-        /// `PARALLELLENGTH`, `CHECKPARALLEL`, `CHECKADJACENTLAYERS`: not read
-        /// by AD 26 and absent from the corpus rule.
-        parallel_length: Option<Coord>,
-        check_parallel: Option<bool>,
-        check_adjacent_layers: Option<bool>,
     },
     /// StubLength: `LIMIT`, the key AD 26 reads and the corpus stores.
     DaisyChainStubLength {
@@ -725,8 +725,6 @@ pub enum RuleParams {
         max_gap: Coord,
         preferred_gap: Coord,
         max_uncoupled_length: Coord,
-        /// `MOSTFREQWIDTH`: the preferred width shown for all layers.
-        most_frequent_width: Option<Coord>,
         /// `FILTERLAYERSTACKID`.
         filter_layer_stack_id: Option<String>,
         /// Per-layer widths and gaps, in layer order.

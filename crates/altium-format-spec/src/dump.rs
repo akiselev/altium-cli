@@ -1266,9 +1266,9 @@ fn flatten_mode_to_spec(v: FlattenMode) -> Result<&'static str, SpecError> {
 fn channel_room_naming_to_spec(v: ChannelRoomNamingStyle) -> Result<&'static str, SpecError> {
     match v {
         ChannelRoomNamingStyle::FlatNumericWithNames => Ok("flat_numeric_with_names"),
-        ChannelRoomNamingStyle::FlatNumeric => Ok("flat_numeric"),
-        ChannelRoomNamingStyle::FullyQualified => Ok("fully_qualified"),
-        ChannelRoomNamingStyle::FullyQualifiedShort => Ok("fully_qualified_short"),
+        ChannelRoomNamingStyle::FlatAlphaWithNames => Ok("flat_alpha_with_names"),
+        ChannelRoomNamingStyle::NumericNamePath => Ok("numeric_name_path"),
+        ChannelRoomNamingStyle::AlphaNamePath => Ok("alpha_name_path"),
         ChannelRoomNamingStyle::MixedNamePath => Ok("mixed_name_path"),
         _ => Err(spec_err(format!(
             "unknown ChannelRoomNamingStyle variant: {:?}",
@@ -2440,6 +2440,7 @@ mod tests {
             primitive_lock: true,
             designator_visible: true,
             comment_visible: false,
+            channel_offset: None,
             source_designator: Some(designator.to_string()),
             kind: altium_format_types::ComponentKind::Standard,
             parameters: Vec::new(),

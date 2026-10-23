@@ -114,6 +114,21 @@ pub(crate) fn dispatch_record_type(
         SchRecordType::HighLevelCodeFileName => {
             dispatch!(SchSheetFileName => SchRecord::HighLevelCodeFileName)
         }
+        // Reuse-block records: their AD 26 serializers (the base-class keys of
+        // SchematicBlock and ReuseSheetSymbol, and where ReuseBlockImplementationInfo
+        // attaches) have not been read, and no corpus file contains one, so typing
+        // them would mean guessing keys.
+        SchRecordType::SchematicBlock
+        | SchRecordType::ReuseSheetSymbol
+        | SchRecordType::ReuseBlockImplementationInfo => {
+            Err(AltiumFormatError::UnknownRecordType(record_type_val)).with_context(|| {
+                format!(
+                    "RECORD={record_type_val} ({:?}): reuse-block records are not supported \
+                     (serializer not yet reverse engineered; no fixture)",
+                    record_type
+                )
+            })
+        }
         _ => Err(AltiumFormatError::UnknownRecordType(record_type_val)),
     }
 }

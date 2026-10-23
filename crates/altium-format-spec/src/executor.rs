@@ -322,6 +322,7 @@ fn apply_pcbdoc_components(board: &mut api::PcbDocBoard, specs: &[PcbDocComponen
                 primitive_lock: true,
                 designator_visible: true,
                 comment_visible: false,
+                channel_offset: None,
                 source_designator: Some(spec.designator.clone()),
                 kind: altium_format_types::ComponentKind::Standard,
                 parameters: spec

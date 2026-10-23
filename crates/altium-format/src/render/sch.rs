@@ -471,6 +471,7 @@ mod tests {
             graphically_locked: false,
             union_index: 0,
             style_id: 0,
+            ignore_on_load: false,
         }
     }
 

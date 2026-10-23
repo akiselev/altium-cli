@@ -54,35 +54,22 @@ const BOARDS_FAILING_AT_BASE: [&str; 15] = [
     "tvws-whitespace-dc.PcbDoc",
 ];
 
-/// No board that read at the base rev may fail now, and the known failures
-/// still fail for their known reason (so a new failure cannot hide there).
+/// Every board that opens reads. At the base rev the 15 boards in
+/// [`BOARDS_FAILING_AT_BASE`] failed on Dimensions6 `TEXTX` (stored as
+/// `<decimal>mil`, read as an integer); batch 5 (R23) reads them. The other
+/// corpus tests still skip those 15 so their counts stay comparable with R1–R17.
 #[test]
 fn corpus_board_reads() {
     let mut ok = 0;
+    let mut dimensions = 0;
     for (name, doc) in corpus_docs() {
-        match doc.board() {
-            Ok(_) => {
-                assert!(
-                    !BOARDS_FAILING_AT_BASE.contains(&name.as_str()),
-                    "{name} now reads; update BOARDS_FAILING_AT_BASE"
-                );
-                ok += 1;
-            }
-            Err(e) => {
-                let msg = format!("{e}");
-                assert!(
-                    BOARDS_FAILING_AT_BASE.contains(&name.as_str()),
-                    "{name} read at the base rev and now fails: {msg}"
-                );
-                assert!(
-                    msg.contains("Dimensions6") && msg.contains("TEXTX"),
-                    "{name}: {msg}"
-                );
-            }
-        }
+        let board = doc.board().unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        dimensions += board.dimensions.len();
+        ok += 1;
     }
-    eprintln!("corpus_board_reads: {ok} of 94 boards read");
-    assert_eq!(ok, 79);
+    eprintln!("corpus_board_reads: {ok} of 94 boards read, {dimensions} dimensions");
+    assert_eq!(ok, 94);
+    assert_eq!(dimensions, 92);
 }
 
 /// R2: every Polygons6 record of every corpus board parses with its full
@@ -1465,7 +1452,19 @@ fn corpus_r22_rules() {
     let mut exposed_copper = 0;
     let mut without_3d_body = 0;
     let mut via_grids = 0;
+    let mut all_files_rules = 0;
     for (name, doc) in corpus_docs() {
+        // Rules6 is parsed by `open`, so every openable file's rules are checked
+        // here, including the boards whose `board()` fails elsewhere.
+        for (i, rule) in doc.rules.iter().enumerate() {
+            all_files_rules += 1;
+            let params = rule_params_from_internal(rule)
+                .unwrap_or_else(|e| panic!("{name}: rule #{i}: {e:#}"));
+            assert!(
+                !matches!(params, RuleParams::Other { .. }),
+                "{name}: rule #{i} untyped"
+            );
+        }
         if BOARDS_FAILING_AT_BASE.contains(&name.as_str()) {
             continue;
         }
@@ -1611,4 +1610,101 @@ fn corpus_r22_rules() {
         (56, 79, 4)
     );
     assert_eq!(via_grids, 396);
+    assert_eq!(all_files_rules, 4168, "rules in all 94 openable files");
+}
+
+/// R21 and Q15: classes read strictly (kind, superclass, Unicode members) and
+/// differential pairs read their stored net keys; `update_board` keeps both,
+/// matches classes by name and kind, and drops stale member keys.
+#[test]
+fn corpus_r21_classes_and_pairs() {
+    let mut pad_classes = (0, 0); // (pad classes, with members)
+    let mut unicode_members = 0;
+    let mut pairs = 0;
+    let mut docs = corpus_docs();
+    for (name, doc) in &mut docs {
+        if BOARDS_FAILING_AT_BASE.contains(&name.as_str()) {
+            continue;
+        }
+        let board = doc.board().unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        let net_names: std::collections::HashSet<&str> =
+            board.nets.iter().map(|n| n.name.as_str()).collect();
+        for c in &board.classes {
+            if c.kind == altium_format_types::pcb::ClassMemberKind::Pad {
+                pad_classes.0 += 1;
+                pad_classes.1 += usize::from(!c.members.is_empty());
+                assert!(c.super_class, "{name}: user pad class {}", c.name);
+            }
+            unicode_members += c.members.iter().filter(|m| !m.is_ascii()).count();
+        }
+        for dp in &board.differential_pairs {
+            pairs += 1;
+            assert!(
+                net_names.contains(dp.positive_net.as_str())
+                    && net_names.contains(dp.negative_net.as_str()),
+                "{name}: pair {} nets {} / {}",
+                dp.name,
+                dp.positive_net,
+                dp.negative_net
+            );
+        }
+        let classes_of = |b: &PcbDocBoard| format!("{:?}", b.classes);
+        let pairs_of = |b: &PcbDocBoard| format!("{:?}", b.differential_pairs);
+        let stored_pairs = |doc: &PcbDoc| {
+            find_param_section(doc, ParamSectionKind::DifferentialPairs6).map(|r| {
+                r.iter()
+                    .map(|r| {
+                        r.params
+                            .iter()
+                            .map(|(k, v)| format!("{k}={v}"))
+                            .collect::<Vec<_>>()
+                            .join("|")
+                    })
+                    .collect::<Vec<_>>()
+            })
+        };
+        let before = stored_pairs(doc);
+        doc.update_board(&board)
+            .unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        let after = doc.board().unwrap();
+        // ensure_standard_classes adds All Components / All Nets when absent.
+        if board.classes.iter().any(|c| c.name == "All Components")
+            && board.classes.iter().any(|c| c.name == "All Nets")
+        {
+            assert_eq!(classes_of(&board), classes_of(&after), "{name}: classes");
+        }
+        assert_eq!(pairs_of(&board), pairs_of(&after), "{name}: pairs");
+        assert_eq!(before, stored_pairs(doc), "{name}: stored pair records");
+    }
+    // No populated user pad class: 79 `All Pads` superclasses, one storing a member.
+    assert_eq!(pad_classes, (79, 1));
+    assert_eq!((unicode_members, pairs), (36, 716));
+
+    // Removing a member drops its key; renaming one replaces its Unicode sidecar.
+    let (name, doc) = docs
+        .iter_mut()
+        .filter(|(n, _)| !BOARDS_FAILING_AT_BASE.contains(&n.as_str()))
+        .find(|(_, d)| {
+            d.board()
+                .unwrap()
+                .classes
+                .iter()
+                .any(|c| c.members.iter().any(|m| !m.is_ascii()))
+        })
+        .expect("a class with a Unicode member");
+    let mut b = doc.board().unwrap();
+    let c = b
+        .classes
+        .iter_mut()
+        .find(|c| c.members.iter().any(|m| !m.is_ascii()))
+        .unwrap();
+    let class_name = c.name.clone();
+    let i = c.members.iter().position(|m| !m.is_ascii()).unwrap();
+    c.members[i] = "RENAMED".to_owned();
+    c.members.pop();
+    let expected = c.members.clone();
+    doc.update_board(&b).unwrap();
+    let got = doc.board().unwrap();
+    let c = got.classes.iter().find(|c| c.name == class_name).unwrap();
+    assert_eq!(c.members, expected, "{name}: {class_name}");
 }

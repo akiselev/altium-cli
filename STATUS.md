@@ -539,6 +539,19 @@ before, graphics were written in mode 0, which merged all modes' bodies.
 A record that stores no UniqueID gets a filler derived from its stream and index (R10), so ids
 are the same on every load (they were random); stored ids are never reused.
 
+Batch 5: ASCII SchDocs (`|HEADER=…Ascii File Version 5.0`, one record per line, LF or CRLF)
+read through the binary record path and save as CFB; a non-empty ASCII Icon storage or
+additional section is refused (none in the corpus). `IgnoreOnLoad` is typed on every record
+base (221 corpus records). Records in `/Additional` resolve their owner through
+`OwnerIndexAdditionalList` for every record kind, not only pins: harness entries and types now
+attach to their harness connectors (before, 147 sheets failed and others misattached them).
+Corpus: 1,293 of 1,617 SchDocs open (1,202 before) and all 1,293 convert to sheets (1,130).
+Still refused: 170 third-party (EasyEDA) exports with a footprint name in `DISPLAYMODE`,
+ASCII-only keys on some records (`TRANSPARENT`, `LINESTYLE`, pin `ISNOTACCESIBLE`/`FONTID`,
+`ALIGMENT`, `NOTUSEDDBTABLENAME`), RECORD=220 code-symbol routine keys, RECORD=215
+`PrimaryConnectionPosition_Frac`, missing sheet font entries, and reuse-block records 136–138
+(serializer not reverse engineered; no fixture).
+
 ### PcbLib
 8 primitive types (Pad, Via, Track, Arc, Text, Fill, Region, ComponentBody). 6 sidecar stream types. Complete roundtrip. PadStack/PcbContour shared types with PcbDoc. Spec supports pad templates and spread operators.
 
@@ -674,9 +687,25 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   are no longer accepted. SMDToCorner/SMDToPlane `DISTANCE` is an integer in internal units (was
   read as mils). RoutingNeckDown is refused (AD 26 stores one `LayerMaxLength` string of unknown
   encoding; none in the corpus). AcuteAngle MINIMUM is written in Altium's float form.
+  Room line edges lose stale centre values on save (as Board6/Polygons6 do). MaximumViaCount
+  reads `LIMIT`. Signal-integrity values must be in Altium's 4-significant-digit text form.
+- Classes6 (R21): `NetClass::super_class`, strict KIND/NAME/members, Unicode member sidecars
+  applied; the writer matches classes by name and kind and drops stale member keys. No populated
+  user pad class exists in the corpus. DifferentialPairs6 reads POSITIVENETNAME/NEGATIVENETNAME
+  (716 pairs had empty nets) and the writer keeps the stored pair records.
+- Dimensions6 (R23): TEXTX/TEXTY/TEXTHEIGHT/TEXTWIDTH are `<decimal>mil` and required; all 94
+  openable corpus PcbDocs now read (79 before). Components6 `CHANNELOFFSET` is exposed.
 
 ### PrjPcb
 INI-style format with indexed sections. Complete roundtrip. Read-only high-level API (internal write exists but not surfaced).
+
+Batch 5: variants are `[ProjectVariantN]` on read and write (they were `[VariantN]`, so real
+variants were dropped); an unknown section or a line that is neither a header nor KEY=VALUE is
+an error. Variant sections are parsed strictly (known keys only, VariationCount checked,
+`AllowFabrication` exposed; variant-level parameters refused). ERC levels, modification and
+difference levels and the ERC matrix fail fast on bad keys or values (R20; keys checked against
+AD 26's ERC catalog). `ChannelRoomNamingStyle` 1–3 renamed to AD 26's FlatAlphaWithNames,
+NumericNamePath, AlphaNamePath. `VariationKind` values are unverified (no PrjPcb in the corpora).
 
 A non-UTF-8 project (e.g. GBK) opens with `AltiumProject::open_with_code_page(path, label)` (R11):
 strict decoding in the caller-named code page, since the file does not record one; `open` now

@@ -3419,9 +3419,9 @@ fn parse_flatten_mode(s: &str) -> Option<FlattenMode> {
 fn parse_channel_room_naming_style(s: &str) -> Option<ChannelRoomNamingStyle> {
     match s {
         "flat_numeric_with_names" => Some(ChannelRoomNamingStyle::FlatNumericWithNames),
-        "flat_numeric" => Some(ChannelRoomNamingStyle::FlatNumeric),
-        "fully_qualified" => Some(ChannelRoomNamingStyle::FullyQualified),
-        "fully_qualified_short" => Some(ChannelRoomNamingStyle::FullyQualifiedShort),
+        "flat_alpha_with_names" => Some(ChannelRoomNamingStyle::FlatAlphaWithNames),
+        "numeric_name_path" => Some(ChannelRoomNamingStyle::NumericNamePath),
+        "alpha_name_path" => Some(ChannelRoomNamingStyle::AlphaNamePath),
         "mixed_name_path" => Some(ChannelRoomNamingStyle::MixedNamePath),
         _ => None,
     }

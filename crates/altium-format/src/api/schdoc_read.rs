@@ -173,7 +173,8 @@ fn build_ownership_map(
     }
 
     // Additional records reference either the main list or the additional list
-    // depending on the `owner_index_additional_list` flag (only pins use this).
+    // depending on the `owner_index_additional_list` flag (pins, harness
+    // entries/types, signal harness children, …: every record carries it).
     for (idx, record) in additional_records.iter().enumerate() {
         let (owner_index, owner_is_additional) = owner_ref(record);
         if owner_index >= 0 {
@@ -212,57 +213,67 @@ fn resolve_record<'a>(
 /// Get the owner_index and is_additional flag from a SchRecord.
 fn owner_ref(record: &SchRecord) -> (i32, bool) {
     match record {
-        SchRecord::Sheet(v) => (v.base.owner_index, false),
-        SchRecord::Template(v) => (v.base.owner_index, false),
-        SchRecord::Wire(v) => (v.base.owner_index, false),
-        SchRecord::Bus(v) => (v.base.owner_index, false),
-        SchRecord::NetLabel(v) => (v.base.owner_index, false),
-        SchRecord::PowerObject(v) => (v.base.owner_index, false),
-        SchRecord::Port(v) => (v.base.owner_index, false),
-        SchRecord::NoConnect(v) => (v.base.owner_index, false),
-        SchRecord::Junction(v) => (v.base.owner_index, false),
-        SchRecord::SheetName(v) => (v.base.owner_index, false),
-        SchRecord::SheetFileName(v) => (v.base.owner_index, false),
-        SchRecord::SheetSymbol(v) => (v.base.owner_index, false),
-        SchRecord::SheetEntry(v) => (v.base.owner_index, false),
-        SchRecord::BusEntry(v) => (v.base.owner_index, false),
-        SchRecord::ParameterSet(v) => (v.base.owner_index, false),
-        SchRecord::Note(v) => (v.base.owner_index, false),
-        SchRecord::Probe(v) => (v.base.owner_index, false),
-        SchRecord::CompileMask(v) => (v.base.owner_index, false),
-        SchRecord::Blanket(v) => (v.base.owner_index, false),
+        SchRecord::Sheet(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Template(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Wire(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Bus(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::NetLabel(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::PowerObject(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Port(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::NoConnect(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Junction(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::SheetName(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::SheetFileName(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::SheetSymbol(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::SheetEntry(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::BusEntry(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::ParameterSet(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Note(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Probe(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::CompileMask(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Blanket(v) => (v.base.owner_index, v.base.owner_index_additional_list),
         SchRecord::Component(v) => (v.owner_index, false),
         SchRecord::Pin(v) => (v.owner_index, v.owner_index_additional_list),
-        SchRecord::Symbol(v) => (v.base.owner_index, false),
-        SchRecord::Line(v) => (v.base.owner_index, false),
-        SchRecord::Rectangle(v) => (v.base.owner_index, false),
-        SchRecord::RoundRectangle(v) => (v.base.owner_index, false),
-        SchRecord::Arc(v) => (v.base.owner_index, false),
-        SchRecord::EllipticalArc(v) => (v.base.owner_index, false),
-        SchRecord::Ellipse(v) => (v.base.owner_index, false),
-        SchRecord::Pie(v) => (v.base.owner_index, false),
-        SchRecord::Polyline(v) => (v.base.owner_index, false),
-        SchRecord::Polygon(v) => (v.base.owner_index, false),
-        SchRecord::Bezier(v) => (v.base.owner_index, false),
-        SchRecord::Image(v) => (v.base.owner_index, false),
-        SchRecord::Label(v) => (v.base.owner_index, false),
-        SchRecord::Hyperlink(v) => (v.base.owner_index, false),
-        SchRecord::Designator(v) => (v.base.owner_index, false),
-        SchRecord::Parameter(v) => (v.base.owner_index, false),
-        SchRecord::TextFrame(v) => (v.base.owner_index, false),
-        SchRecord::ImplementationList(v) => (v.base.owner_index, false),
-        SchRecord::Implementation(v) => (v.base.owner_index, false),
-        SchRecord::ImplementationMap(v) => (v.base.owner_index, false),
-        SchRecord::MapDefiner(v) => (v.base.owner_index, false),
-        SchRecord::ParameterList(v) => (v.base.owner_index, false),
-        SchRecord::HarnessConnector(v) => (v.base.owner_index, false),
-        SchRecord::HarnessEntry(v) => (v.base.owner_index, false),
-        SchRecord::HarnessConnectorType(v) => (v.base.owner_index, false),
-        SchRecord::SignalHarness(v) => (v.base.owner_index, false),
-        SchRecord::HighLevelCodeSymbol(v) => (v.base.owner_index, false),
-        SchRecord::HighLevelCodeEntry(v) => (v.base.owner_index, false),
-        SchRecord::HighLevelCodeName(v) => (v.base.owner_index, false),
-        SchRecord::HighLevelCodeFileName(v) => (v.base.owner_index, false),
+        SchRecord::Symbol(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Line(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Rectangle(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::RoundRectangle(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Arc(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::EllipticalArc(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Ellipse(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Pie(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Polyline(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Polygon(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Bezier(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Image(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Label(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Hyperlink(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Designator(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::Parameter(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::TextFrame(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::ImplementationList(v) => {
+            (v.base.owner_index, v.base.owner_index_additional_list)
+        }
+        SchRecord::Implementation(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::ImplementationMap(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::MapDefiner(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::ParameterList(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::HarnessConnector(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::HarnessEntry(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::HarnessConnectorType(v) => {
+            (v.base.owner_index, v.base.owner_index_additional_list)
+        }
+        SchRecord::SignalHarness(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::HighLevelCodeSymbol(v) => {
+            (v.base.owner_index, v.base.owner_index_additional_list)
+        }
+        SchRecord::HighLevelCodeEntry(v) => {
+            (v.base.owner_index, v.base.owner_index_additional_list)
+        }
+        SchRecord::HighLevelCodeName(v) => (v.base.owner_index, v.base.owner_index_additional_list),
+        SchRecord::HighLevelCodeFileName(v) => {
+            (v.base.owner_index, v.base.owner_index_additional_list)
+        }
     }
 }
 
@@ -823,6 +834,100 @@ mod corpus_tests {
     use crate::schdoc::SchDoc;
     use std::path::Path;
 
+    /// Batch 5 item 5: every corpus SchDoc's first error, grouped by cause, and
+    /// ASCII SchDocs read like binary ones (an ASCII sheet saved as CFB reopens
+    /// with the same records).
+    #[test]
+    fn corpus_schdoc_open_errors() {
+        const OPENED: usize = 1293;
+        use std::collections::BTreeMap;
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schdoc");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+            .map(|e| e.expect("dir entry").path())
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("schdoc"))
+            })
+            .collect();
+        paths.sort();
+        let mut causes: BTreeMap<String, usize> = BTreeMap::new();
+        let mut examples: BTreeMap<String, String> = BTreeMap::new();
+        let (mut opened, mut sheets, mut ascii_opened, mut ascii_resaved) = (0, 0, 0, 0);
+        for path in &paths {
+            let ascii = std::fs::read(path)
+                .unwrap()
+                .starts_with(b"|HEADER=Protel for Windows - Schematic Capture Ascii");
+            let doc = match SchDoc::open(path) {
+                Ok(doc) => doc,
+                Err(e) => {
+                    // The innermost cause, without file-specific values.
+                    // The two innermost causes (record kind + reason), digits masked.
+                    let msg = format!("{e:#}");
+                    let parts: Vec<&str> = msg.rsplitn(3, ": ").take(2).collect();
+                    let cause: String = parts
+                        .iter()
+                        .rev()
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .join(": ")
+                        .chars()
+                        .map(|c| if c.is_ascii_digit() { '#' } else { c })
+                        .take(110)
+                        .collect();
+                    examples
+                        .entry(format!("open: {cause}"))
+                        .or_insert_with(|| format!("{}: {msg}", path.display()));
+                    *causes.entry(format!("open: {cause}")).or_default() += 1;
+                    continue;
+                }
+            };
+            opened += 1;
+            ascii_opened += usize::from(ascii);
+            match doc.sheet() {
+                Ok(_) => sheets += 1,
+                Err(e) => {
+                    let msg = format!("{e:#}");
+                    let cause = msg.rsplit(": ").next().unwrap_or(&msg);
+                    let cause: String = cause
+                        .chars()
+                        .map(|c| if c.is_ascii_digit() { '#' } else { c })
+                        .take(90)
+                        .collect();
+                    *causes.entry(format!("sheet: {cause}")).or_default() += 1;
+                }
+            }
+            if ascii {
+                let tmp = tempfile::NamedTempFile::new().unwrap();
+                doc.save(tmp.path())
+                    .unwrap_or_else(|e| panic!("{}: save: {e:#}", path.display()));
+                let again = SchDoc::open(tmp.path())
+                    .unwrap_or_else(|e| panic!("{}: reopen: {e:#}", path.display()));
+                assert_eq!(
+                    format!("{:?}", doc.records),
+                    format!("{:?}", again.records),
+                    "{}: records changed by ASCII -> CFB save",
+                    path.display()
+                );
+                ascii_resaved += 1;
+            }
+        }
+        for (cause, n) in &causes {
+            eprintln!("{n:5}  {cause}");
+            if let Some(example) = examples.get(cause) {
+                eprintln!("       e.g. {example}");
+            }
+        }
+        eprintln!(
+            "files {} opened {opened} sheets {sheets} ascii opened {ascii_opened} resaved {ascii_resaved}",
+            paths.len()
+        );
+        // dd200d4: 1,202 opened, 1,130 sheets. Every opened SchDoc now converts.
+        assert_eq!(paths.len(), 1617);
+        assert_eq!((opened, sheets), (OPENED, OPENED));
+        assert_eq!(ascii_resaved, ascii_opened);
+    }
+
     /// R9: every corpus component's placed display mode is in range and
     /// reaches the API (137 components on readable sheets are placed in an
     /// alternate mode), and survives `update_sheet` → `sheet()` together with
@@ -917,7 +1022,8 @@ mod corpus_tests {
         );
         eprintln!("corpus_r9_display_mode: {alternate_children} alternate-mode children");
         assert!(alternate_children > 0);
-        assert_eq!(alternate, 137);
+        // 137 at dd200d4; 157 once ASCII, IgnoreOnLoad and harness owners read (batch 5).
+        assert_eq!(alternate, 157);
         assert!(written > 0);
     }
 
@@ -958,6 +1064,7 @@ mod corpus_tests {
             "corpus_r10_unique_ids_reproducible: {docs} SchDocs opened twice, {records_with_ids} \
              record ids identical"
         );
-        assert_eq!(docs, 1_202);
+        // 1,202 at dd200d4; batch 5 reads 91 more (ASCII, IgnoreOnLoad).
+        assert_eq!(docs, 1_293);
     }
 }

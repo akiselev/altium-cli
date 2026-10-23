@@ -57,7 +57,7 @@ pub(crate) fn write_ini(proj: &AltiumProject) -> String {
 
     // Optional numbered sections (only if present)
     for (i, var) in proj.variants().iter().enumerate() {
-        write_section(&mut out, &format!("Variant{}", i + 1), var);
+        write_section(&mut out, &format!("ProjectVariant{}", i + 1), var);
     }
     for (i, param) in proj.parameters_sections().iter().enumerate() {
         write_section(&mut out, &format!("Parameter{}", i + 1), param);

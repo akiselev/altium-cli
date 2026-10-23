@@ -44,15 +44,17 @@ impl fmt::Display for FlattenMode {
     }
 }
 
-/// Naming style for channel room designators.
+/// Naming style for channel room designators (`TChannelRoomNamingStyle`, AD 26
+/// `RT_Workspace`; altium-re Psch1-net-derivation structs.md, ilspy of
+/// Altium.Edp.Interfaces).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 #[repr(i32)]
 pub enum ChannelRoomNamingStyle {
     FlatNumericWithNames = 0,
-    FlatNumeric = 1,
-    FullyQualified = 2,
-    FullyQualifiedShort = 3,
+    FlatAlphaWithNames = 1,
+    NumericNamePath = 2,
+    AlphaNamePath = 3,
     MixedNamePath = 4,
 }
 
@@ -61,9 +63,9 @@ impl TryFrom<i32> for ChannelRoomNamingStyle {
     fn try_from(v: i32) -> Result<Self, Self::Error> {
         match v {
             0 => Ok(Self::FlatNumericWithNames),
-            1 => Ok(Self::FlatNumeric),
-            2 => Ok(Self::FullyQualified),
-            3 => Ok(Self::FullyQualifiedShort),
+            1 => Ok(Self::FlatAlphaWithNames),
+            2 => Ok(Self::NumericNamePath),
+            3 => Ok(Self::AlphaNamePath),
             4 => Ok(Self::MixedNamePath),
             _ => Err(InvalidEnumValue {
                 type_name: "ChannelRoomNamingStyle",
@@ -77,9 +79,9 @@ impl fmt::Display for ChannelRoomNamingStyle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::FlatNumericWithNames => write!(f, "FlatNumericWithNames"),
-            Self::FlatNumeric => write!(f, "FlatNumeric"),
-            Self::FullyQualified => write!(f, "FullyQualified"),
-            Self::FullyQualifiedShort => write!(f, "FullyQualifiedShort"),
+            Self::FlatAlphaWithNames => write!(f, "FlatAlphaWithNames"),
+            Self::NumericNamePath => write!(f, "NumericNamePath"),
+            Self::AlphaNamePath => write!(f, "AlphaNamePath"),
             Self::MixedNamePath => write!(f, "MixedNamePath"),
         }
     }
@@ -262,6 +264,17 @@ impl fmt::Display for SortLocation {
         }
     }
 }
+
+/// Number of ERC error kinds (`TErrorKind` values 0..=164). A PrjPcb
+/// `[Electrical Rules Check]` line stores kind `v` as `Type<v+1>=<level>`,
+/// except the kinds in [`ERC_LEVEL_NAMED_KEYS`] (altium-re Psch2-erc
+/// erc-catalog.tsv, AD 26.2.0.7).
+pub const ERC_ERROR_KIND_COUNT: u16 = 165;
+
+/// ERC error kinds stored under their name instead of `Type<v+1>`:
+/// (store key, `TErrorKind` value).
+pub const ERC_LEVEL_NAMED_KEYS: [(&str, u16); 2] =
+    [("MultiChannelAlternate", 119), ("AlternateItemFail", 120)];
 
 /// ERC error level, used in violation matrix entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -561,9 +574,9 @@ mod tests {
     fn channel_room_naming_style_round_trip() {
         for (i, expected) in [
             (0, ChannelRoomNamingStyle::FlatNumericWithNames),
-            (1, ChannelRoomNamingStyle::FlatNumeric),
-            (2, ChannelRoomNamingStyle::FullyQualified),
-            (3, ChannelRoomNamingStyle::FullyQualifiedShort),
+            (1, ChannelRoomNamingStyle::FlatAlphaWithNames),
+            (2, ChannelRoomNamingStyle::NumericNamePath),
+            (3, ChannelRoomNamingStyle::AlphaNamePath),
             (4, ChannelRoomNamingStyle::MixedNamePath),
         ] {
             assert_eq!(ChannelRoomNamingStyle::try_from(i).unwrap(), expected);

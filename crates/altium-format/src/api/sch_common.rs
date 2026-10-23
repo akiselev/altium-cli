@@ -562,6 +562,7 @@ pub(crate) fn default_base() -> SchPrimitiveBase {
         graphically_locked: false,
         union_index: 0,
         style_id: 0,
+        ignore_on_load: false,
     }
 }
 
