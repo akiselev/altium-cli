@@ -13,7 +13,6 @@
 
 use std::collections::HashMap;
 
-use crate::Result;
 use crate::api::sch_common::{
     default_base, graphic_to_record, parameter_to_internal, pin_to_internal,
 };
@@ -31,6 +30,7 @@ use crate::sch_records::{
     SchWire as InternalWire,
 };
 use crate::util::generate_unique_id;
+use crate::{Result, ResultExt};
 
 use altium_format_types::color::Color;
 use altium_format_types::common::RotationBy90;
@@ -366,7 +366,11 @@ fn emit_component(
         graphically_locked: false,
         union_index: 0,
         location: comp.location,
-        display_mode: 0,
+        display_mode: crate::api::schdoc_read::checked_display_mode(
+            comp.display_mode,
+            comp.display_mode_count,
+        )
+        .with_context(|| format!("component {}", comp.unique_id))?,
         is_mirrored: comp.is_mirrored,
         orientation: comp.orientation,
         current_part_id: comp.current_part_id,

@@ -718,6 +718,7 @@ fn apply_schdoc_component(
             part_count: 1,
             current_part_id: 1,
             display_mode_count: 1,
+            display_mode: 0,
             show_hidden_pins: false,
             children: Vec::new(),
         };

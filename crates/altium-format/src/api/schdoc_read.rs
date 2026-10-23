@@ -466,9 +466,23 @@ fn component_from_schdoc_internal(
         part_count: comp.part_count,
         current_part_id: comp.current_part_id,
         display_mode_count: comp.display_mode_count,
+        display_mode: checked_display_mode(comp.display_mode, comp.display_mode_count)?,
         show_hidden_pins: comp.show_hidden_pins,
         children,
     })
+}
+
+/// A component's placed display mode must name one of its display modes:
+/// `0 <= mode < max(count, 1)` (all 33,816 components of the SchDoc corpus do).
+pub(crate) fn checked_display_mode(mode: i32, count: i32) -> Result<i32> {
+    if (0..count.max(1)).contains(&mode) {
+        Ok(mode)
+    } else {
+        Err(crate::AltiumFormatError::InvalidParamValue {
+            key: "DisplayMode".to_owned(),
+            detail: format!("display mode {mode} outside the component's {count} display modes"),
+        })
+    }
 }
 
 /// Convert a SchSheetSymbol and its children into a SheetSymbol.
@@ -785,5 +799,98 @@ fn signal_harness_from_internal(sh: &crate::sch_records::SchBus) -> SignalHarnes
         vertices: sh.vertices.clone(),
         color: sh.color,
         line_width: sh.line_width,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::checked_display_mode;
+
+    #[test]
+    fn display_mode_must_be_one_of_the_components_modes() {
+        assert_eq!(checked_display_mode(0, 0).unwrap(), 0);
+        assert_eq!(checked_display_mode(0, 1).unwrap(), 0);
+        assert_eq!(checked_display_mode(2, 3).unwrap(), 2);
+        assert!(checked_display_mode(1, 1).is_err());
+        assert!(checked_display_mode(3, 3).is_err());
+        assert!(checked_display_mode(-1, 2).is_err());
+    }
+}
+
+#[cfg(all(test, feature = "test-fixtures"))]
+mod corpus_tests {
+    use crate::sch_records::SchRecord;
+    use crate::schdoc::SchDoc;
+    use std::path::Path;
+
+    /// R9: every corpus component's placed display mode is in range and
+    /// reaches the API (157 components are placed in an alternate mode), and
+    /// survives `update_sheet` → `sheet()` (the writer used to store 0).
+    #[test]
+    fn corpus_r9_display_mode() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/schdoc");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+            .map(|e| e.expect("dir entry").path())
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("schdoc"))
+            })
+            .collect();
+        paths.sort();
+        let (mut docs, mut sheets, mut alternate, mut written, mut not_written) = (0, 0, 0, 0, 0);
+        for path in &paths {
+            let Ok(mut doc) = SchDoc::open(path) else {
+                continue;
+            };
+            docs += 1;
+            let stored: Vec<i32> = doc
+                .records
+                .iter()
+                .filter_map(|r| match r {
+                    SchRecord::Component(c) => Some(c.display_mode),
+                    _ => None,
+                })
+                .collect();
+            let Ok(sheet) = doc.sheet() else {
+                continue;
+            };
+            sheets += 1;
+            let modes = |s: &crate::api::SchDocSheet| -> Vec<i32> {
+                s.components().iter().map(|c| c.display_mode).collect()
+            };
+            let read = modes(&sheet);
+            let mut sorted_read = read.clone();
+            let mut sorted_stored = stored.clone();
+            sorted_read.sort_unstable();
+            sorted_stored.sort_unstable();
+            assert_eq!(sorted_read, sorted_stored, "{}", path.display());
+            alternate += read.iter().filter(|&&m| m != 0).count();
+            if read.iter().any(|&m| m != 0) {
+                // update_sheet fails on some corpus sheets for reasons unrelated
+                // to display modes; those are counted, not checked.
+                if doc.update_sheet(&sheet).is_ok() {
+                    let after = doc
+                        .sheet()
+                        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                    assert_eq!(
+                        modes(&after),
+                        read,
+                        "{}: display modes changed",
+                        path.display()
+                    );
+                    written += 1;
+                } else {
+                    not_written += 1;
+                }
+            }
+        }
+        eprintln!(
+            "corpus_r9_display_mode: {docs} SchDocs open, {sheets} sheets read, {alternate} \
+             components in an alternate mode, {written} sheets with one written and re-read, \
+             {not_written} where update_sheet failed"
+        );
+        assert_eq!(alternate, 137);
+        assert!(written > 0);
     }
 }

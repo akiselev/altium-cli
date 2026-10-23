@@ -358,6 +358,10 @@ pub struct SchDocComponent {
     pub part_count: i32,
     pub current_part_id: i32,
     pub display_mode_count: i32,
+    /// The placed display mode (`DisplayMode`): 0 is the normal graphics,
+    /// 1.. the alternates (custom display modes). Always below
+    /// `display_mode_count` (or 0 when the count is 0 or 1).
+    pub display_mode: i32,
     pub show_hidden_pins: bool,
 
     // ── Children (ordered) ───────────────────────────────────
