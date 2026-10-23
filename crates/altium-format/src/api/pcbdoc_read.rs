@@ -8,10 +8,10 @@
 use altium_format_types::color::Color;
 use altium_format_types::common::Unit;
 use altium_format_types::coord::{Coord, CoordPoint};
+use altium_format_types::pcb::constants::{POLYGON_INDEX_PLANE_SPLIT_LINE, PRIMITIVE_INDEX_NONE};
 use altium_format_types::pcb::{
-    ClassMemberKind, DimensionKind, LayerRef, POLYGON_INDEX_PLANE_SPLIT_LINE, PRIMITIVE_INDEX_NONE,
-    PlaneConnectionStyle, PolyHatchStyle, PolySegmentKind, PolygonType, RegionKind, RuleKind,
-    V6Layer, V7Layer,
+    ClassMemberKind, DimensionKind, LayerRef, PlaneConnectionStyle, PolyHatchStyle,
+    PolySegmentKind, PolygonType, RegionKind, RuleKind, V6Layer, V7Layer,
 };
 use altium_format_types::{DielectricType, LayerStackStyle, PcbObjectId};
 use std::collections::HashMap;
@@ -54,14 +54,14 @@ struct ConvertContext {
 
 impl ConvertContext {
     fn resolve_net(&self, index: u16) -> Option<String> {
-        if index == 0xFFFF {
+        if index == PRIMITIVE_INDEX_NONE {
             return None;
         }
         self.net_names.get(index as usize).cloned()
     }
 
     fn resolve_component(&self, index: u16) -> Option<String> {
-        if index == 0xFFFF {
+        if index == PRIMITIVE_INDEX_NONE {
             return None;
         }
         self.component_designators.get(index as usize).cloned()
@@ -90,7 +90,7 @@ impl ConvertContext {
     /// Resolve a primitive's component index: 0xFFFF is "no component", an
     /// index outside Components6 is an error.
     fn component_index(&self, index: u16) -> Result<Option<usize>> {
-        if index == 0xFFFF {
+        if index == PRIMITIVE_INDEX_NONE {
             return Ok(None);
         }
         let i = usize::from(index);
@@ -1467,9 +1467,12 @@ fn convert_primitive_section(
                 PcbPrimitive::Pad(p) => pads.push(pad_from_internal(pads.len(), p, ctx)?),
                 PcbPrimitive::Fill(f) => fills.push(fill_from_internal(fills.len(), f, ctx)?),
                 PcbPrimitive::Text(t) => texts.push(text_from_internal(texts.len(), t, ctx)?),
-                PcbPrimitive::Region(r) => {
-                    regions.push(region_from_internal(regions.len(), r, ctx)?)
-                }
+                PcbPrimitive::Region(r) => regions.push(region_from_internal(
+                    regions.len(),
+                    r,
+                    section.kind == PrimitiveSectionKind::BoardRegions,
+                    ctx,
+                )?),
                 PcbPrimitive::ComponentBody(b) => {
                     component_bodies.push(body_from_internal(component_bodies.len(), b, ctx)?)
                 }
@@ -1656,7 +1659,12 @@ fn contour_to_coord_points(contour: &Contour) -> Vec<CoordPoint> {
     }
 }
 
-fn region_from_internal(idx: usize, r: &PcbRegion, ctx: &ConvertContext) -> Result<Region> {
+fn region_from_internal(
+    idx: usize,
+    r: &PcbRegion,
+    board_region: bool,
+    ctx: &ConvertContext,
+) -> Result<Region> {
     let layer = if !r.v7_layer.is_empty() {
         LayerRef::from_string_name(&r.v7_layer).unwrap_or_else(|| LayerRef::from_v6(r.common.layer))
     } else {
@@ -1676,6 +1684,7 @@ fn region_from_internal(idx: usize, r: &PcbRegion, ctx: &ConvertContext) -> Resu
         holes: r.holes.iter().map(contour_to_coord_points).collect(),
         is_board_cutout: r.is_board_cutout,
         is_keepout: r.keepout,
+        board_region,
     })
 }
 

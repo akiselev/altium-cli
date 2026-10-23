@@ -171,7 +171,7 @@ fn r4_identity(board: &PcbDocBoard) -> Vec<(String, Option<String>, Option<usize
 #[test]
 fn corpus_r4_identity() {
     let (mut components, mut locked, mut unlocked_primitives, mut pad_ids) = (0, 0, 0, 0);
-    let (mut linked, mut boards_round_tripped, mut regions_compared) = (0, 0, 0);
+    let (mut linked, mut boards_round_tripped) = (0, 0);
     for (name, mut doc) in corpus_docs() {
         let ctx = build_context(&doc).unwrap_or_else(|e| panic!("{name}: {e}"));
         pad_ids += ctx.pad_unique_ids.len();
@@ -209,19 +209,14 @@ fn corpus_r4_identity() {
         let after = doc
             .board()
             .unwrap_or_else(|e| panic!("{name}: board() after update: {e}"));
-        // update_board → board() adds one region on 65 of the 79 boards, as it
-        // already did at 18062d6 (pre-existing writer defect, see the lane
-        // report); regions are compared only where their count survives.
-        let regions_kept = after.regions.len() == board.regions.len();
-        if regions_kept {
-            regions_compared += 1;
-        }
-        let keep = |ids: Vec<(String, Option<String>, Option<usize>, u16)>| {
-            ids.into_iter()
-                .filter(|(id, ..)| regions_kept || !id.starts_with("region_"))
-                .collect::<Vec<_>>()
-        };
-        let (before, after_ids) = (keep(before), keep(r4_identity(&after)));
+        // update_board → board() added one region on 65 of the 79 boards up
+        // to this branch (a board region duplicated into ShapeBasedRegions6).
+        assert_eq!(
+            after.regions.len(),
+            board.regions.len(),
+            "{name}: region count"
+        );
+        let after_ids = r4_identity(&after);
         assert_eq!(
             after_ids.len(),
             before.len(),
@@ -246,8 +241,7 @@ fn corpus_r4_identity() {
     eprintln!(
         "corpus_r4_identity: {components} components ({locked} locked, {unlocked_primitives} \
          without primitive lock), {pad_ids} pad unique ids, {linked} primitives linked to a \
-         component, {boards_round_tripped} boards written and re-read \
-         ({regions_compared} with regions compared)"
+         component, {boards_round_tripped} boards written and re-read"
     );
     assert_eq!(components, 14_409);
     assert_eq!(locked, 395);
@@ -358,17 +352,17 @@ fn corpus_r3_polygon_membership() {
         after_members.extend(after.vias.iter().map(|p| (p.id.clone(), p.polygon, false)));
         after_members.extend(after.pads.iter().map(|p| (p.id.clone(), p.polygon, false)));
         after_members.extend(after.fills.iter().map(|p| (p.id.clone(), p.polygon, false)));
-        if after.regions.len() == region_count {
-            after_members.extend(
-                after
-                    .regions
-                    .iter()
-                    .map(|p| (p.id.clone(), p.polygon, false)),
-            );
-        } else {
-            // Pre-existing extra region after update_board (see corpus_r4_identity).
-            members.retain(|(id, ..)| !id.starts_with("region_"));
-        }
+        assert_eq!(
+            after.regions.len(),
+            region_count,
+            "{name}: region count changed"
+        );
+        after_members.extend(
+            after
+                .regions
+                .iter()
+                .map(|p| (p.id.clone(), p.polygon, false)),
+        );
         assert!(
             after_members == members,
             "{name}: polygon membership changed on write"

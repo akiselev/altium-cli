@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use altium_format_types::coord::{Coord, CoordPoint};
+use altium_format_types::pcb::constants::{POLYGON_INDEX_PLANE_SPLIT_LINE, PRIMITIVE_INDEX_NONE};
 use altium_format_types::pcb::{
-    BarcodeRenderMode, DaisyChainStyle, LayerRef, MaskExpansionState,
-    POLYGON_INDEX_PLANE_SPLIT_LINE, PRIMITIVE_INDEX_NONE, PadStackMode, PcbFlags,
+    BarcodeRenderMode, DaisyChainStyle, LayerRef, MaskExpansionState, PadStackMode, PcbFlags,
     PlaneConnectionStyle, PolySegmentKind, PolygonType, TCacheState, TextKind, V6Layer,
 };
 use altium_format_types::{BarcodeKind, PcbObjectId};
@@ -78,8 +78,8 @@ impl WriteContext {
                 .net_indices
                 .get(name.as_str())
                 .copied()
-                .unwrap_or(0xFFFF),
-            None => 0xFFFF,
+                .unwrap_or(PRIMITIVE_INDEX_NONE),
+            None => PRIMITIVE_INDEX_NONE,
         }
     }
 
@@ -133,7 +133,7 @@ impl WriteContext {
             detail,
         };
         let index = match (component_index, component) {
-            (None, None) => return Ok(0xFFFF),
+            (None, None) => return Ok(PRIMITIVE_INDEX_NONE),
             (Some(i), designator) => {
                 let stored = self.component_designators.get(i).ok_or_else(|| {
                     error(format!(
@@ -170,7 +170,7 @@ impl WriteContext {
         };
         u16::try_from(index)
             .ok()
-            .filter(|&i| i != 0xFFFF)
+            .filter(|&i| i != PRIMITIVE_INDEX_NONE)
             .ok_or_else(|| {
                 error(format!(
                     "component index {index} does not fit the u16 field"
@@ -208,8 +208,8 @@ fn primitive_common_for_board(
         net_index: ctx.resolve_net_index(net),
         polygon_index: ctx.resolve_polygon_index(polygon, plane_split_line, layer)?,
         component_index: ctx.resolve_component_index(component, component_index)?,
-        coordinate_index: 0xFFFF,
-        dimension_index: 0xFFFF,
+        coordinate_index: PRIMITIVE_INDEX_NONE,
+        dimension_index: PRIMITIVE_INDEX_NONE,
     })
 }
 
@@ -316,17 +316,31 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
         build_text_records(&board.texts, &ctx, &wide_indices).context("building text records")?,
     );
 
-    // Region section: prefer ShapeBasedRegions6 if present.
-    let region_kind = detect_section_kind(
-        doc,
-        PrimitiveSectionKind::ShapeBasedRegions6,
-        PrimitiveSectionKind::Regions6,
-    );
+    // Regions go back to the section they were read from: BoardRegions for
+    // board regions, otherwise the section board() reads (ShapeBasedRegions6
+    // whenever that section exists, even empty, else Regions6). Before, every
+    // region went to one section, so a board region was duplicated into
+    // ShapeBasedRegions6 and positional preservation shifted the attributes of
+    // all following regions.
+    let (board_regions, copper_regions): (Vec<Region>, Vec<Region>) =
+        board.regions.iter().cloned().partition(|r| r.board_region);
+    let region_kind = if has_primitive_section(doc, PrimitiveSectionKind::ShapeBasedRegions6) {
+        PrimitiveSectionKind::ShapeBasedRegions6
+    } else {
+        PrimitiveSectionKind::Regions6
+    };
     replace_primitives_with_preservation(
         doc,
         region_kind,
-        build_region_records(&board.regions, &ctx).context("building region records")?,
+        build_region_records(&copper_regions, &ctx).context("building region records")?,
     );
+    if !board_regions.is_empty() || has_primitive_section(doc, PrimitiveSectionKind::BoardRegions) {
+        replace_primitives_with_preservation(
+            doc,
+            PrimitiveSectionKind::BoardRegions,
+            build_region_records(&board_regions, &ctx).context("building board region records")?,
+        );
+    }
 
     // ComponentBody section: prefer ShapeBasedComponentBodies6 if present.
     let body_kind = detect_section_kind(
@@ -760,18 +774,29 @@ fn build_board_record(settings: &BoardSettings) -> Vec<StandardParamRecord> {
 /// Replace the Board6 outline keys with `outline` (all of them removed when
 /// `None`). The merge above keeps the old record's keys, so a shorter new
 /// outline would otherwise leave the old record's trailing vertices behind.
+/// Only the first Board6 record is touched, the one the reader takes.
 fn replace_board_outline(doc: &mut PcbDoc, outline: Option<&PcbContour>) -> Result<()> {
-    for section in &mut doc.sections {
-        if let PcbDocSection::Parameter(param) = section {
-            if param.kind == ParamSectionKind::Board6 {
-                for record in &mut param.records {
-                    strip_param_contour(&mut record.params).context("Board6 outline")?;
-                    if let Some(outline) = outline {
-                        insert_param_contour(&mut record.params, outline);
-                    }
-                }
-            }
+    let record = doc.sections.iter_mut().find_map(|section| match section {
+        PcbDocSection::Parameter(param) if param.kind == ParamSectionKind::Board6 => {
+            param.records.first_mut()
         }
+        _ => None,
+    });
+    match record {
+        Some(record) => {
+            replace_record_outline(&mut record.params, outline).context("Board6 outline")
+        }
+        None => Ok(()),
+    }
+}
+
+fn replace_record_outline(
+    params: &mut ParameterCollection,
+    outline: Option<&PcbContour>,
+) -> Result<()> {
+    strip_param_contour(params)?;
+    if let Some(outline) = outline {
+        insert_param_contour(params, outline);
     }
     Ok(())
 }
@@ -1894,6 +1919,13 @@ fn replace_binary_section(
         .push(PcbDocSection::Binary(BinarySectionData { kind, records }));
 }
 
+/// True when `doc` has a primitive section of `kind` (empty or not).
+fn has_primitive_section(doc: &PcbDoc, kind: PrimitiveSectionKind) -> bool {
+    doc.sections
+        .iter()
+        .any(|s| matches!(s, PcbDocSection::Primitive(p) if p.kind == kind))
+}
+
 /// Detect which section kind to write: prefer `modern` if it contains records, else `legacy`.
 fn detect_section_kind(
     doc: &PcbDoc,
@@ -2142,6 +2174,40 @@ mod tests {
         assert!(reject_unique_id("track", &None).is_ok());
         let err = reject_unique_id("track", &Some("ABCDEFGH".to_owned())).unwrap_err();
         assert!(err.to_string().contains("ABCDEFGH"), "{err}");
+    }
+
+    #[test]
+    fn board_outline_replacement_leaves_no_old_vertices() {
+        let mut params = ParameterCollection::from_str(
+            "|DOCUMENTNAME=x\
+             |KIND0=0|VX0=0mil|VY0=0mil|CX0=0mil|CY0=0mil|SA0=0|EA0=0|R0=0mil\
+             |KIND1=1|VX1=10mil|VY1=0mil|CX1=5mil|CY1=0mil|SA1=0|EA1=180|R1=5mil\
+             |KIND2=0|VX2=10mil|VY2=10mil|CX2=0mil|CY2=0mil|SA2=0|EA2=0|R2=0mil\
+             |KIND3=0|VX3=0mil|VY3=0mil|CX3=0mil|CY3=0mil|SA3=0|EA3=0|R3=0mil|SHELVED=FALSE|",
+        )
+        .unwrap();
+        let mil = |v: i32| Coord::from_internal(v * 10_000);
+        let two = PcbContour {
+            segments: vec![
+                ContourSegment::Line {
+                    endpoint: CoordPoint::new(mil(1), mil(2)),
+                },
+                ContourSegment::Line {
+                    endpoint: CoordPoint::new(mil(3), mil(4)),
+                },
+            ],
+        };
+        replace_record_outline(&mut params, Some(&two)).unwrap();
+        assert_eq!(params.get("VX2"), None);
+        assert_eq!(params.get("R3"), None);
+        assert_eq!(params.get("SHELVED"), Some("FALSE"));
+        let mut copy = params.clone();
+        let reread = crate::api::pcbdoc_read::remove_param_contour(&mut copy).unwrap();
+        assert_eq!(reread.to_points(), two.to_points());
+        assert_eq!(copy.remaining_keys(), vec!["DOCUMENTNAME", "SHELVED"]);
+
+        replace_record_outline(&mut params, None).unwrap();
+        assert_eq!(params.remaining_keys(), vec!["DOCUMENTNAME", "SHELVED"]);
     }
 
     #[test]

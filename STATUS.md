@@ -549,12 +549,16 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   `locked`, `primitive_lock`; component bodies carry `component_index` and `flags`. The writer
   keeps them (an ambiguous or unknown designator without `component_index` is an error; ids must
   be 8 uppercase letters; component ids may not repeat; Components6 records merge by UNIQUEID).
-  Spec documents naming a missing or duplicated designator now fail at `update_board`. Known pre-existing defect: `update_board` → `board()` adds one
-  region on 65 of 79 corpus boards (also at `18062d6`).
+  Spec documents naming a missing or duplicated designator now fail at `update_board`.
 - Polygon membership (R3): `polygon: Option<usize>` on Track, Arc, Via, Pad, Fill, Region;
   `plane_split_line` on Track/Arc for the 0xFFFE marker (split-plane lines on plane layers).
   In the corpus only regions are pour members on readable boards, and they store no net.
+  The 0xFFFE meaning is inferred from the corpus, not checked against decompiled sources.
   Writer: primitives with a full V7 layer id keep their V6 layer (were written as NoLayer).
+  Regions carry `board_region` and go back to BoardRegions or (ShapeBased)Regions6; before, a
+  board region was duplicated on every `update_board` and the following regions' attributes
+  shifted by one (65 of 79 corpus boards). Known gap: the spec dump (`altium-format-spec`
+  `dump.rs`) still emits pour members and split-plane lines as authored primitives.
 - Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
   boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
 

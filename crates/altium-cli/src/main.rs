@@ -1562,6 +1562,7 @@ fn instantiate_footprint_primitives(
                             holes,
                             is_board_cutout: false,
                             is_keepout: false,
+                            board_region: false,
                         });
                         region_counter += 1;
                     }

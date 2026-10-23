@@ -78,7 +78,8 @@ pub struct BoardSettings {
     /// `SAn`, `EAn`, `Rn`), with arcs; `None` when Board6 stores no vertices.
     /// As stored, the first vertex is normally repeated as the last one (one
     /// corpus board's outline is open). `board_outline` and `geometry` are
-    /// derived from regions instead.
+    /// derived from regions instead. The writer stores exactly this outline:
+    /// `None` removes the outline keys from Board6.
     pub outline: Option<PcbContour>,
     pub snap_grid_size: Coord,
     pub visible_grid_size: Coord,
@@ -562,7 +563,7 @@ pub struct Track {
     /// belongs to (pour fill, not authored copper); `None` for free primitives.
     pub polygon: Option<usize>,
     /// A split-plane boundary line on an internal plane layer (stored as
-    /// polygon index [`POLYGON_INDEX_PLANE_SPLIT_LINE`](altium_format_types::pcb::POLYGON_INDEX_PLANE_SPLIT_LINE)),
+    /// polygon index [`POLYGON_INDEX_PLANE_SPLIT_LINE`](altium_format_types::pcb::constants::POLYGON_INDEX_PLANE_SPLIT_LINE)),
     /// not routed copper. `polygon` is `None` when this is set.
     pub plane_split_line: bool,
     pub start: CoordPoint,
@@ -589,7 +590,7 @@ pub struct Arc {
     /// belongs to (pour fill, not authored copper); `None` for free primitives.
     pub polygon: Option<usize>,
     /// A split-plane boundary line on an internal plane layer (stored as
-    /// polygon index [`POLYGON_INDEX_PLANE_SPLIT_LINE`](altium_format_types::pcb::POLYGON_INDEX_PLANE_SPLIT_LINE)),
+    /// polygon index [`POLYGON_INDEX_PLANE_SPLIT_LINE`](altium_format_types::pcb::constants::POLYGON_INDEX_PLANE_SPLIT_LINE)),
     /// not routed copper. `polygon` is `None` when this is set.
     pub plane_split_line: bool,
     pub center: CoordPoint,
@@ -740,6 +741,9 @@ pub struct Region {
     pub holes: Vec<Vec<CoordPoint>>,
     pub is_board_cutout: bool,
     pub is_keepout: bool,
+    /// Stored in the BoardRegions section (the board shape regions), not in
+    /// (ShapeBased)Regions6. The writer puts the region back in that section.
+    pub board_region: bool,
 }
 
 /// A 3D component body.
