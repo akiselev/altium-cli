@@ -1699,6 +1699,14 @@ fn region_from_internal(
     } else {
         LayerRef::from_v6(r.common.layer)
     };
+    // PcbLib regions can repeat their geometry as text keys; no corpus PcbDoc
+    // region does, and the board writer stores only the binary contours.
+    if r.shape_text_segments.is_some() || !r.hole_shape_text_segments.is_empty() {
+        return Err(AltiumFormatError::InvalidParamValue {
+            key: "MAINCONTOURVERTEXCOUNT".to_owned(),
+            detail: "text-form region geometry in a PcbDoc region is not supported".to_owned(),
+        });
+    }
     Ok(Region {
         id: format!("region_{idx}"),
         layer,
@@ -1711,6 +1719,8 @@ fn region_from_internal(
         kind: r.kind,
         outline: contour_to_coord_points(&r.outline),
         holes: r.holes.iter().map(contour_to_coord_points).collect(),
+        outline_contour: contour_to_pcb_contour(&r.outline),
+        hole_contours: r.holes.iter().map(contour_to_pcb_contour).collect(),
         is_board_cutout: r.is_board_cutout,
         is_keepout: r.keepout,
         board_region,

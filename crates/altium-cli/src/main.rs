@@ -1562,6 +1562,10 @@ fn instantiate_footprint_primitives(
                             kind: region.kind,
                             outline,
                             holes,
+                            outline_contour: altium_format::api::PcbContour {
+                                segments: Vec::new(),
+                            },
+                            hole_contours: Vec::new(),
                             is_board_cutout: false,
                             is_keepout: false,
                             board_region: false,

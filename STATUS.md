@@ -572,6 +572,12 @@ fail on Dimensions6 `TEXTX`, as at `18062d6`).
   rule pad; NoMask is an error); before, both writers wrote Valid or the old record's state.
   PcbLib `update_footprint` matches repeated pad names by occurrence (was always the first).
   Known gap: the PcbLib writer still writes NoLayer / Top / Bottom for layers without a V6 form.
+- Region contours (R7): `outline_contour` and `hole_contours` (`PcbContour`) keep arcs (192
+  corpus regions, 1,017 arc edges on readable boards). The writer stores them in the section's
+  format (TPolySegments for ShapeBasedRegions6, vertices for Regions6/BoardRegions/holes; arcs
+  there are an error). Before, the writer copied the old record's contours back, so an edited
+  region outline was silently discarded, and new regions went into ShapeBasedRegions6 in the
+  vertex format. Component bodies still copy their old contours (not part of R7).
 - Board6 outline (R1): `BoardSettings::outline: Option<PcbContour>` with arcs (94/94 corpus
   boards, 1,037 vertices, one open outline). The writer replaces the stored outline keys.
 

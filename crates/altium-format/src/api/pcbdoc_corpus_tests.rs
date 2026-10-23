@@ -592,3 +592,84 @@ fn corpus_r5_pad_modes() {
     );
     assert_eq!(boards_round_tripped, 79);
 }
+
+/// R7: region contours keep their arcs (corpus: 223 ShapeBasedRegions6
+/// regions with arc edges), survive `update_board` → `board()` exactly, and an
+/// edited outline is written (the writer used to copy the old contours back).
+#[test]
+fn corpus_r7_region_contours() {
+    let (mut regions_with_arcs, mut arc_edges, mut boards_round_tripped) = (0, 0, 0);
+    for (name, mut doc) in corpus_docs() {
+        let Ok(mut board) = doc.board() else {
+            assert!(BOARDS_FAILING_AT_BASE.contains(&name.as_str()), "{name}");
+            continue;
+        };
+        for r in &board.regions {
+            assert_eq!(r.outline, r.outline_contour.to_points(), "{name}: {}", r.id);
+            let arcs = r
+                .outline_contour
+                .segments
+                .iter()
+                .filter(|s| matches!(s, ContourSegment::Arc { .. }))
+                .count();
+            regions_with_arcs += usize::from(arcs > 0);
+            arc_edges += arcs;
+        }
+        let contours = |b: &PcbDocBoard| -> Vec<String> {
+            b.regions
+                .iter()
+                .map(|r| format!("{:?} {:?}", r.outline_contour, r.hole_contours))
+                .collect()
+        };
+        let before = contours(&board);
+        doc.update_board(&board)
+            .unwrap_or_else(|e| panic!("{name}: update_board: {e}"));
+        let after = doc.board().unwrap_or_else(|e| panic!("{name}: {e}"));
+        let after_contours = contours(&after);
+        assert_eq!(after_contours.len(), before.len(), "{name}");
+        if let Some((i, _)) = after_contours
+            .iter()
+            .zip(&before)
+            .enumerate()
+            .find(|(_, (a, b))| a != b)
+        {
+            panic!("{name}: region_{i} contour changed on write");
+        }
+        // Move the last region by 1 mil and check the edit is written.
+        if let Some(r) = board.regions.last_mut() {
+            let shift = Coord::from_internal(10_000);
+            for s in &mut r.outline_contour.segments {
+                match s {
+                    ContourSegment::Line { endpoint } => endpoint.x += shift,
+                    ContourSegment::Arc {
+                        endpoint, center, ..
+                    } => {
+                        endpoint.x += shift;
+                        center.x += shift;
+                    }
+                }
+            }
+            r.outline = r.outline_contour.to_points();
+            let expected = format!("{:?}", r.outline_contour);
+            doc.update_board(&board)
+                .unwrap_or_else(|e| panic!("{name}: update_board (moved): {e}"));
+            let moved = doc.board().unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(
+                format!(
+                    "{:?}",
+                    moved.regions.last().expect("region").outline_contour
+                ),
+                expected,
+                "{name}: edited outline not written"
+            );
+        }
+        boards_round_tripped += 1;
+    }
+    eprintln!(
+        "corpus_r7_region_contours: {regions_with_arcs} regions with {arc_edges} arc edges on \
+         readable boards; {boards_round_tripped} boards written and re-read"
+    );
+    assert_eq!(boards_round_tripped, 79);
+    assert_eq!(regions_with_arcs, 192);
+    assert_eq!(arc_edges, 1_017);
+}

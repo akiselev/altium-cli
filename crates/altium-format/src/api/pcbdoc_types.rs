@@ -744,8 +744,19 @@ pub struct Region {
     /// belongs to (pour fill, not authored copper); `None` for free primitives.
     pub polygon: Option<usize>,
     pub kind: RegionKind,
+    /// The outline's vertices (`outline_contour.to_points()`).
     pub outline: Vec<CoordPoint>,
+    /// The holes' vertices (`hole_contours[i].to_points()`).
     pub holes: Vec<Vec<CoordPoint>>,
+    /// The outline with arcs. ShapeBasedRegions6 stores arc edges and repeats
+    /// the first vertex as the last; Regions6 and BoardRegions store vertices
+    /// only (line edges, closing edge implied). The writer stores this contour
+    /// in the region's section format; arcs in a vertex-only section are an
+    /// error.
+    pub outline_contour: PcbContour,
+    /// The hole contours. Holes are stored as vertices only in every section,
+    /// so they hold line edges; an arc is an error on write.
+    pub hole_contours: Vec<PcbContour>,
     pub is_board_cutout: bool,
     pub is_keepout: bool,
     /// Stored in the BoardRegions section (the board shape regions), not in

@@ -41,6 +41,7 @@ use crate::pcbdoc::{
 use crate::pcblib::wide_strings::encode_text_for_wide_strings;
 use crate::pcblib::{
     Contour, PcbComponentBody, PcbPad, PcbPadCache, PcbPrimitiveCommon, PcbRegion, PcbVia,
+    PolySegment,
 };
 use crate::{Result, ResultExt};
 
@@ -339,13 +340,19 @@ pub(crate) fn board_to_internal(board: &PcbDocBoard, doc: &mut PcbDoc) -> Result
     replace_primitives_with_preservation(
         doc,
         region_kind,
-        build_region_records(&copper_regions, &ctx).context("building region records")?,
+        build_region_records(
+            &copper_regions,
+            &ctx,
+            region_kind == PrimitiveSectionKind::ShapeBasedRegions6,
+        )
+        .context("building region records")?,
     );
     if !board_regions.is_empty() || has_primitive_section(doc, PrimitiveSectionKind::BoardRegions) {
         replace_primitives_with_preservation(
             doc,
             PrimitiveSectionKind::BoardRegions,
-            build_region_records(&board_regions, &ctx).context("building board region records")?,
+            build_region_records(&board_regions, &ctx, false)
+                .context("building board region records")?,
         );
     }
 
@@ -1160,14 +1167,149 @@ fn build_text_records(
         .collect()
 }
 
+/// The contour to write: `contour`, or line edges through `points` when the
+/// contour is empty (a region built from vertices only). A non-empty contour
+/// must agree with `points`.
+fn region_contour_for_write(
+    what: &str,
+    points: &[CoordPoint],
+    contour: &PcbContour,
+) -> Result<PcbContour> {
+    if contour.segments.is_empty() {
+        return Ok(PcbContour {
+            segments: points
+                .iter()
+                .map(|&endpoint| ContourSegment::Line { endpoint })
+                .collect(),
+        });
+    }
+    if contour.to_points() != points {
+        return Err(crate::AltiumFormatError::InvalidParamValue {
+            key: what.to_owned(),
+            detail: format!(
+                "region {what} vertices differ from its contour; edit the contour or clear it"
+            ),
+        });
+    }
+    Ok(contour.clone())
+}
+
+/// A contour in a vertex-only form (Regions6/BoardRegions outlines, all holes):
+/// an arc edge cannot be stored there.
+fn vertex_contour(what: &str, contour: &PcbContour) -> Result<Contour> {
+    if contour
+        .segments
+        .iter()
+        .any(|s| matches!(s, ContourSegment::Arc { .. }))
+    {
+        return Err(crate::AltiumFormatError::InvalidParamValue {
+            key: what.to_owned(),
+            detail: format!("the {what} has arc edges but its section stores vertices only"),
+        });
+    }
+    Ok(Contour::Legacy(contour.to_points()))
+}
+
+/// A ShapeBasedRegions6 outline: TPolySegments, closed (first vertex repeated).
+fn shape_based_contour(contour: &PcbContour) -> Result<Contour> {
+    let points = contour.to_points();
+    if points.len() < 2 || points.first() != points.last() {
+        return Err(crate::AltiumFormatError::InvalidParamValue {
+            key: "outline".to_owned(),
+            detail: "a ShapeBasedRegions6 outline must repeat its first vertex as the last"
+                .to_owned(),
+        });
+    }
+    Ok(Contour::ShapeBased(
+        contour
+            .segments
+            .iter()
+            .map(|s| match *s {
+                ContourSegment::Line { endpoint } => PolySegment {
+                    kind: PolySegmentKind::Line,
+                    vertex: endpoint,
+                    center: CoordPoint::new(Coord::ZERO, Coord::ZERO),
+                    radius: Coord::ZERO,
+                    angle1: 0.0,
+                    angle2: 0.0,
+                },
+                ContourSegment::Arc {
+                    endpoint,
+                    center,
+                    radius,
+                    start_angle,
+                    end_angle,
+                } => PolySegment {
+                    kind: PolySegmentKind::Arc,
+                    vertex: endpoint,
+                    center,
+                    radius,
+                    angle1: start_angle,
+                    angle2: end_angle,
+                },
+            })
+            .collect(),
+    ))
+}
+
 fn build_region_records(
     regions: &[Region],
     ctx: &WriteContext,
+    shape_based: bool,
 ) -> Result<Vec<ParsedPrimitiveRecord>> {
     regions
         .iter()
         .map(|r| {
             reject_unique_id("region", &r.unique_id)?;
+            let mut outline_contour =
+                region_contour_for_write("outline", &r.outline, &r.outline_contour)
+                    .with_context(|| format!("region {}", r.id))?;
+            // A region given as vertices only has an implied closing edge
+            // (the Regions6 convention); ShapeBasedRegions6 stores it explicitly.
+            if shape_based && r.outline_contour.segments.is_empty() {
+                let first = outline_contour.segments.first().map(|s| match *s {
+                    ContourSegment::Line { endpoint } | ContourSegment::Arc { endpoint, .. } => {
+                        endpoint
+                    }
+                });
+                if let Some(first) = first {
+                    if outline_contour.to_points().last() != Some(&first) {
+                        outline_contour
+                            .segments
+                            .push(ContourSegment::Line { endpoint: first });
+                    }
+                }
+            }
+            let outline = if shape_based {
+                shape_based_contour(&outline_contour)
+            } else {
+                vertex_contour("outline", &outline_contour)
+            }
+            .with_context(|| format!("region {}", r.id))?;
+            if r.hole_contours.len() != r.holes.len() && !r.hole_contours.is_empty() {
+                return Err(crate::AltiumFormatError::InvalidParamValue {
+                    key: "holes".to_owned(),
+                    detail: format!(
+                        "region {}: {} holes but {} hole contours",
+                        r.id,
+                        r.holes.len(),
+                        r.hole_contours.len()
+                    ),
+                });
+            }
+            let empty = PcbContour {
+                segments: Vec::new(),
+            };
+            let holes = r
+                .holes
+                .iter()
+                .enumerate()
+                .map(|(h, points)| {
+                    let contour = r.hole_contours.get(h).unwrap_or(&empty);
+                    vertex_contour("hole", &region_contour_for_write("hole", points, contour)?)
+                })
+                .collect::<Result<Vec<_>>>()
+                .with_context(|| format!("region {}", r.id))?;
             Ok(ParsedPrimitiveRecord {
                 object_id: PcbObjectId::Region,
                 primitive: PcbPrimitive::Region(PcbRegion {
@@ -1199,8 +1341,8 @@ fn build_region_records(
                     bending_line_count: 0,
                     locked_3d: false,
                     layer_stack_id: String::new(),
-                    outline: Contour::Legacy(r.outline.clone()),
-                    holes: r.holes.iter().map(|h| Contour::Legacy(h.clone())).collect(),
+                    outline,
+                    holes,
                     shape_text_segments: None,
                     hole_shape_text_segments: Vec::new(),
                     unique_id: None,
@@ -1517,14 +1659,10 @@ fn preserve_region_fields(new: &mut PcbRegion, old: &PcbRegion) {
     if new.unique_id.is_none() {
         new.unique_id = old.unique_id.clone();
     }
-    // Preserve contour data to maintain the correct binary format (Legacy vs ShapeBased).
-    // build_region_records always produces Contour::Legacy from the public API's Vec<CoordPoint>,
-    // but ShapeBasedRegions6 records require Contour::ShapeBased (TPolySegment format).
-    // Copying the original contours preserves the correct serialization format.
-    new.outline = old.outline.clone();
-    new.holes = old.holes.clone();
-    new.shape_text_segments = old.shape_text_segments.clone();
-    new.hole_shape_text_segments = old.hole_shape_text_segments.clone();
+    // The contours come from the API region, written in the section's format
+    // by build_region_records. (Before, the old record's contours were copied
+    // here, so an edited outline was silently discarded.) PcbDoc regions carry
+    // no text-form geometry; the reader rejects it.
 }
 
 fn preserve_body_fields(new: &mut PcbComponentBody, old: &PcbComponentBody) {
@@ -2251,6 +2389,55 @@ mod tests {
 
         replace_record_outline(&mut params, None).unwrap();
         assert_eq!(params.remaining_keys(), vec!["DOCUMENTNAME", "SHELVED"]);
+    }
+
+    #[test]
+    fn region_contours_are_written_in_the_section_format() {
+        let mil = |v: i32| Coord::from_internal(v * 10_000);
+        let pt = |x, y| CoordPoint::new(mil(x), mil(y));
+        let arc = PcbContour {
+            segments: vec![
+                ContourSegment::Line { endpoint: pt(0, 0) },
+                ContourSegment::Arc {
+                    endpoint: pt(10, 0),
+                    center: pt(10, 5),
+                    radius: mil(5),
+                    start_angle: 270.0,
+                    end_angle: 90.0,
+                },
+                ContourSegment::Line {
+                    endpoint: pt(10, 10),
+                },
+                ContourSegment::Line { endpoint: pt(0, 0) },
+            ],
+        };
+        match shape_based_contour(&arc).unwrap() {
+            Contour::ShapeBased(segs) => {
+                assert_eq!(segs.len(), 4);
+                assert_eq!(segs[1].kind, PolySegmentKind::Arc);
+                assert_eq!(segs[1].angle2, 90.0);
+            }
+            Contour::Legacy(_) => panic!("expected TPolySegments"),
+        }
+        assert!(vertex_contour("outline", &arc).is_err());
+        let open = PcbContour {
+            segments: arc.segments[..3].to_vec(),
+        };
+        assert!(shape_based_contour(&open).is_err());
+        let lines = region_contour_for_write(
+            "outline",
+            &arc.to_points(),
+            &PcbContour {
+                segments: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(vertex_contour("outline", &lines).unwrap(), Contour::Legacy(p) if p.len() == 4)
+        );
+        let mut moved = arc.to_points();
+        moved[0].x = mil(1);
+        assert!(region_contour_for_write("outline", &moved, &arc).is_err());
     }
 
     #[test]
